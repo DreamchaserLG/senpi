@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- The published package now ships the native grep engine for every release-built platform, so `grep` no longer falls back to the rg engine and its JavaScript directory walk on darwin-arm64, darwin-x64, linux-x64, linux-arm64 and win32-x64 ([#3513](https://github.com/code-yeongyu/senpi/issues/3513)).
+
 ### Removed
 
 ## [2026.10.18-1] - 2026-10-18
@@ -66,7 +68,6 @@
 - RPC `get_entries` on a very long session no longer closes the connection: it reads in pages (`limit`, `maxBytes`, `hasMore`, `nextSince`), and an unpaged read too large for one answer (or an entry too large for any answer) returns `response_too_large`; `RpcClient.getEntries` can page ([#3534](https://github.com/code-yeongyu/senpi/issues/3534)).
 - A reopened session keeps only its latest compaction window in memory, so an RPC host holding long sessions no longer grows to multi-GB heaps; four of the largest local transcripts went from 1441 MB to 216 MB of live heap ([#3519](https://github.com/code-yeongyu/senpi/issues/3519)).
 - Usage totals no longer drop the turns a compaction trimmed, and forking or exporting (JSONL) a compacted session keeps the history from before the compaction ([#3519](https://github.com/code-yeongyu/senpi/issues/3519)).
-- The published package now ships the native grep engine for every release-built platform, so `grep` no longer falls back to the rg engine and its JavaScript directory walk on darwin-arm64, darwin-x64, linux-x64, linux-arm64 and win32-x64 ([#3513](https://github.com/code-yeongyu/senpi/issues/3513)).
 
 ### Removed
 
