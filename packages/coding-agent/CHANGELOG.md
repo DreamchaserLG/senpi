@@ -9,6 +9,7 @@
 ### Changed
 
 - The built-in default model for `amazon-bedrock` is now `us.anthropic.claude-opus-5-5` (was `us.anthropic.claude-opus-4-6-v1`). It applies only when no model is saved in settings and none is passed on the command line. Your AWS account needs Bedrock model access to Claude Opus 5.5 in its region; without it, save the old default with `/model` ([#3180](https://github.com/code-yeongyu/senpi/pull/3180)).
+
 ### Fixed
 
 - `senpi host ensure` refuses with `endpoint_occupied` (exit 3) when an unregistered process holds the public socket and does not answer, instead of starting a host that loses the bind and exits 1 with only `host_error`.
