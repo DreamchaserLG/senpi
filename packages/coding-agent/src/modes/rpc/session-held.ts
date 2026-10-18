@@ -12,6 +12,7 @@ import { type RpcSessionEntry, RpcSessionRegistryError } from "./session-registr
 const READ_ONLY_OR_CONTROL = new Set<RpcInboundRecord["type"]>([
 	"get_state",
 	"get_effect_status",
+	"get_pending_inputs",
 	"get_steering_messages",
 	"get_follow_up_messages",
 	"get_available_models",

@@ -17,6 +17,8 @@ export interface PendingInputJournalRecord {
 	readonly cursor: number;
 	readonly input: PendingInput;
 	readonly result?: PendingInputOperationResult;
+	/** Further inputs changed in the same step (a consumer's batch), recorded atomically with `input`. */
+	readonly batch?: readonly PendingInput[];
 }
 
 export interface PendingInputJournal {
@@ -30,6 +32,8 @@ export interface PendingInputStoreOptions {
 	readonly nextQueuedId: () => string;
 	readonly dispatch?: (token: DeliveryToken, input: PendingInput) => void;
 	readonly restoreToDraft?: (text: string) => void;
+	/** Passed to every reopen rebind; see the `rebind` event (senpi#3549). */
+	readonly uncommittedAttemptsAreUnsent?: boolean;
 	/**
 	 * Receives a listener's throw; an owner should always supply it, since the default rethrow is uncaught. A committed transition is not undone by a failing observer, and its dispatch
 	 * still runs; by default the error is rethrown on a later microtask so it is never silently lost.
@@ -37,7 +41,22 @@ export interface PendingInputStoreOptions {
 	readonly onListenerError?: (error: unknown) => void;
 }
 
-export type PendingInputListener = (projection: PendingInputProjection) => void;
+/** Called after each committed transition with its projection and the journal cursor it was written at. */
+export type PendingInputListener = (projections: readonly PendingInputProjection[], cursor: number) => void;
+
+/** Transitions inside one gated step: each is committed directly, since the caller already holds the gate. */
+export interface PendingInputTransaction {
+	submit(event: Omit<SubmitEvent, "type" | "handle">): Promise<PendingInputOperationResult | undefined>;
+	apply(
+		clientMessageId: string,
+		event: Exclude<PendingInputEvent, SubmitEvent>,
+	): Promise<PendingInputOperationResult | undefined>;
+	/** Applies every change in one journal record: all of them land or none does. */
+	applyAll(
+		changes: readonly { readonly clientMessageId: string; readonly event: Exclude<PendingInputEvent, SubmitEvent> }[],
+	): Promise<(PendingInputOperationResult | undefined)[]>;
+	current(clientMessageId: string): PendingInput | undefined;
+}
 
 export type PendingInputRead =
 	| { readonly status: "admitted"; readonly projection: PendingInputProjection }
@@ -74,25 +93,23 @@ export class PendingInputStore {
 	static async open(options: PendingInputStoreOptions): Promise<PendingInputStore> {
 		const store = new PendingInputStore(options);
 		for (const record of await options.journal.read()) {
-			store.inputs.set(record.input.clientMessageId, record.input);
+			for (const input of [record.input, ...(record.batch ?? [])]) store.inputs.set(input.clientMessageId, input);
 			store.cursor = Math.max(store.cursor, record.cursor);
 		}
 		for (const input of [...store.inputs.values()]) {
 			if (input.phase === "delivered" || input.phase === "removed") continue;
 			const handle = { lifetimeId: options.lifetimeId, queuedId: options.nextQueuedId() };
-			await store.commit(input.clientMessageId, { type: "rebind", handle });
+			await store.commit(input.clientMessageId, {
+				type: "rebind",
+				handle,
+				attemptsUnsent: options.uncommittedAttemptsAreUnsent === true,
+			});
 		}
 		return store;
 	}
 
 	submit(event: Omit<SubmitEvent, "type" | "handle">): Promise<PendingInputOperationResult | undefined> {
-		return this.serialize(() => {
-			const handle = this.inputs.get(event.clientMessageId)?.handle ?? {
-				lifetimeId: this.options.lifetimeId,
-				queuedId: this.options.nextQueuedId(),
-			};
-			return this.commit(event.clientMessageId, { ...event, type: "submit", handle });
-		});
+		return this.serialize(() => this.admit(event));
 	}
 
 	apply(
@@ -130,11 +147,36 @@ export class PendingInputStore {
 		});
 	}
 
+	/**
+	 * Runs `work` under the gate every command shares, so a consumer can change its native buffer and the
+	 * journal in one step that no edit, removal or other consumer can interleave with.
+	 */
+	transaction<T>(work: (tx: PendingInputTransaction) => Promise<T>): Promise<T> {
+		return this.serialize(() =>
+			work({
+				submit: (event) => this.admit(event),
+				apply: (clientMessageId, event) => this.commit(clientMessageId, event),
+				applyAll: (changes) => this.commitMany(changes),
+				current: (clientMessageId) => this.inputs.get(clientMessageId),
+			}),
+		);
+	}
+
+	/** The full record of one input, for the session that owns this store. */
+	current(clientMessageId: string): PendingInput | undefined {
+		return this.inputs.get(clientMessageId);
+	}
+
 	read(clientMessageId: string): PendingInputRead {
 		const input = this.inputs.get(clientMessageId);
 		return input === undefined
 			? { status: "not_admitted", clientMessageId }
 			: { status: "admitted", projection: projectPendingInput(input) };
+	}
+
+	/** The cursor of the newest committed transition; a snapshot taken now covers everything through it. */
+	get throughCursor(): number {
+		return this.cursor;
 	}
 
 	snapshot(): readonly PendingInputProjection[] {
@@ -157,21 +199,49 @@ export class PendingInputStore {
 		return run;
 	}
 
+	private admit(event: Omit<SubmitEvent, "type" | "handle">): Promise<PendingInputOperationResult | undefined> {
+		const handle = this.inputs.get(event.clientMessageId)?.handle ?? {
+			lifetimeId: this.options.lifetimeId,
+			queuedId: this.options.nextQueuedId(),
+		};
+		return this.commit(event.clientMessageId, { ...event, type: "submit", handle });
+	}
+
 	private async commit(
 		clientMessageId: string,
 		event: PendingInputEvent,
 	): Promise<PendingInputOperationResult | undefined> {
-		const current = this.inputs.get(clientMessageId);
-		const decision = reducePendingInput(current, event);
-		const next = decision.next;
-		const result =
-			decision.result?.clientMessageId === "" ? { ...decision.result, clientMessageId } : decision.result;
-		if (next === undefined || decision.effects.length === 0) return result;
+		return (await this.commitMany([{ clientMessageId, event }]))[0];
+	}
+
+	/**
+	 * Reduces every change, then records all that changed in ONE journal record, so a crash or a failed write
+	 * keeps either all of them or none (a consumer committing a batch never sees half of it delivered).
+	 */
+	private async commitMany(
+		changes: readonly { readonly clientMessageId: string; readonly event: PendingInputEvent }[],
+	): Promise<(PendingInputOperationResult | undefined)[]> {
+		const results: (PendingInputOperationResult | undefined)[] = [];
+		const committed: { readonly next: PendingInput; readonly decision: ReturnType<typeof reducePendingInput> }[] = [];
+		const staged = new Map<string, PendingInput>();
+		for (const { clientMessageId, event } of changes) {
+			const current = staged.get(clientMessageId) ?? this.inputs.get(clientMessageId);
+			const decision = reducePendingInput(current, event);
+			const result =
+				decision.result?.clientMessageId === "" ? { ...decision.result, clientMessageId } : decision.result;
+			results.push(result);
+			if (decision.next === undefined || decision.effects.length === 0) continue;
+			staged.set(clientMessageId, decision.next);
+			committed.push({ next: decision.next, decision: { ...decision, result } });
+		}
+		const [first, ...rest] = committed;
+		if (first === undefined) return results;
 		const record: PendingInputJournalRecord = {
 			type: PENDING_INPUT_TRANSITION,
 			cursor: this.cursor + 1,
-			input: next,
-			...(result === undefined ? {} : { result }),
+			input: first.next,
+			...(first.decision.result === undefined ? {} : { result: first.decision.result }),
+			...(rest.length === 0 ? {} : { batch: rest.map((entry) => entry.next) }),
 		};
 		try {
 			await this.options.journal.append(record);
@@ -182,20 +252,23 @@ export class PendingInputStore {
 			throw error;
 		}
 		this.cursor = record.cursor;
-		this.inputs.set(clientMessageId, next);
-		const projection = projectPendingInput(next);
+		for (const { next } of committed) this.inputs.set(next.clientMessageId, next);
+		// One notification per record: every input it changed, under its one cursor.
+		const projections = committed.map(({ next }) => projectPendingInput(next));
 		for (const listener of this.listeners) {
 			try {
-				listener(projection);
+				listener(projections, record.cursor);
 			} catch (error) {
 				this.reportListenerError(error);
 			}
 		}
-		for (const effect of decision.effects) {
-			if (effect.type === "dispatch") this.options.dispatch?.(effect.token, next);
-			if (effect.type === "restore_to_draft") this.options.restoreToDraft?.(effect.text);
+		for (const { next, decision } of committed) {
+			for (const effect of decision.effects) {
+				if (effect.type === "dispatch") this.options.dispatch?.(effect.token, next);
+				if (effect.type === "restore_to_draft") this.options.restoreToDraft?.(effect.text);
+			}
 		}
-		return result;
+		return results;
 	}
 
 	private reportListenerError(error: unknown): void {

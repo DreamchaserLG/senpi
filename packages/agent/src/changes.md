@@ -1,3 +1,25 @@
+## 2026-10-17 - Queued input's consumption is committed before a provider sees it (senpi#3549)
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentLoopConfig.commitQueuedConsumption(queue, messages)`, awaited with the drained queued messages before any of them enters the context.
+- `packages/agent/src/agent-loop.ts`: `runLoop` remembers which queue the pending messages were drained from and awaits `commitQueuedConsumption` before inserting them; a rejection restores them to that queue and fails the attempt, so no provider request carries them.
+- `packages/agent/src/agent.ts`: an optional `AgentOptions.queuedInputPort` with `claim` (the native drain runs under the owner's gate), `release` (the native restore, likewise) and `commitConsumption`. The loop's queue polls and restores go through it, and so do the runs started from a queue (`continue()` after an assistant message, `continueWithQueuedMessages()`, the drain after `agent_end`): `takeQueuedMessages` claims, commits, and releases on a failed commit. Without a port every queue path behaves as before.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: the coding-agent session journals a pending input's delivery; a message must not reach a provider before that record is durable, or a crash would leave it sent but still pending (desktop #2838).
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the drain-to-context step happens inside the loop, with no hook between them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts`, the queue drains in `runLoop` (each now goes through `drainSteering` / `drainFollowUp`) and the insertion before the next request.
+- MEDIUM: `packages/agent/src/agent.ts` `continue`, `continueWithQueuedMessages`, `runQueuedMessagesAfterAgentEnd` (their drains now go through `runQueuedMessages` / `takeQueuedMessages`) and `createLoopConfig`.
+- LOW: `packages/agent/src/agent.ts` `AgentOptions`; `packages/agent/src/types.ts` `AgentLoopConfig`.
+
 ## 2026-10-17 - A caller's plain abort reason is carried as the turn's message (senpi#3510)
 
 ### What changed

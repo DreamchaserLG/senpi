@@ -150,6 +150,16 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "effectId must be a non-empty string of at most 256 characters.";
 	}
+	if (value.type === "get_pending_inputs" && value.knownClientMessageIds !== undefined) {
+		const ids: unknown = value.knownClientMessageIds;
+		if (
+			!Array.isArray(ids) ||
+			ids.length > 64 ||
+			!ids.every((id) => typeof id === "string" && id.length > 0 && id.length <= 256)
+		) {
+			return "knownClientMessageIds must be an array of at most 64 non-empty strings of at most 256 characters.";
+		}
+	}
 	if (value.type === "get_effect_status" && value.sessionPath !== undefined && typeof value.sessionPath !== "string") {
 		return "sessionPath must be a string.";
 	}

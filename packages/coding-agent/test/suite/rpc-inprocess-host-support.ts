@@ -167,6 +167,8 @@ function inProcessRuntimeFactory(): {
 					pendingDeliveries.splice(0);
 					return Object.assign({ steering: [], followUp: [] }, { ordered: [] });
 				},
+				// Nothing identified is ever queued here, so a clear has nothing to record.
+				whenQueueClearRecorded: async () => {},
 				// Composed through the production predicate so this fake cannot drift
 				// from the activity contract the sweep consults.
 				get activitySnapshot() {

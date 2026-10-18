@@ -218,18 +218,28 @@ async function runLoop(
 	let explicitContinuation = false;
 	// Messages from `prepareNextTurn`, appended before the next provider request.
 	let preparedMessages: AgentMessage[] = [];
+	// Which queue the current pendingMessages were drained from, so consumption is committed against it.
+	let pendingSource: "steering" | "followUp" = "steering";
+	const drainSteering = async (): Promise<AgentMessage[]> => {
+		pendingSource = "steering";
+		return (await config.getSteeringMessages?.()) || [];
+	};
+	const drainFollowUp = async (): Promise<AgentMessage[]> => {
+		pendingSource = "followUp";
+		return (await config.getFollowUpMessages?.()) || [];
+	};
 	const refreshTerminatingQueueDrain = async (): Promise<void> => {
 		if (!drainedTerminatingQueue || !config.restorePendingMessages) return;
 		await config.restorePendingMessages(drainedTerminatingQueue, pendingMessages);
-		pendingMessages = (await config.getSteeringMessages?.()) || [];
+		pendingMessages = await drainSteering();
 		drainedTerminatingQueue = pendingMessages.length > 0 ? "steering" : undefined;
 		if (pendingMessages.length === 0) {
-			pendingMessages = (await config.getFollowUpMessages?.()) || [];
+			pendingMessages = await drainFollowUp();
 			drainedTerminatingQueue = pendingMessages.length > 0 ? "followUp" : undefined;
 		}
 	};
 	// Check for steering messages at start (user may have typed while waiting)
-	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
+	let pendingMessages: AgentMessage[] = await drainSteering();
 
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
@@ -251,6 +261,17 @@ async function runLoop(
 					return;
 				}
 				drainedTerminatingQueue = undefined;
+			}
+
+			// Commit the queued messages' consumption before any of them reaches the context or a provider;
+			// a rejected commit restores them and fails this attempt.
+			if (pendingMessages.length > 0 && config.commitQueuedConsumption) {
+				try {
+					await config.commitQueuedConsumption(pendingSource, pendingMessages);
+				} catch (error) {
+					await config.restorePendingMessages?.(pendingSource, pendingMessages);
+					throw error;
+				}
 			}
 
 			// Process prepared and queued messages before the next assistant response.
@@ -362,10 +383,10 @@ async function runLoop(
 			}
 			explicitContinuation = decision?.action === "continue";
 			if (toolBatchTerminated) {
-				pendingMessages = (await config.getSteeringMessages?.()) || [];
+				pendingMessages = await drainSteering();
 				if (pendingMessages.length > 0) drainedTerminatingQueue = "steering";
 				if (pendingMessages.length === 0) {
-					pendingMessages = (await config.getFollowUpMessages?.()) || [];
+					pendingMessages = await drainFollowUp();
 					if (pendingMessages.length > 0) drainedTerminatingQueue = "followUp";
 				}
 				if (pendingMessages.length === 0 && !explicitContinuation) {
@@ -408,7 +429,7 @@ async function runLoop(
 				drainedTerminatingQueue = undefined;
 			}
 			if (!toolBatchTerminated) {
-				pendingMessages = (await config.getSteeringMessages?.()) || [];
+				pendingMessages = await drainSteering();
 			}
 			if (hasMoreToolCalls || pendingMessages.length > 0) {
 				explicitContinuation = false;
@@ -416,7 +437,7 @@ async function runLoop(
 		}
 
 		// Agent would stop here. Check for follow-up messages.
-		const followUpMessages = (await config.getFollowUpMessages?.()) || [];
+		const followUpMessages = await drainFollowUp();
 		if (followUpMessages.length > 0) {
 			// Set as pending so inner loop processes them
 			explicitContinuation = false;

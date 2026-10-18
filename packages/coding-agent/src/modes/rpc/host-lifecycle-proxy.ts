@@ -3,13 +3,19 @@
  * adoption of the public name, and the readiness probes of the private hop. Split out of
  * `host-lifecycle.ts`, which keeps the supervisor's orchestration (senpi#2566).
  */
-import { access, chmod, mkdir, rename, unlink } from "node:fs/promises";
+import { chmod, mkdir, rename, stat, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import type { HostAdmission } from "./host-admission.ts";
 import { proxyWithAdmission } from "./host-admission-proxy.ts";
 import type { ClientOccupancy } from "./host-client-occupancy.ts";
-import { MAX_SOCKET_PATH_BYTES, type SocketFileIdentity, statSocketIdentity } from "./socket-ownership.ts";
+import {
+	type ListenerState,
+	MAX_SOCKET_PATH_BYTES,
+	type SocketFileIdentity,
+	socketEntryListenerState,
+	statSocketIdentity,
+} from "./socket-ownership.ts";
 import {
 	authenticateSocket,
 	ensureSocketSecret,
@@ -122,8 +128,37 @@ function canConnect(socketPath: string, secret?: Uint8Array): Promise<boolean> {
 	});
 }
 
-export async function prepareSocketPath(socketPath: string): Promise<void> {
-	if (process.platform === "win32") return;
+/** Test-only seams for `prepareSocketPath`'s stale-entry check. */
+export interface PrepareSocketPathHooks {
+	/** Runs after the entry was probed dead and before it is unlinked. */
+	readonly afterStaleProbe?: () => Promise<void>;
+	/** Replaces the listener probe, so a test can pin each verdict. */
+	readonly listenerState?: (socketPath: string) => Promise<ListenerState>;
+}
+
+/** One entry's identity including its change time: a rebind at the same inode still moves ctime. */
+type EntryStamp = {
+	readonly dev: bigint;
+	readonly ino: bigint;
+	readonly ctimeNs: bigint;
+	readonly socket: boolean;
+};
+
+async function stampOf(socketPath: string): Promise<EntryStamp | undefined> {
+	try {
+		const entry = await stat(socketPath, { bigint: true });
+		return { dev: entry.dev, ino: entry.ino, ctimeNs: entry.ctimeNs, socket: entry.isSocket() };
+	} catch (cause) {
+		if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return undefined;
+		throw cause;
+	}
+}
+
+const sameStamp = (a: EntryStamp, b: EntryStamp): boolean =>
+	a.dev === b.dev && a.ino === b.ino && a.ctimeNs === b.ctimeNs;
+
+export async function prepareSocketPath(socketPath: string, hooks: PrepareSocketPathHooks = {}): Promise<void> {
+	if (process.platform === "win32" || socketPath.startsWith("\0")) return;
 	// A path the kernel would truncate binds a DIFFERENT endpoint than the one every client was
 	// told about, and the failure surfaces much later as "the host does not answer". Refuse here.
 	if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH_BYTES) {
@@ -132,14 +167,26 @@ export async function prepareSocketPath(socketPath: string): Promise<void> {
 		);
 	}
 	await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
+	const probed = await stampOf(socketPath);
+	if (probed === undefined) return;
+	const inUse = (evidence: string) =>
+		new Error(`${socketPath}: address already in use by a live server (${evidence}).`);
+	// Linux refuses a connect to a regular file too; never remove what is not a socket.
+	if (!probed.socket) throw inUse("the entry is not a socket");
+	const state = await (hooks.listenerState ?? socketEntryListenerState)(socketPath);
+	if (state.verdict === "gone") return;
+	if (state.verdict === "live") throw inUse(state.evidence);
+	await hooks.afterStaleProbe?.();
+	// Something may have replaced the entry since the probe; unlink only the entry probed dead.
+	const current = await stampOf(socketPath);
+	if (current === undefined) return;
+	if (!sameStamp(probed, current)) throw inUse("the entry changed after it was probed");
 	try {
-		await access(socketPath);
+		await unlink(socketPath);
 	} catch (cause) {
 		if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return;
 		throw cause;
 	}
-	if (await canConnect(socketPath)) throw new Error(`${socketPath}: address already in use by a live server.`);
-	await unlink(socketPath);
 }
 
 export function listen(server: Server, socketPath: string, secret?: Uint8Array): Promise<void> {

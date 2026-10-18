@@ -146,6 +146,8 @@ export interface AgentOptions {
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
+	/** Lets the owner of queued input commit its consumption before the loop sends it (senpi#3549). */
+	queuedInputPort?: QueuedInputPort;
 	sessionId?: string;
 	thinkingBudgets?: ThinkingBudgets;
 	transport?: Transport;
@@ -158,6 +160,28 @@ export interface AgentOptions {
 	abortServerSideFallback?: boolean;
 	/** Cursor exec-channel tool handlers; see {@link AgentLoopConfig.cursorExecHandlers}. */
 	cursorExecHandlers?: AgentLoopConfig["cursorExecHandlers"];
+}
+
+/**
+ * Claimed messages going back to their queue. Both answers are false once a clear landed after the claim:
+ * `restorable` asks before anything is recorded, `restore` puts the messages back only while that still holds.
+ */
+export interface QueuedGiveBack {
+	restorable(): boolean;
+	restore(): boolean;
+}
+
+/** The owner side of the steering and follow-up queues; every drain, restore and consumption goes through it. */
+export interface QueuedInputPort {
+	/** Runs `drain` (the native queue's drain) under the owner's gate and returns what it may hand to a turn. */
+	claim(queue: "steering" | "followUp", drain: () => AgentMessage[]): Promise<AgentMessage[]>;
+	/** Gives claimed messages back under the owner's gate; a clear that landed after the claim wins. */
+	release(queue: "steering" | "followUp", messages: AgentMessage[], giveBack: QueuedGiveBack): Promise<void>;
+	/**
+	 * Called with drained queued messages before any of them enters the context or a provider request.
+	 * Resolve once their consumption is durable; a rejection restores them and fails this attempt.
+	 */
+	commitConsumption(queue: "steering" | "followUp", messages: AgentMessage[]): Promise<void>;
 }
 
 export interface AgentContinuationOptions {
@@ -279,6 +303,7 @@ export class Agent {
 		signal?: AbortSignal,
 	) => Promise<AfterToolCallResult | undefined>;
 	public finishTurn?: FinishTurn;
+	public queuedInputPort?: QueuedInputPort;
 	public prepareRequest?: PrepareRequest;
 	public prepareNextTurn?: (
 		signal?: AbortSignal,
@@ -332,6 +357,7 @@ export class Agent {
 		this.beforeToolCall = runtimeOptions.beforeToolCall;
 		this.afterToolCall = runtimeOptions.afterToolCall;
 		this.finishTurn = runtimeOptions.finishTurn;
+		this.queuedInputPort = runtimeOptions.queuedInputPort;
 		this.prepareRequest = runtimeOptions.prepareRequest;
 		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
 		this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
@@ -517,9 +543,8 @@ export class Agent {
 			return;
 		}
 
-		const queuedSteering = this.steeringQueue.drain();
-		if (queuedSteering.length > 0) {
-			await this.runPromptMessages(queuedSteering, {
+		if (this.steeringQueue.hasItems()) {
+			await this.runQueuedMessages("steering", {
 				skipInitialSteeringPoll: true,
 				initialRequestTimeoutMs: options.timeoutMs,
 				initialRequestStreamStartTimeoutMs: options.streamStartTimeoutMs,
@@ -527,9 +552,8 @@ export class Agent {
 			return;
 		}
 
-		const queuedFollowUps = this.followUpQueue.drain();
-		if (queuedFollowUps.length > 0) {
-			await this.runPromptMessages(queuedFollowUps, {
+		if (this.followUpQueue.hasItems()) {
+			await this.runQueuedMessages("followUp", {
 				initialRequestTimeoutMs: options.timeoutMs,
 				initialRequestStreamStartTimeoutMs: options.streamStartTimeoutMs,
 			});
@@ -555,9 +579,8 @@ export class Agent {
 		}
 
 		if (lastMessage.role === "assistant") {
-			const queuedSteering = this.steeringQueue.drain();
-			if (queuedSteering.length > 0) {
-				await this.runPromptMessages(queuedSteering, {
+			if (this.steeringQueue.hasItems()) {
+				await this.runQueuedMessages("steering", {
 					skipInitialSteeringPoll: true,
 					initialRequestTimeoutMs: options.timeoutMs,
 					initialRequestStreamStartTimeoutMs: options.streamStartTimeoutMs,
@@ -565,9 +588,8 @@ export class Agent {
 				return;
 			}
 
-			const queuedFollowUps = this.followUpQueue.drain();
-			if (queuedFollowUps.length > 0) {
-				await this.runPromptMessages(queuedFollowUps, {
+			if (this.followUpQueue.hasItems()) {
+				await this.runQueuedMessages("followUp", {
 					initialRequestTimeoutMs: options.timeoutMs,
 					initialRequestStreamStartTimeoutMs: options.streamStartTimeoutMs,
 				});
@@ -619,6 +641,71 @@ export class Agent {
 		});
 	}
 
+	/**
+	 * Starts a run from one queue. Without a port the queue is drained now, as before; with one, the drain is
+	 * claimed and its consumption committed inside the run, before any of it reaches the context.
+	 */
+	private async runQueuedMessages(
+		queue: "steering" | "followUp",
+		options: Parameters<Agent["runPromptMessages"]>[1],
+	): Promise<void> {
+		const pendingQueue = queue === "steering" ? this.steeringQueue : this.followUpQueue;
+		const port = this.queuedInputPort;
+		if (!port) {
+			await this.runPromptMessages(pendingQueue.drain(), options);
+			return;
+		}
+		await this.runWithLifecycle(async (signal) => {
+			const messages = await this.takeQueuedMessages(queue);
+			if (messages.length === 0) return;
+			await runAgentLoop(
+				messages,
+				this.createContextSnapshot(),
+				this.createLoopConfig(options),
+				(event) => this.processEvents(event),
+				signal,
+				this.streamFunction,
+			);
+		});
+	}
+
+	/**
+	 * Takes one queue's messages for a run: a plain drain without a port; with one, a claim whose consumption is
+	 * committed before the caller puts anything into the context, released again if that commit fails.
+	 */
+	private async takeQueuedMessages(queue: "steering" | "followUp"): Promise<AgentMessage[]> {
+		const pendingQueue = queue === "steering" ? this.steeringQueue : this.followUpQueue;
+		const port = this.queuedInputPort;
+		if (!port) return pendingQueue.drain();
+		let generation = pendingQueue.getClearGeneration();
+		const messages = await port.claim(queue, () => {
+			generation = pendingQueue.getClearGeneration();
+			return pendingQueue.drain();
+		});
+		if (messages.length === 0) return messages;
+		try {
+			await port.commitConsumption(queue, messages);
+		} catch (error) {
+			await port.release(queue, messages, this.giveBack(queue, messages, generation));
+			throw error;
+		}
+		return messages;
+	}
+
+	/** The one give-back every queue exit uses: a clear since `generation` (read at the claim) wins. */
+	private giveBack(queue: "steering" | "followUp", messages: AgentMessage[], generation: number): QueuedGiveBack {
+		const pendingQueue = queue === "steering" ? this.steeringQueue : this.followUpQueue;
+		const restorable = () => pendingQueue.getClearGeneration() === generation;
+		return {
+			restorable,
+			restore: () => {
+				if (!restorable()) return false;
+				pendingQueue.prepend(messages);
+				return true;
+			},
+		};
+	}
+
 	private async runContinuation(options: AgentContinuationOptions = {}): Promise<void> {
 		await this.runWithLifecycle(async (signal) => {
 			await runAgentLoopContinue(
@@ -655,6 +742,9 @@ export class Agent {
 		let steeringQueueGeneration = this.steeringQueue.getClearGeneration();
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 		const finishTurn = this.finishTurn;
+		const queuedInputPort = this.queuedInputPort;
+		const giveBack = (queue: "steering" | "followUp", messages: AgentMessage[]): QueuedGiveBack =>
+			this.giveBack(queue, messages, queue === "steering" ? steeringQueueGeneration : followUpQueueGeneration);
 		const reasoning = (this._state.reasoningBaseline as ThinkingLevel | undefined) ?? this._state.thinkingLevel;
 		return {
 			model: this._state.model,
@@ -705,21 +795,25 @@ export class Agent {
 					skipInitialSteeringPoll = false;
 					return [];
 				}
-				steeringQueueGeneration = this.steeringQueue.getClearGeneration();
-				return this.steeringQueue.drain();
+				const drain = () => {
+					steeringQueueGeneration = this.steeringQueue.getClearGeneration();
+					return this.steeringQueue.drain();
+				};
+				return queuedInputPort ? queuedInputPort.claim("steering", drain) : drain();
 			},
 			getFollowUpMessages: async () => {
-				followUpQueueGeneration = this.followUpQueue.getClearGeneration();
-				return this.followUpQueue.drain();
+				const drain = () => {
+					followUpQueueGeneration = this.followUpQueue.getClearGeneration();
+					return this.followUpQueue.drain();
+				};
+				return queuedInputPort ? queuedInputPort.claim("followUp", drain) : drain();
 			},
-			restorePendingMessages: (queue, messages) => {
-				if (queue === "steering") {
-					if (this.steeringQueue.getClearGeneration() !== steeringQueueGeneration) return;
-					this.steeringQueue.prepend(messages);
-					return;
-				}
-				if (this.followUpQueue.getClearGeneration() !== followUpQueueGeneration) return;
-				this.followUpQueue.prepend(messages);
+			commitQueuedConsumption: queuedInputPort
+				? (queue, messages) => queuedInputPort.commitConsumption(queue, messages)
+				: undefined,
+			restorePendingMessages: async (queue, messages) => {
+				if (queuedInputPort) await queuedInputPort.release(queue, messages, giveBack(queue, messages));
+				else giveBack(queue, messages).restore();
 			},
 		};
 	}
@@ -770,7 +864,7 @@ export class Agent {
 	}
 
 	private async runQueuedMessagesAfterAgentEnd(signal: AbortSignal): Promise<void> {
-		const queuedSteering = this.steeringQueue.drain();
+		const queuedSteering = this.steeringQueue.hasItems() ? await this.takeQueuedMessages("steering") : [];
 		if (queuedSteering.length > 0) {
 			await runAgentLoop(
 				queuedSteering,
@@ -783,7 +877,7 @@ export class Agent {
 			return;
 		}
 
-		const queuedFollowUps = this.followUpQueue.drain();
+		const queuedFollowUps = this.followUpQueue.hasItems() ? await this.takeQueuedMessages("followUp") : [];
 		if (queuedFollowUps.length === 0) {
 			return;
 		}

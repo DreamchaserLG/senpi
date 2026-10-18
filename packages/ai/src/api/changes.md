@@ -330,3 +330,22 @@ Transport selection and the fallback cooldown live inside the provider adapter, 
 
 - MEDIUM: the WebSocket `catch` block in `stream()` of `openai-codex-responses.ts` (upstream calls a two-argument `recordWebSocketFailure` that adds the session to a permanent fallback set).
 - LOW: `fallback-state.ts` has no upstream counterpart.
+
+## 2026-10-18 - ChatGPT usage-limit refusals name the limit and the next step (senpi#3615)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: `parseErrorResponse` takes the response headers and delegates the usage-limit wording to `describeChatGptUsageLimitResponse`; the in-stream `error` event branch uses `describeChatGptUsageLimitEvent` for a `usage_limit_reached`/`usage_not_included` event before falling back to the `Codex error:` text.
+- `packages/ai/src/api/chatgpt-usage-limit.ts` (fork-only): reads `x-codex-rate-limit-reached-type` and `x-codex-credits-has-credits` next to the body's `plan_type` and `resets_at`, and states the workspace-credits, spend-cap, has-credits or plan case plus the ways to keep going. Codex's free-form `x-codex-promo-message` is left out: a model name in it would make the fallback layer scope the limit to one model. Its closing sentence starts with `ACCOUNT_LIMIT_NEXT_STEP_LEAD` from `utils/provider-failure-description.ts`, whose account-limit projection keeps any message carrying that lead as written (retry marker stripped) instead of replacing it with the generic switch-provider sentence (seen in CLI QA: the projection hid the new text). The dependency runs api -> utils so the `./utils/*` and `./models` entry graphs stay within budget.
+
+### Why
+
+Every refusal read "You have hit your ChatGPT usage limit (<plan> plan)." whether the account had credits ChatGPT did not apply, the workspace ran out of credits, or a spend cap was hit, and it never said what to do. Codex CLI reads the same headers (`codex-rs/protocol/src/error.rs`). It sends no credit opt-in flag, so the wording is the part we can match.
+
+### Why an extension could not handle it
+
+The error text is built inside the provider adapter from the raw response before any extension sees the failure, and the headers are gone by then.
+
+### Expected merge conflict zones
+
+- LOW: `parseErrorResponse` in `openai-codex-responses.ts` (signature gains `headers`) and the `type === "error"` branch of `mapCodexEvents`.

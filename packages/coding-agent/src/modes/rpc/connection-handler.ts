@@ -1100,6 +1100,7 @@ export function createRpcConnectionHandler(
 			case "clear_queue": {
 				ClientAdmissions.clearQueuedFor(session);
 				const cleared = session.clearQueue({ abortWillFollow: command.abortWillFollow ?? false });
+				await session.whenQueueClearRecorded();
 				return success(id, "clear_queue", {
 					steering: cleared.steering,
 					followUp: cleared.followUp,
@@ -1161,6 +1162,9 @@ export function createRpcConnectionHandler(
 
 			case "get_effect_status":
 				return runGetEffectStatus(effectContext(), command);
+
+			case "get_pending_inputs":
+				return success(id, "get_pending_inputs", await session.getPendingInputs(command.knownClientMessageIds));
 
 			// =================================================================
 			// Model

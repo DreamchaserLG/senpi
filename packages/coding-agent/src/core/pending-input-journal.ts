@@ -1,5 +1,6 @@
-import { open, readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { dirname } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import {
 	PENDING_INPUT_TRANSITION,
 	type PendingInputJournal,
@@ -68,23 +69,8 @@ export class SessionPendingInputJournal implements PendingInputJournal {
 		}
 	}
 
-	private async refuseCorruptTransitionLines(): Promise<void> {
-		const file = this.session.isPersisted() ? this.session.getSessionFile() : undefined;
-		if (file === undefined) return;
-		const corrupt = await corruptTransitionLine(file).catch((error: unknown) => {
-			if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
-			throw error;
-		});
-		if (corrupt !== undefined) throw new PendingInputJournalCorruptError(corrupt);
-	}
-
 	async read(): Promise<readonly PendingInputJournalRecord[]> {
-		await this.refuseCorruptTransitionLines();
-		const records: PendingInputJournalRecord[] = [];
-		for (const entry of this.session.getEntries()) {
-			if (entry.type !== "custom" || entry.customType !== PENDING_INPUT_TRANSITION) continue;
-			records.push(parseRecord(entry.data, entry.id));
-		}
+		const records = (await this.transitionEntries()).map((entry) => parseRecord(entry.data, entry.id));
 		records.sort((a, b) => a.cursor - b.cursor);
 		// The session loader skips a line that does not parse, so a lost transition shows only as a cursor gap.
 		records.forEach((record, index) => {
@@ -92,6 +78,35 @@ export class SessionPendingInputJournal implements PendingInputJournal {
 		});
 		return records;
 	}
+
+	/**
+	 * A persisted session's transitions come from one streaming pass over its file, never from `getEntries()`:
+	 * on a trimmed session that would materialize and keep the whole history (senpi#3519, #3535). An in-memory
+	 * session has no file, so its entries are the journal.
+	 */
+	private async transitionEntries(): Promise<readonly TransitionEntry[]> {
+		// A session whose file is not written yet (a branch with no message so far) holds its transitions only in
+		// memory; it was never trimmed, so reading its entries costs nothing (#3586 review H1).
+		const file =
+			this.session.isPersisted() && this.session.isTranscriptFlushed() ? this.session.getSessionFile() : undefined;
+		if (file === undefined)
+			return this.session
+				.getEntries()
+				.flatMap((entry) =>
+					entry.type === "custom" && entry.customType === PENDING_INPUT_TRANSITION
+						? [{ data: entry.data, id: entry.id }]
+						: [],
+				);
+		return scanTransitions(file).catch((error: unknown) => {
+			if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+			throw error;
+		});
+	}
+}
+
+interface TransitionEntry {
+	readonly data: unknown;
+	readonly id: string;
 }
 
 /**
@@ -100,21 +115,67 @@ export class SessionPendingInputJournal implements PendingInputJournal {
  * corrupt and refused, the last line included. A final segment with no newline is a tail torn by a crash: it was
  * never committed, the loader drops it, and the next append cuts it back, so it is tolerated. A torn line keeps
  * its prefix, and `appendCustomEntry` writes `type` and `customType` first, so the marker survives a tear.
+ * Only lines naming a transition are parsed, so the pass holds one line at a time, never the transcript.
  */
-async function corruptTransitionLine(file: string): Promise<number | undefined> {
-	const segments = (await readFile(file, "utf8")).split("\n");
-	// After the last newline: "" for a complete file, or the torn tail of a crash.
-	segments.pop();
-	for (let index = 0; index < segments.length; index++) {
-		const line = segments[index] ?? "";
-		if (!line.includes(PENDING_INPUT_TRANSITION)) continue;
-		try {
-			JSON.parse(line);
-		} catch {
-			return index + 1;
+async function scanTransitions(file: string): Promise<TransitionEntry[]> {
+	const handle = await open(file, "r");
+	try {
+		const decoder = new StringDecoder("utf8");
+		const buffer = Buffer.allocUnsafe(1024 * 1024);
+		const entries: TransitionEntry[] = [];
+		let pending = "";
+		let lineNumber = 0;
+		while (true) {
+			const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+			if (bytesRead === 0) break;
+			pending += decoder.write(buffer.subarray(0, bytesRead));
+			let start = 0;
+			let newline = pending.indexOf("\n", start);
+			while (newline !== -1) {
+				lineNumber += 1;
+				const entry = transitionOf(pending.slice(start, newline), lineNumber);
+				if (entry !== undefined) entries.push(entry);
+				start = newline + 1;
+				newline = pending.indexOf("\n", start);
+			}
+			pending = pending.slice(start);
 		}
+		// After the last newline is the torn tail of a crash, or nothing. A final line that parses was written whole
+		// (a writer outside senpi that omits the newline); the loader keeps it, so it is read too (#3586 review L1).
+		const tail = finalSegmentTransition(pending, lineNumber + 1);
+		if (tail !== undefined) entries.push(tail);
+		return entries;
+	} finally {
+		await handle.close();
 	}
-	return undefined;
+}
+
+function finalSegmentTransition(segment: string, lineNumber: number): TransitionEntry | undefined {
+	if (!segment.includes(PENDING_INPUT_TRANSITION)) return undefined;
+	try {
+		JSON.parse(segment);
+	} catch {
+		return undefined;
+	}
+	return transitionOf(segment, lineNumber);
+}
+
+function transitionOf(line: string, lineNumber: number): TransitionEntry | undefined {
+	if (!line.includes(PENDING_INPUT_TRANSITION)) return undefined;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(line);
+	} catch {
+		throw new PendingInputJournalCorruptError(lineNumber);
+	}
+	if (
+		typeof parsed !== "object" ||
+		parsed === null ||
+		!("type" in parsed && parsed.type === "custom") ||
+		!("customType" in parsed && parsed.customType === PENDING_INPUT_TRANSITION)
+	)
+		return undefined;
+	return { data: "data" in parsed ? parsed.data : undefined, id: "id" in parsed ? String(parsed.id) : "" };
 }
 
 export class PendingInputJournalCorruptError extends Error {
@@ -183,11 +244,15 @@ function parseRecord(data: unknown, entryId: string): PendingInputJournalRecord 
 	}
 	const result = "result" in data ? data.result : undefined;
 	if (result !== undefined && !isOperationResult(result)) throw new PendingInputJournalError(entryId);
+	const batch = "batch" in data ? data.batch : undefined;
+	if (batch !== undefined && !(Array.isArray(batch) && batch.every(isPendingInput)))
+		throw new PendingInputJournalError(entryId);
 	return {
 		type: PENDING_INPUT_TRANSITION,
 		cursor: data.cursor,
 		input: data.input,
 		...(result === undefined ? {} : { result }),
+		...(batch === undefined ? {} : { batch }),
 	};
 }
 

@@ -43,6 +43,8 @@ export interface SupersededVersion {
 export interface PendingInputFailure {
 	readonly delivery: DeliveryCertainty;
 	readonly reason: string;
+	/** The reservation that failed, kept so later evidence must name the attempt it is about. */
+	readonly attempt?: DeliveryToken;
 }
 
 /** The recorded answer of one operation, replayed byte for byte when the same effect id repeats. */
@@ -99,20 +101,29 @@ export type PendingInputEvent =
 	| ({ readonly type: "remove" } & MutationTarget)
 	| { readonly type: "retry"; readonly effectId: string; readonly handle: PendingInputHandle }
 	| { readonly type: "reserve"; readonly token: DeliveryToken }
+	/** The consumer gave the attempt back before any of it was committed or sent: queued again, same id. */
+	| { readonly type: "release"; readonly token: DeliveryToken }
 	| { readonly type: "consumed"; readonly token: DeliveryToken }
-	| { readonly type: "handled"; readonly token?: DeliveryToken }
+	/** A handled-command receipt: with the reservation's token, or naming the lifetime of a still-queued input. */
+	| { readonly type: "handled"; readonly token: DeliveryToken }
+	| { readonly type: "handled"; readonly lifetimeId: string }
 	| { readonly type: "refused"; readonly token: DeliveryToken; readonly reason: string }
 	| { readonly type: "ambiguous"; readonly token: DeliveryToken; readonly reason: string }
-	/** An identity-bearing delivery witness found after the fact (a late event or recovery). */
-	| { readonly type: "witnessed" }
-	/** Complete, fenced evidence that no consumer can still deliver the attempt. */
-	| { readonly type: "non_delivery_proven" }
+	/** An identity-bearing delivery witness found after the fact (a late event or recovery), for one failed attempt. */
+	| { readonly type: "witnessed"; readonly attemptId: string }
+	/** Complete, fenced evidence that no consumer can still deliver the named failed attempt. */
+	| { readonly type: "non_delivery_proven"; readonly attemptId: string }
 	/** Teardown that is not an explicit user action: reload, unload, crash, handoff. */
 	| { readonly type: "teardown" }
 	| { readonly type: "owner_lost"; readonly token: DeliveryToken }
 	/** An explicit Stop or child cancellation; `consumerFenced` proves an in-flight attempt was not consumed. */
 	| { readonly type: "cancel"; readonly cause: "stop" | "child_cancel"; readonly consumerFenced: boolean }
-	| { readonly type: "rebind"; readonly handle: PendingInputHandle };
+	/**
+	 * A reopen. `attemptsUnsent` is the journal owner's proof that an attempt still `sending` was never handed to
+	 * its consumer: the engine commits consumption before any provider sees the input, so a reservation without a
+	 * later delivered record returns to the queue under the same id. Without it the attempt stays uncertain.
+	 */
+	| { readonly type: "rebind"; readonly handle: PendingInputHandle; readonly attemptsUnsent?: boolean };
 
 export type OperationOutcome =
 	| "admitted"

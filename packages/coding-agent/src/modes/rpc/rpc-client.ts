@@ -185,6 +185,8 @@ export type RpcAbortOptions = Omit<Extract<RpcCommand, { type: "abort" }>, "type
 export type RpcAbortAnswer = Extract<RpcResponse, { command: "abort"; success: true }>["data"];
 /** `get_effect_status`: the receipt, or proof the whole transcript holds none. */
 export type RpcEffectStatusAnswer = Extract<RpcResponse, { command: "get_effect_status"; success: true }>["data"];
+/** `get_pending_inputs`: pending inputs in durable custody, and an outcome for each known id. */
+export type RpcPendingInputsAnswer = Extract<RpcResponse, { command: "get_pending_inputs"; success: true }>["data"];
 
 export class RpcClientOpenInFlightError extends Error {
 	readonly code = "open_session_in_flight" as const;
@@ -742,6 +744,18 @@ export class RpcClient {
 			...(options.sessionPath === undefined ? {} : { sessionPath: options.sessionPath }),
 		};
 		return this.getData<RpcEffectStatusAnswer>(await this.send(command, options.sessionPath === undefined));
+	}
+
+	/**
+	 * The pending inputs in durable custody (queued, sending, failed) and an explicit outcome for each id in
+	 * `knownClientMessageIds` (at most 64), consistent through `throughCursor`.
+	 */
+	async getPendingInputs(knownClientMessageIds?: readonly string[]): Promise<RpcPendingInputsAnswer> {
+		const command = {
+			type: "get_pending_inputs" as const,
+			...(knownClientMessageIds === undefined ? {} : { knownClientMessageIds: [...knownClientMessageIds] }),
+		};
+		return this.getData<RpcPendingInputsAnswer>(await this.send(command));
 	}
 
 	/** Abort with host refusals and transport loss surfaced to machine callers. */

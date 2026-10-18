@@ -20,6 +20,7 @@ import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
+import type { PendingInputSnapshot, PendingInputUpdate } from "../../core/pending-input-session.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
@@ -144,6 +145,12 @@ type RpcSessionCommand =
 	 * whole file before answering `found: false`. For inputs `effectId` is the `clientMessageId`.
 	 */
 	| { id?: string; type: "get_effect_status"; effectId: string; sessionPath?: string }
+	/**
+	 * The pending inputs in durable custody (queued, sending, failed) and an explicit outcome for each listed id,
+	 * consistent through `throughCursor` (senpi#3549). Subscribe to `pending_input_update` first, then apply this
+	 * snapshot and only updates after its cursor. At most 64 ids.
+	 */
+	| { id?: string; type: "get_pending_inputs"; knownClientMessageIds?: string[] }
 
 	// Model
 	| { id?: string; type: "set_model"; provider: string; modelId: string; effectId?: string }
@@ -1096,6 +1103,7 @@ export type RpcResponse =
 			success: true;
 			data: { found: true; effect: EffectStatus } | { found: false; searched: "complete" };
 	  }
+	| { id?: string; type: "response"; command: "get_pending_inputs"; success: true; data: PendingInputSnapshot }
 	| { id?: string; type: "response"; command: "set_favorite_models"; success: true }
 	| { id?: string; type: "response"; command: "set_scoped_models"; success: true }
 	| {
@@ -1542,6 +1550,9 @@ export interface RpcHighReasoningWarningEvent {
 	provider: string;
 	thinkingLevel: ThinkingLevel;
 }
+
+/** A pending input in durable custody changed; `changes` are complete projections, in cursor order. */
+export type RpcPendingInputUpdateEvent = { type: "pending_input_update" } & PendingInputUpdate;
 
 /** Emitted after explicit skill tokens are expanded for a user-authored request. */
 export interface RpcSkillInvocationEvent {

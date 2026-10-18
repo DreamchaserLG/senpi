@@ -1,3 +1,21 @@
+## 2026-10-18 - A compiled build finds Claude Code shipped beside its executable (senpi#3639)
+
+### What changed
+
+- `executable.ts`: `ExecutableDeps.executableDir` (default `dirname(process.execPath)`). When the build is compiled, after the embedded and resolver probes, each platform candidate is also checked under `node_modules` in that directory, and an accepted one is the `bundled` source, so a strictly newer `claude` on PATH still wins (#2033). A build that is not compiled never looks there.
+
+### Why
+
+A compiled build bundles `@anthropic-ai/claude-agent-sdk`, so `import.meta.resolve` of the SDK throws inside the binary and the resolver never reaches a platform package on disk. A distribution that ships Claude Code beside a compiled engine (OmO desktop, sisyphuslabs/omo-desktop-app#3145) had no way to have it found except `CLAUDE_CODE_EXECUTABLE`, which hides a newer user install.
+
+### Why an extension could not handle it
+
+This is the builtin extension's own executable lookup; the resolver order is the contract.
+
+### Expected merge conflict zones
+
+`executable.ts` `acceptBundled` and the `ExecutableDeps` type; fork-only file.
+
 ## 2026-10-16 - A transient failure never rotates or blocks an account (senpi#3466)
 
 ### What changed

@@ -4,6 +4,7 @@ import {
 	type TmuxKittyTerminalOverride,
 } from "./tmux-image-capability.ts";
 import { probeTmuxImageState, type TmuxExecFile } from "./tmux-image-probe.ts";
+import { isOldWindowsWezTerm, WEZTERM_WINDOWS_IMAGES_HINT } from "./wezterm-windows-images.ts";
 
 export type ImageProtocol = "kitty" | "iterm2" | null;
 
@@ -13,6 +14,8 @@ export interface TerminalCapabilities {
 	hyperlinks: boolean;
 	tmuxPassthrough?: boolean;
 	kittyUnicodePlaceholders?: boolean;
+	/** Shown next to the image placeholder when the terminal could show images after a user action. */
+	imageHint?: string;
 }
 
 export interface DetectedTerminalCapabilities extends TerminalCapabilities {
@@ -59,7 +62,9 @@ export function detectTerminalCapabilities(
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 	if (env.WEZTERM_PANE || termProgram === "wezterm") {
-		return { images: "kitty", trueColor: true, hyperlinks: true };
+		return isOldWindowsWezTerm(env.TERM_PROGRAM_VERSION, platform)
+			? { images: null, trueColor: true, hyperlinks: true, imageHint: WEZTERM_WINDOWS_IMAGES_HINT }
+			: { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 	if (termProgram === "iterm.app" || env.ITERM_SESSION_ID) {
 		return { images: "iterm2", trueColor: true, hyperlinks: true };

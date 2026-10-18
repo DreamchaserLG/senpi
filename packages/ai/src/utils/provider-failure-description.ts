@@ -8,6 +8,13 @@ import {
 const CLAUDE_EXTRA_USAGE_URL = "https://claude.ai/settings/usage";
 
 /**
+ * Opens the sentence an adapter adds when its own account-limit text already names the next step
+ * (senpi#3615). Such text is shown as written instead of the generic switch-provider advice.
+ */
+export const ACCOUNT_LIMIT_NEXT_STEP_LEAD = "To keep going now, ";
+const RETRY_AFTER_MARKER = /\s*\(retry-after-ms: \d+\)$/;
+
+/**
  * senpi#3259: the billing path is the whole story. On the direct `anthropic` provider a Claude
  * subscription token is billed as a third-party app, so the fix is the Agent SDK lane; on the
  * `anthropic-subscription` lane the request already ran through Claude Code, so only extra usage or
@@ -77,6 +84,7 @@ export function describeProviderFailureForUser(
 		return describeAnthropicThirdPartyBilling(options.model?.split("/")[0]);
 	}
 	if (options.usageLimit === "account") {
+		if (message.includes(ACCOUNT_LIMIT_NEXT_STEP_LEAD)) return message.replace(RETRY_AFTER_MARKER, "");
 		const provider = options.model?.split("/")[0];
 		const reset = /\bresets?\s+([^"}\n]+)/i
 			.exec(message)?.[1]

@@ -51,6 +51,7 @@ import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry
 import { getSystemMessageText } from "../utils/text.ts";
 import { getDeclaredTools, getInitialSystemMessage, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { uuidv7 } from "../utils/uuid.ts";
+import { describeChatGptUsageLimitEvent, describeChatGptUsageLimitResponse } from "./chatgpt-usage-limit.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import {
 	type ChatGptSubscriptionWebSocketDebugStats,
@@ -468,7 +469,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						status: response.status,
 						statusText: response.statusText,
 					});
-					const info = await parseErrorResponse(fakeResponse);
+					const info = await parseErrorResponse(fakeResponse, response.headers);
 					let errorMessage = info.friendlyMessage || info.message;
 					if (response.status === 429) {
 						const hintMs = extract429RetryAfterMs({
@@ -847,7 +848,8 @@ async function* mapCodexEvents(
 		if (type === "error") {
 			const code = getCodexEventErrorCode(event);
 			const message = getCodexEventErrorMessage(event);
-			let errorText = `Codex error: ${message || code || JSON.stringify(event)}`;
+			let errorText =
+				describeChatGptUsageLimitEvent(event) ?? `Codex error: ${message || code || JSON.stringify(event)}`;
 			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
@@ -1691,26 +1693,19 @@ async function processWebSocketStream(
 // Error Handling
 // ============================================================================
 
-async function parseErrorResponse(response: Response): Promise<{ message: string; friendlyMessage?: string }> {
+async function parseErrorResponse(
+	response: Response,
+	headers: Headers,
+): Promise<{ message: string; friendlyMessage?: string }> {
 	const raw = await response.text();
 	let message = raw || response.statusText || "Request failed";
 	let friendlyMessage: string | undefined;
 
 	try {
-		const parsed = JSON.parse(raw) as {
-			error?: { code?: string; type?: string; message?: string; plan_type?: string; resets_at?: number };
-		};
-		const err = parsed?.error;
+		const parsed: unknown = JSON.parse(raw);
+		friendlyMessage = describeChatGptUsageLimitResponse(response.status, parsed, headers);
+		const err = (parsed as { error?: { message?: string } } | null)?.error;
 		if (err) {
-			const code = err.code || err.type || "";
-			if (/usage_limit_reached|usage_not_included|rate_limit_exceeded/i.test(code) || response.status === 429) {
-				const plan = err.plan_type ? ` (${err.plan_type.toLowerCase()} plan)` : "";
-				const mins = err.resets_at
-					? Math.max(0, Math.round((err.resets_at * 1000 - Date.now()) / 60000))
-					: undefined;
-				const when = mins !== undefined ? ` Try again in ~${mins} min.` : "";
-				friendlyMessage = `You have hit your ChatGPT usage limit${plan}.${when}`.trim();
-			}
 			message = err.message || friendlyMessage || message;
 		}
 	} catch {}

@@ -217,11 +217,13 @@ export async function runQueuedInputChange(
 		});
 	const clientMessageId = ctx.session.getQueuedInputs().find((input) => input.queuedId === queuedId)?.clientMessageId;
 	const expected = command.expectedRevision === undefined ? undefined : { expectedRevision: command.expectedRevision };
-	const status =
-		command.type === "dequeue_message"
-			? ctx.session.dequeueQueuedInput(queuedId, expected)
-			: ctx.session.editQueuedInput(queuedId, command.text, expected);
-	// Read in the same synchronous step as the change: the revision the answer reports is the one it made or met.
+	const status = await ctx.session.changeQueuedInput(
+		queuedId,
+		command.type === "dequeue_message" ? undefined : command.text,
+		{ ...expected, ...(effectId === undefined ? {} : { effectId }) },
+	);
+	// Read right after the change, before anything else on this command: the revision the answer reports is the one
+	// it made or met.
 	const current = ctx.session.getQueuedInputs().find((input) => input.queuedId === queuedId);
 	// A durable input is restored from its admission record on reopen: that record must carry the edit too.
 	if (status === "edited" && clientMessageId !== undefined && command.type === "edit_queued_message")

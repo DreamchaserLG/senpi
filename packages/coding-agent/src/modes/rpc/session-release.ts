@@ -110,6 +110,8 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 			admission.close(RELEASED_ADMISSION_CLOSED);
 			dropped = takeQueuedInput(first.session);
 			await abortAndSettle(port, command.sessionId, first.session);
+			// What the clear retired is on disk before `session_released` seals the file (senpi#3549).
+			await first.session.whenQueueClearRecorded();
 		}
 		// A never-written session gets its file here, before the final check: its `session_released` entry
 		// must reach disk, and a header write that fails is this release's failure, never a stray rejection.

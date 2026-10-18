@@ -560,6 +560,21 @@ fresh interpreter dies too before it finished a cell, the queued cells fail with
 another. An interpreter whose exit cannot be confirmed is reported, never
 replaced by a second one. The JavaScript worker keeps its own restart path.
 
+A death is reported however the host first hears of it: a broken control pipe
+(EPIPE) counts the same as the exit. A SIGKILL senpi did not send reads
+`signal 9, probably killed by the system, most often under memory pressure`,
+with the host's memory state when it can be read (macOS memory pressure level
+and swap in use; Linux available memory and swap in use) and, for Python, the
+kernel's last memory reading. The Python prelude's parent watch names itself
+instead when it stops the kernel. Python results report the user globals
+defined so far (`globalNames`, at most 64, and `globalCount`); the notice lists
+the ones a dead kernel took with it (`Lost: helper, rows`). The session keeps
+that list in `<artifacts>/kernels/py-globals.json`, so the first result of a
+kernel started by a later generation of the same session (a reload, including
+the automatic config reload, a host restart, or a resume) says
+`[py kernel is new: ...; every global it held is gone. Lost: ...]`. A reset
+clears the list.
+
 Commands a cell runs through `Bun.$` never read the host's terminal: the worker
 thread shares the TUI's stdin, so the shell wrapper hands every template an
 empty pipe (`true | ( … )`) while a cell is active. Output, exit codes, `cwd`,

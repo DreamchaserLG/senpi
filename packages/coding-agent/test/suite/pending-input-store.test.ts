@@ -48,7 +48,7 @@ describe("pending input store", () => {
 		const { store, dispatched } = await openStore(journal);
 		await store.submit(SUBMIT);
 		const seen: string[] = [];
-		store.subscribe((projection) => seen.push(projection.state));
+		store.subscribe((projections) => seen.push(...projections.map((projection) => projection.state)));
 		journal.failNext = true;
 		const token = {
 			ownerId: "o",
@@ -258,6 +258,40 @@ describe("pending input store", () => {
 		});
 
 		expect(answer).toMatchObject({ outcome: "not_found", clientMessageId: "c-9" });
+	});
+
+	it("holds every other command until a transaction finishes", async () => {
+		const journal = new MemoryJournal();
+		const { store } = await openStore(journal);
+		await store.submit(SUBMIT);
+		let finish = () => {};
+		const held = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		const order: string[] = [];
+		const transaction = store.transaction(async () => {
+			order.push("transaction start");
+			await held;
+			order.push("transaction end");
+		});
+		const edit = store
+			.apply("c-1", {
+				type: "edit",
+				effectId: "e-1",
+				handle: { lifetimeId: "life-1", queuedId: "q_1" },
+				expectedRevision: 1,
+				text: "edited",
+				attachments: [],
+			})
+			.then(() => order.push("edit"));
+		// One full event-loop turn: an ungated edit would have journaled by now.
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		const journaledWhileHeld = journal.records.length;
+		finish();
+		await Promise.all([transaction, edit]);
+
+		expect(journaledWhileHeld).toBe(1);
+		expect(order).toEqual(["transaction start", "transaction end", "edit"]);
 	});
 
 	it("dispatches only after the reservation is journaled", async () => {

@@ -34,6 +34,7 @@ const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set([
 	"subscribe_sessions",
 	"unsubscribe_sessions",
 	"get_effect_status",
+	"get_pending_inputs",
 	"get_subscription_limits",
 ]);
 

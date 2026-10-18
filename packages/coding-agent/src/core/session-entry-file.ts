@@ -130,6 +130,7 @@ export function terminateFinalSessionLine(filePath: string): void {
 		if (segmentStart === size) return;
 		const segment = Buffer.alloc(size - segmentStart);
 		readSync(fd, segment, 0, segment.length, segmentStart);
+		// Not synced on purpose: a lost truncate only brings back an uncommitted tail, and the next append syncs.
 		if (parseSessionEntryLine(segment.toString("utf8")) === null) ftruncateSync(fd, segmentStart);
 		else writeSync(fd, "\n", size);
 	} finally {

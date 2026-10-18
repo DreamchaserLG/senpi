@@ -6,9 +6,9 @@ import type {
 	KernelToolsInvokeRequest,
 } from "../js/kernel-tools-types.ts";
 import { inputAtStart } from "../shared/cell-source-at-start.ts";
-import { describeExit } from "../shared/kernel-death.ts";
 import { KernelMemoryHost } from "../shared/kernel-memory-host.ts";
 import { KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
+import { pythonDeathReason } from "./death-reason.ts";
 import { runHostCell } from "./host-cell.ts";
 import type { PendingRun, PythonKernelRunOptions, PythonKernelStartOptions, ResultMessage } from "./kernel-contract.ts";
 import { PythonKernelTools } from "./kernel-tools-host.ts";
@@ -41,6 +41,8 @@ export class PythonKernel {
 	#failure: Error | null = null;
 	readonly #preludes = new KernelPreludeTracker();
 	readonly #memory: KernelMemoryHost | null;
+	/** The newest reading the interpreter reported, named by a restart notice if it dies. */
+	#lastMemory: ResultMessage["memory"];
 	#generation = 0;
 	#closed = false;
 	readonly #tools: PythonKernelTools;
@@ -313,6 +315,7 @@ export class PythonKernel {
 	async #spawn(generation: number): Promise<void> {
 		if (this.#closed || generation !== this.#generation) throw new Error("Python kernel startup was superseded");
 		this.#memory?.processReplaced();
+		this.#lastMemory = undefined;
 		this.#transport = await PythonKernelTransport.start({
 			...this.#options,
 			onMessage: (message) => {
@@ -334,12 +337,14 @@ export class PythonKernel {
 			},
 			onResult: (transport, result) => this.#onResult(transport, result),
 			onError: (transport, error) => this.#onError(transport, error),
-			onExit: (transport, error, exit) => this.#onExit(transport, error, describeExit(exit.code, exit.signal)),
+			onExit: (transport, error, exit) =>
+				this.#onExit(transport, error, pythonDeathReason(error.message, exit, this.#lastMemory)),
 		});
 	}
 
 	#onResult(transport: PythonKernelTransport, result: ResultMessage): void {
 		if (this.#transport !== transport) return;
+		if (result.memory !== undefined) this.#lastMemory = result.memory;
 		const pending = this.#pending.get(result.cellId);
 		if (pending) {
 			const annotated = this.#memory?.annotate(result) ?? result;
@@ -403,11 +408,16 @@ export class PythonKernel {
 				);
 			},
 		);
+		// With an owner, the retired interpreter is a death like an exit (senpi#3612): replaced, and announced.
+		const onDeath = this.#options.onDeath;
+		if (onDeath) this.#dead = true;
 		const active = this.#active;
 		if (active) {
 			if (active.resolveStateRetained) active.resolveStateRetained(false);
-			this.#settleRun(active, failedPythonResult(active.input.cellId, "Python kernel died", error.message));
+			const message = onDeath ? "Python kernel died; every global is lost" : "Python kernel died";
+			this.#settleRun(active, failedPythonResult(active.input.cellId, message, error.message));
 		}
+		onDeath?.(`a failure of its control pipe (${error.message})`);
 	}
 
 	#settleRun(pending: PendingRun, result: ResultMessage): void {
