@@ -54,6 +54,7 @@ import {
 	shouldShowStartupLoadingIndicator,
 } from "./cli/startup-loading-indicator.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
+import { resolveToolRuntime, type ToolRuntimeKind } from "./cli/tool-runtime.ts";
 import {
 	APP_NAME,
 	DISPLAY_VERSION,
@@ -825,6 +826,8 @@ export interface CliRuntimeConfiguration {
 	cwd: string;
 	agentDir: string;
 	appMode: AppMode;
+	/** Resolved `--tool-runtime` (flag, then env); absent means `in-process`. A worker isolate never re-reads env. */
+	toolRuntime?: ToolRuntimeKind;
 }
 
 /** Fixed launch data is cloneable; UI callbacks and extension factories stay in their isolate. */
@@ -1179,6 +1182,13 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 	}
+	const toolRuntimeResolution = resolveToolRuntime(parsed);
+	// --version and --help never run a tool, so a bad tool-runtime env value must not block them.
+	if (!toolRuntimeResolution.ok && !parsed.version && !parsed.help) {
+		console.error(chalk.red(`Error: ${toolRuntimeResolution.message}`));
+		process.exit(1);
+	}
+	const toolRuntime = toolRuntimeResolution.ok ? toolRuntimeResolution.value : "in-process";
 	time("parseArgs");
 
 	if (parsed.version) {
@@ -1309,7 +1319,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc" && parsed.multiSession) {
 		if (options?.extensionFactories?.length)
 			throw new Error("Shared RPC workers require file-backed extensions; inline factories cannot cross isolates");
-		const runtimeConfiguration = { parsed, cwd, agentDir, appMode };
+		const runtimeConfiguration = { parsed, cwd, agentDir, appMode, toolRuntime };
 		// Socket hosts (the machine-wide daemon) run every session IN this process:
 		// createHostCore selects the worker registry only when a workerConfiguration
 		// is passed, so withholding it is what selects the uncapped in-process registry.
@@ -1348,6 +1358,7 @@ export async function main(args: string[], options?: MainOptions) {
 				parsed.provider && parsed.model ? { provider: parsed.provider, modelId: parsed.model } : undefined,
 			initialThinkingLevel: parsed.thinking,
 			listen: parsed.listen,
+			toolRuntime,
 		});
 	}
 
@@ -1411,7 +1422,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	const createRuntime = createCliRuntimeFactory(
-		{ parsed, cwd, agentDir, appMode },
+		{ parsed, cwd, agentDir, appMode, toolRuntime },
 		{ extensionFactories, startupSettingsManager, startupLoadingIndicator },
 	);
 	time("createRuntime");
@@ -1541,7 +1552,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc") {
 		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");
 		printTimings();
-		await runRpcMode(runtime);
+		await runRpcMode(runtime, toolRuntime);
 	} else if (appMode === "interactive") {
 		// Keep the TUI graph out of headless RPC children. This is intentionally at the
 		// mode seam: interactive startup still loads the same module before first use.

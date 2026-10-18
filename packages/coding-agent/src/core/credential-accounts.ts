@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
+import { applyAccountOrder, withoutOrderedAccount } from "@earendil-works/pi-ai/auth/pool/select";
 import {
 	accountDisplayName,
 	listSlots,
@@ -128,6 +129,15 @@ export async function summarizeCredentialAccounts(
 	repository: CredentialSlotRepository = new CredentialSlotRepository(),
 ): Promise<CredentialAccountSummary[]> {
 	const credential = pooledFrom(stored);
+	return applyAccountOrder(credential?.order, await summarizeInStoredOrder(provider, credential, env, repository));
+}
+
+async function summarizeInStoredOrder(
+	provider: string,
+	credential: PooledCredential | undefined,
+	env: NodeJS.ProcessEnv,
+	repository: CredentialSlotRepository,
+): Promise<CredentialAccountSummary[]> {
 	const now = Date.now();
 	const pinned = pinnedName(credential);
 	const summaries: CredentialAccountSummary[] = [];
@@ -261,7 +271,8 @@ export async function removeCredentialAccount(
 	}
 	const next = await storage.read(provider);
 	if (next === undefined) throw new Error(`No stored credential for provider: ${provider}`);
-	const remaining = removeSlot(next, name);
+	const removed = removeSlot(next, name);
+	const remaining = removed === undefined ? undefined : withoutOrderedAccount(removed, name);
 	if (remaining === undefined) await storage.delete(provider);
 	else await storage.modify(provider, async () => remaining);
 	await repo.mutateSlotState(provider, "stored", name, () => undefined);
