@@ -1,6 +1,29 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#3612": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/kernel-globals-ledger.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/py/death-reason.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/host-memory-state.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/kernel-globals-ledger.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/death-reason.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/host-memory-state.ts",
+				"legacyContracts/test/kernel-death-reason.test.ts/pythonDeathReason names the prelude's parent watch when it stopped the kernel itself",
+				"legacyContracts/test/kernel-death-reason.test.ts/pythonDeathReason is the exit status with the last memory reading otherwise",
+				"legacyContracts/test/kernel-death-reason.test.ts/host memory state reads the macOS pressure level and swap in use",
+				"legacyContracts/test/kernel-death-reason.test.ts/host memory state reads Linux available memory and swap in use",
+				"legacyContracts/test/py-kernel-global-names.test.ts/a Python result names the user globals defined so far (senpi#3612) lists what cells defined, never the prelude's own helpers",
+				"legacyContracts/test/py-kernel-global-names.test.ts/a Python result names the user globals defined so far (senpi#3612) caps the names it lists but still counts every global",
+				"legacyContracts/test/py-kernel-lost-globals-notice.test.ts/restart notices name the globals a lost Python kernel held a SIGKILL from outside names the lost globals, the last reading, and the host's memory state",
+				"legacyContracts/test/py-kernel-lost-globals-notice.test.ts/restart notices name the globals a lost Python kernel held a later generation of the same session names what the previous kernel held, once",
+				"legacyContracts/test/py-kernel-lost-globals-notice.test.ts/restart notices name the globals a lost Python kernel held a reset leaves nothing for a later generation to announce",
+				"legacyContracts/test/py-kernel-pipe-error-death.test.ts/a Python interpreter whose death surfaces as a pipe error before its exit between cells: the next cell runs on a replacement that carries the restart notice",
+				"legacyContracts/test/py-kernel-pipe-error-death.test.ts/a Python interpreter whose death surfaces as a pipe error before its exit during a cell: that cell is lost, and the next one carries the restart notice",
+				"legacyContracts/test/py-kernel-pipe-error-death.test.ts/a Python interpreter whose death surfaces as a pipe error before its exit with no exit after it: the pipe error alone is the death, announced on the next cell"
+			],
+			"reason": "Refs senpi#3612: reviewed additive changes. Three new modules enter the extension and first-kernel import scopes (the per-session lost-globals ledger, the Python death reason, the host memory reader); new contracts prove a pipe error before the exit is still a reported, announced death, restart notices name the lost globals and the cause of an outside SIGKILL with the host memory state, a later session generation announces what the previous kernel held, a reset clears it, and Python results name the user globals."
+		},
 		"senpi#3205": {
 			"additions": [
 				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost does not parse a cell whose only import text is inside data",

@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A Python kernel no longer loses its globals silently. When its control pipe broke before its exit was seen (a dying interpreter hit by the host's next write), the death went unreported and the next cell started a fresh interpreter with no notice; it is now a death like any other, replaced and announced. A kernel replaced by a later generation of the same session (a reload, including the automatic config reload, a host restart, or a resume) now announces itself on its first result. Restart notices name the lost globals; a SIGKILL that senpi did not send says it was probably the system under memory pressure and gives the host's memory state and the kernel's last memory reading; the prelude's parent watch names itself when it stops the kernel. Reported by 용짱 ([#3612](https://github.com/code-yeongyu/senpi/issues/3612)).
+
 ### Removed
 
 ## [2026.10.18] - 2026-10-18
