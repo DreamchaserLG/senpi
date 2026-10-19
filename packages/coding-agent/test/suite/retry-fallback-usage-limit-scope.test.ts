@@ -15,7 +15,12 @@ const opus = model("anthropic-subscription", "claude-opus-5-5");
 const kimi = model("kimi-coding", "kimi-k3");
 const models = [fable, opus, kimi];
 
-function createController(chain: readonly string[], now: () => number = () => 0, wallNow: () => number = now) {
+function createController(
+	chain: readonly string[],
+	now: () => number = () => 0,
+	wallNow: () => number = now,
+	options: { readonly withoutWallNow?: boolean } = {},
+) {
 	let current: { model: Model<Api> } = { model: fable };
 	const events: unknown[] = [];
 	const deps: RetryFallbackControllerDeps = {
@@ -25,7 +30,7 @@ function createController(chain: readonly string[], now: () => number = () => 0,
 			getAll: () => models,
 		},
 		cooldowns: new SelectorCooldowns(now, undefined, wallNow),
-		wallNow,
+		...(options.withoutWallNow ? {} : { wallNow }),
 		logger: { debug: () => {}, info: () => {}, warn: () => {} },
 		switchModel: async (next) => {
 			current = { model: next };
@@ -111,6 +116,34 @@ describe("retry fallback usage-limit scope", () => {
 		});
 
 		expect(events).toEqual([expect.objectContaining({ limit: "account", resetsAt: "2026-10-19T15:30:00.000Z" })]);
+	});
+
+	it("#given both a named reset and a retry-after #when falling back #then the later one is the reset", async () => {
+		const wall = Date.parse("2026-10-19T15:00:00.000Z");
+		const { controller, events } = createController(
+			fullChain,
+			() => 0,
+			() => wall,
+		);
+
+		await controller.tryFallback("hard-error", {
+			errorMessage: "You've hit your session limit \u00b7 resets in 2 hours",
+			retryAfterMs: 30 * 60_000,
+		});
+
+		expect(events).toEqual([expect.objectContaining({ limit: "account", resetsAt: "2026-10-19T17:00:00.000Z" })]);
+	});
+
+	it("#given a controller without a wall clock #when a usage limit with a reset falls back #then the event carries no reset", async () => {
+		const { controller, events } = createController(fullChain, () => 0, undefined, { withoutWallNow: true });
+
+		await controller.tryFallback("hard-error", {
+			errorMessage: "You've hit your session limit \u00b7 resets in 2 hours",
+			retryAfterMs: 30 * 60_000,
+		});
+
+		expect(events[0]).toEqual(expect.objectContaining({ limit: "account" }));
+		expect(events[0]).not.toHaveProperty("resetsAt");
 	});
 
 	it("#given a usage limit with no reset at all #when falling back #then the event carries no reset", async () => {
