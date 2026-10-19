@@ -10,6 +10,18 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Aborting a path autocompletion whose `fd` failed to start no longer signals the caller's own process group on Node < 24.22 / 26.10 ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
 
 - Inside herdr panes, inline images render again when the outer terminal supports the Kitty graphics protocol: image support is settled by a bounded Kitty graphics probe at TUI start instead of environment detection alone, and the `[image: <mime>]` placeholder stays when the probe fails or times out ([#3698](https://github.com/code-yeongyu/senpi/issues/3698)).
