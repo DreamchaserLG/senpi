@@ -16,4 +16,3 @@ export function syncRemoteMainBeforePush(dryRun, runCommand, log, dryRunLog) {
 		runCommand("git", ["merge", "--no-edit", "origin/main"]);
 	}
 }
-

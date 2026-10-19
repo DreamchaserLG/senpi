@@ -1,3 +1,21 @@
+## 2026-10-19 - A stamped release section no longer carries empty subsection headings
+
+### What changed
+
+- `scripts/release-changelog.mjs`: `stampChangelogs` drops the `### ` headings with no content from the section it stamps (`dropEmptySubsections`), so a release lists only what shipped. `[Unreleased]` still gets its placeholder headings back for the next cycle, and older released sections are not touched. `scripts/release-git.mjs` loses a stray trailing blank line left by #3731.
+
+### Why
+
+- `scripts/release-changelog.mjs`: every release copied the empty placeholders (`### Breaking Changes`, `### Removed`, ...) into its section, so every package's CHANGELOG showed empty headings under each version.
+
+### Why an extension could not handle it
+
+- `scripts/release-changelog.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release-changelog.mjs`: `stampChangelogs`.
+
 ## 2026-10-19 - A release can be cut from an exact commit, not only from main at dispatch (senpi#3609)
 
 ### What changed

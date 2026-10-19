@@ -88,6 +88,38 @@ export function insertUnreleasedBlock(content, version, date, block) {
 	return `${block}${content}`;
 }
 
+/**
+ * Drop the `### ` subsection headings that have no content from a released section. [Unreleased] keeps empty
+ * placeholder headings between releases (reAddUnreleasedSections), but a stamped release section should list only
+ * what shipped.
+ */
+export function dropEmptySubsections(section) {
+	const lines = section.split("\n");
+	const kept = [];
+	for (let i = 0; i < lines.length; i++) {
+		if (lines[i].startsWith("### ")) {
+			let next = i + 1;
+			while (next < lines.length && lines[next].trim() === "") next++;
+			if (next === lines.length || lines[next].startsWith("### ") || lines[next].startsWith("## [")) {
+				i = next - 1;
+				continue;
+			}
+		}
+		kept.push(lines[i]);
+	}
+	// Keep the separator the section had before the next "## [" header.
+	const trailing = /\n*$/.exec(section)?.[0] ?? "";
+	return kept.join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n*$/, trailing);
+}
+
+function stampReleaseSection(content, header) {
+	const stamped = content.replace(/^## \[Unreleased\]$/m, header);
+	const start = stamped.indexOf(header);
+	const after = stamped.indexOf("\n## [", start + header.length);
+	const end = after === -1 ? stamped.length : after + 1;
+	return stamped.slice(0, start) + dropEmptySubsections(stamped.slice(start, end)) + stamped.slice(end);
+}
+
 export function stampChangelogs(version, date, dryRun, capturedSubsections, log, dryRunLog) {
 	log(`stamping ${CHANGELOGS.length} CHANGELOG.md files: [Unreleased] -> [${version}] - ${date}`);
 	for (const file of CHANGELOGS) {
@@ -98,7 +130,7 @@ export function stampChangelogs(version, date, dryRun, capturedSubsections, log,
 			continue;
 		}
 		capturedSubsections.set(file, subsections);
-		const updated = content.replace(/^## \[Unreleased\]$/m, `## [${version}] - ${date}`);
+		const updated = stampReleaseSection(content, `## [${version}] - ${date}`);
 		const count = subsections.length;
 		const noun = count === 1 ? "subsection header" : "subsection headers";
 		if (dryRun) {
