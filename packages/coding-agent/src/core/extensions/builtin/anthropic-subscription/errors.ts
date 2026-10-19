@@ -113,13 +113,19 @@ export function classifySdkError(error: unknown): SdkErrorClassification {
 
 /**
  * The account's refusal of the 1M window, in each wording Claude Code uses: "Extra usage is required for
- * long context", and since 2.1.260 "Opus 5.5 (1M context) requires usage credits". Both the long
- * window and a credits requirement must be named: "Fable 5 requires usage credits" is a model the
- * account may not use at all, not a window it may retry smaller.
+ * long context", and since 2.1.260 "Opus 5.5 (1M context) requires usage credits" (the display name gains
+ * "(1M context)" when `[1m]` was asked for). The window must be what requires the credits. Fable needs
+ * usage credits as a model, at any window, so "Fable 5 (1M context) requires usage credits" is not a
+ * window refusal: retrying it smaller would fail the same way and lock the window off for nothing.
  */
 function isLongContextRefusal(text: string): boolean {
 	if (/\b(?:extra usage|usage credits) (?:is|are) required for long context\b/.test(text)) return true;
-	return /\b(?:1m|long) context\b/.test(text) && /\brequires? (?:extra usage|(?:extra |usage )credits)\b/.test(text);
+	return text
+		.split(/[\u00b7\n]/)
+		.some(
+			(part) =>
+				/\(1m context\) requires (?:extra usage|(?:extra |usage )credits)\b/.test(part) && !/\bfable\b/.test(part),
+		);
 }
 
 function classifyErrorKind(error: unknown): SdkErrorClassification {

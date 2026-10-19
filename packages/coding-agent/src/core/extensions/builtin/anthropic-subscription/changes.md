@@ -2,8 +2,8 @@
 
 ### What changed
 
-- `errors.ts`: `classifyErrorKind` reads a long-context refusal through `isLongContextRefusal`, which accepts the earlier wording ("Extra usage is required for long context", "Usage credits are required for long context") and, newly, any text naming the 1M or long context that says it requires extra usage, usage credits or extra credits ("Opus 5.5 (1M context) requires usage credits · /model to change").
-- A credits requirement for a model itself ("Fable 5 requires usage credits") names no long or 1M context, so it is not read as a window refusal.
+- `errors.ts`: `classifyErrorKind` reads a long-context refusal through `isLongContextRefusal`, which accepts the earlier wording ("Extra usage is required for long context", "Usage credits are required for long context") and, newly, a `·`-separated part of the message where "(1M context)" directly precedes "requires usage credits / extra usage / extra credits" ("Opus 5.5 (1M context) requires usage credits · /model to change"). Claude Code appends "(1M context)" to the display name when `[1m]` was asked for.
+- A part that names Fable never counts, even as "Fable 5 (1M context) requires usage credits": Fable needs usage credits at any window (Claude Code itself recognizes it by `/^Fable(?: …)? requires usage credits\./`), so recording a window refusal would lock Opus 5.5 at 200k for 6 hours while the smaller retry still failed (#3751 review). The credits phrase must follow "(1M context)" in the same part, so "Fable 5 requires usage credits · try Opus 5.5 (1M context)" does not match either.
 
 ### Why
 
