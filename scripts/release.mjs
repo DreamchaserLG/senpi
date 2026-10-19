@@ -37,6 +37,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { computeNextVersion } from "./calver.mjs";
+import { captureOutput } from "./release-capture.mjs";
 import { syncRemoteMainBeforePush } from "./release-git.mjs";
 import { preparePinnedRelease, syncPinnedReleaseIntoMain } from "./release-pin.mjs";
 import {
@@ -127,10 +128,7 @@ function dryRunLog(message) {
 
 function captureCommand(bin, args) {
 	try {
-		return execFileSync(bin, args, {
-			encoding: "utf-8",
-			stdio: ["ignore", "pipe", "pipe"],
-		});
+		return captureOutput(bin, args);
 	} catch (err) {
 		const message = err && typeof err === "object" && "message" in err ? err.message : String(err);
 		process.stderr.write(`[release] error: ${bin} ${args.join(" ")} failed: ${message}\n`);
@@ -270,11 +268,7 @@ function runBuild(dryRun) {
 
 function lookupCiCheckRuns(sha) {
 	try {
-		const raw = execFileSync(
-			"gh",
-			["api", `repos/{owner}/{repo}/commits/${sha}/check-runs`, "--paginate", "--slurp"],
-			{ encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
-		);
+		const raw = captureOutput("gh", ["api", `repos/{owner}/{repo}/commits/${sha}/check-runs`, "--paginate", "--slurp"]);
 		const pages = JSON.parse(raw);
 		const runs = Array.isArray(pages)
 			? pages.flatMap((page) => (Array.isArray(page.check_runs) ? page.check_runs : []))

@@ -16,6 +16,42 @@ The fallback decision and the failure that caused it live inside the session's r
 
 The `retry_fallback_applied` member of the session event union, and the `RetryFallbackController` construction in the `AgentSession` constructor.
 
+## 2026-10-19 - dispose() says whether the process exits (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `dispose({ processExit })` forwards the flag to `emitSessionShutdownEvent`, so a quit that ends the process shares the quit budget; the default keeps only the per-handler limits.
+
+### Why
+
+- The total quit budget (senpi#3711) must only cut handlers when the process really exits right after; an RPC host closing one session keeps running, so there a detached handler would keep running while its extension's handles and provider scope are closed.
+
+### Why an extension could not handle it
+
+- Session disposal is core runtime lifecycle; only its callers know whether the process exits.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session-runtime.ts` `dispose()`.
+
+## 2026-10-19 - sessionShutdownQuitBudgetMs setting (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: new typed `sessionShutdownQuitBudgetMs` setting (default `DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS` = 2000, 0 disables; above the OmO memory extension's own 1500 ms shutdown drain) with `getSessionShutdownQuitBudgetMs` / `setSessionShutdownQuitBudgetMs`, validated through `parseTimeoutSetting` like the existing shutdown handler budget.
+
+### Why
+
+- Quit waits on all `session_shutdown` handlers together for at most this long (senpi#3711); the per-handler 10 s cap alone let one handler hold an idle quit for 10 s.
+
+### Why an extension could not handle it
+
+- Settings are core state read by the extension runner; an extension cannot add a typed host setting.
+
+### Expected merge conflict zones
+
+- LOW: `settings-manager.ts` beside `DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS`, the `Settings` interface fields after `sessionShutdownHandlerTimeoutMs`, and the methods after `setSessionShutdownHandlerTimeoutMs`.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed
@@ -10987,3 +11023,24 @@ Context files and the skills section are assembled by core before extensions see
 - `resource-loader.ts`: the import block and the `loadProjectContextFiles` call in `reload`.
 - `skills.ts`: the area where `formatSkillsForPrompt` used to live.
 - `settings-manager.ts`: the `Settings` interface beside `compaction`.
+
+## 2026-10-19 - A request-shape 400 recovers on the same model; Claude chains drop pre-5 Opus (senpi#3727)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS` keeps only current-generation Opus rungs: `claude-fable-5-1` and `claude-fable-5` step to `claude-opus-5-5:max`, then `claude-opus-5:max`; `claude-opus-5-5` steps to `claude-opus-5:max`. `claude-opus-4-8` and `claude-opus-4-6` are gone from every shipped chain.
+- `packages/coding-agent/src/core/retry-fallback/request-shape.ts` (new): `isAnthropicRequestShapeRejection` (an `invalid_request_error` from the `anthropic` provider itself, not a gateway on the same wire, not billing, not context overflow), `stripProviderNativeReplay` (removes assistant `providerNative` blocks at or before a cutoff, never user text or client tool pairs) and `RequestShapeRecovery` (one recovery per failing streak; any other outcome, and a give-up, ends the streak so a later prompt gets its own recovery).
+- `packages/coding-agent/src/core/agent-session.ts`: on such a 400 the session never enters the hard-error fallback or the transient retry path. It records a `request-shape-recovery` custom entry, logs `request_shape_recovery`, and retries once on the same model with provider-native replay stripped from the history before the failure (applied in `transformContext`, so it covers every later request of the session). A second rejection ends the retry with one `auto_retry_end` whose `finalError` names the action to take. A `blocked` outcome from the recovery retry (pre-retry compaction refused) blocks the queued continuation like any other blocked retry. `_isHardErrorFallbackEligible` excludes request-shape rejections.
+
+### Why
+
+A long Opus 5.5 session got Anthropic 400s for an unpaired `web_search` server block. Each 400 was treated as a hard error and walked the shipped chain down to `claude-opus-4-8`. Another model cannot fix our request shape; it only worked by accident because cross-model replay drops the provider-native blocks.
+
+### Why an extension could not handle it
+
+Fallback eligibility and the agent_end retry decision are owned by `AgentSession`; an extension sees the error only after the controller already switched models.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
+- `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.

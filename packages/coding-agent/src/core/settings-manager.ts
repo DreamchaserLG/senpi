@@ -115,6 +115,11 @@ export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
  * hung handler still must not hold quit/reload/new/resume hostage.
  */
 export const DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS = 10_000;
+/**
+ * Total wait across every `session_shutdown` handler when the process quits (senpi#3711). Above the OmO memory
+ * extension's own 1500 ms shutdown drain, whose first step flushes the memory journal.
+ */
+export const DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS = 2_000;
 /** Warn threshold for one handler of an agent lifecycle event the session awaits before persisting (senpi#3650). */
 export const DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS = 60_000;
 /**
@@ -262,6 +267,7 @@ export interface Settings {
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
 	sessionShutdownHandlerWarnMs?: number; // Warn when one session_shutdown extension handler runs this long; 0 disables the warning
 	sessionShutdownHandlerTimeoutMs?: number; // Abort and skip a session_shutdown extension handler after this long; 0 disables the cap
+	sessionShutdownQuitBudgetMs?: number; // Total wait across all session_shutdown handlers on quit; 0 disables the total budget
 	extensionEventHandlerWarnMs?: number; // Report an agent lifecycle extension handler still running after this long; 0 disables the warning
 	extensionEventHandlerTimeoutMs?: number; // Stop waiting on an agent lifecycle extension handler after this long; 0 disables the cap
 	tuiMode?: TuiMode; // default: "regular"
@@ -1883,6 +1889,26 @@ export class SettingsManager {
 		}
 		this.globalSettings.sessionShutdownHandlerTimeoutMs = Math.floor(timeoutMs);
 		this.markModified("sessionShutdownHandlerTimeoutMs");
+		this.save();
+	}
+
+	/**
+	 * Total time the host waits on all `session_shutdown` handlers together when the
+	 * process quits; each handler's own cap still applies inside it. 0 disables it.
+	 */
+	getSessionShutdownQuitBudgetMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.sessionShutdownQuitBudgetMs, "sessionShutdownQuitBudgetMs") ??
+			DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS
+		);
+	}
+
+	setSessionShutdownQuitBudgetMs(budgetMs: number): void {
+		if (!Number.isFinite(budgetMs) || budgetMs < 0) {
+			throw new Error(`Invalid sessionShutdownQuitBudgetMs setting: ${String(budgetMs)}`);
+		}
+		this.globalSettings.sessionShutdownQuitBudgetMs = Math.floor(budgetMs);
+		this.markModified("sessionShutdownQuitBudgetMs");
 		this.save();
 	}
 

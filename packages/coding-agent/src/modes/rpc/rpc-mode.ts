@@ -188,7 +188,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime, toolRuntime?:
 			for (const cleanup of signalCleanupHandlers) {
 				cleanup();
 			}
-			await handler.dispose();
+			await handler.dispose({ processExit: true });
 			detachInput();
 			process.stdin.pause();
 			if (signal !== "SIGTERM") {

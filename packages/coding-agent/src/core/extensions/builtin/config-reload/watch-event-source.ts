@@ -6,6 +6,7 @@ export interface RecursiveWatchWorker {
 	on(event: "message", listener: (message: unknown) => void): this;
 	on(event: "error", listener: (error: Error) => void): this;
 	postMessage(message: unknown): void;
+	unref?(): void;
 	terminate(): Promise<number>;
 }
 
@@ -210,6 +211,9 @@ export function createFsWatchEventSource(
 				worker.postMessage({ kind: "unwatch", id });
 				if (recursiveSubscriptions.size > 0) return;
 				state.worker = undefined;
+				// A worker blocked in a native call finishes terminating only when that call returns; unref it so it can never
+				// keep the process alive on its way out (senpi#3711).
+				worker.unref?.();
 				closing = worker.terminate().then(
 					() => undefined,
 					(error: unknown) => {

@@ -694,11 +694,16 @@ export class AgentSessionRuntime {
 		return { cancelled: false };
 	}
 
-	async dispose(): Promise<void> {
-		await emitSessionShutdownEvent(this.session.extensionRunner, {
-			type: "session_shutdown",
-			reason: "quit",
-		});
+	/**
+	 * `processExit`: the caller exits the process right after, so quit-time handlers share the total quit budget
+	 * (senpi#3711). An RPC host closing one session leaves it unset and keeps only the per-handler limits.
+	 */
+	async dispose(options: { readonly processExit?: boolean } = {}): Promise<void> {
+		await emitSessionShutdownEvent(
+			this.session.extensionRunner,
+			{ type: "session_shutdown", reason: "quit" },
+			options,
+		);
 		this.beforeSessionInvalidate?.();
 		this.session.dispose();
 		await this.session.whenToolChildClosed();

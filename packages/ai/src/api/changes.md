@@ -386,3 +386,22 @@ The error text is built inside the provider adapter from the raw response before
 ### Expected merge conflict zones
 
 - LOW: `parseErrorResponse` in `openai-codex-responses.ts` (signature gains `headers`) and the `type === "error"` branch of `mapCodexEvents`.
+
+## 2026-10-19 - Debug-flagged request skeleton log for every Anthropic request (senpi#3727)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-request-shape-log.ts` (new): when `SENPI_DEBUG_REQUEST_SHAPE` names a file, each request appends one JSON line with the time, provider, model and, per message index, the role plus each block's type and `id` / `tool_use_id`. No text, input, thinking or result content is written; the file is created with mode 0600.
+- `packages/ai/src/api/anthropic-messages.ts`: `createRequest`'s `send` logs the exact params of every attempt (after every sanitizer) before calling the client, because the SDK throws on a non-2xx and the rejected attempt is the one to rebuild. Main turns, side requests (compaction, titles, summaries) and the forced-tool-choice / unsigned-thinking / expired-search retries are all covered.
+
+### Why
+
+A 400 named `messages.1` while the reconstructed main-turn payload had the pair at `messages.8`; without the sent shape the failing request cannot be rebuilt.
+
+### Why an extension could not handle it
+
+`before_provider_request` runs before the provider's own sanitizers rewrite the payload, so an extension would log a different shape than the one sent, and side requests bypass it.
+
+### Expected merge conflict zones
+
+- `anthropic-messages.ts`: the import block and the end of `createRequest`.

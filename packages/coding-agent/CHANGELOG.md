@@ -4,6 +4,27 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+- The shipped Claude fallback chains no longer step down to `claude-opus-4-8` or `claude-opus-4-6`: Fable falls back to Opus 5.5, then Opus 5; Opus 5.5 falls back to Opus 5 ([#3727](https://github.com/code-yeongyu/senpi/issues/3727)).
+
+### Fixed
+
+- Socket clients advertising `event_resync` recover from an event-queue overflow or stall on the same connection: buffered events are shed, current message snapshots are sent, and only a missed liveness heartbeat closes the peer. Recovery preserves still-open extension dialogs after replacing a session. Clients without the capability retain the existing disconnect behavior ([#3728](https://github.com/code-yeongyu/senpi/issues/3728)).
+- An `invalid_request_error` 400 from Anthropic itself (not a gateway) caused by the request's own shape (for example an unpaired `web_search` server block) no longer switches the session to another model. It retries once on the same model without web search replay data, notes that in the transcript, and otherwise ends with one error saying what to do. Set `SENPI_DEBUG_REQUEST_SHAPE=<file>` to log each Anthropic request's block skeleton without content, including requests the API rejects ([#3727](https://github.com/code-yeongyu/senpi/issues/3727)).
+- Quitting no longer takes up to 10 s when an extension is slow to shut down. A quit that exits senpi now waits at most `sessionShutdownQuitBudgetMs` (default 2000) on all `session_shutdown` handlers together, counted from when senpi starts running them, then exits and logs which extension overran it and for how long; set it to `0` to keep only the per-handler limits. The config watcher no longer holds quit while its watch thread finishes stopping ([#3711](https://github.com/code-yeongyu/senpi/issues/3711)).
+- Under `--tool-runtime child`, starting a session's tool child no longer removes anything through a short socket directory in `/tmp` before it is proven to be this user's private directory, and its secret is created as a new file that never follows or overwrites anything already at that name. On every failure the secret written there is destroyed, and it is unlinked only through a directory proven ours again, so a directory swapped in the meantime never leads the cleanup to another file; another local user holding that directory's name no longer blocks the start ([#3694](https://github.com/code-yeongyu/senpi/issues/3694)).
+- A finished tool card no longer keeps its rendered output once it is invalidated (it scrolled above the kept main-screen history, or the theme or terminal capabilities changed); it is rebuilt from the card when it is painted again, and cards share one set of built-in tool definitions. A renderer that asks for a rerender (`context.invalidate()`) still gets its own component back as `lastComponent`, and an edit card keeps the diff its renderer stores in `context.state`. In a 10-minute notice-stream soak that output was about 5 KB per tool-using turn ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
+- `senpi -p "prompt"` no longer hangs before startup when stdin is a pipe or socket that is never written or closed, as ssh, CI runners and agent harnesses provide. With a prompt argument, such a stdin is skipped when no data arrives within 2 seconds; a pipe that sends data in time (`cat file | senpi -p "summarize"`), a regular file, and stdin as the only prompt source are still read to EOF. When stdin is skipped, one stderr line says so and that `-` reads it. A bare `-` argument forces the read ([#3715](https://github.com/code-yeongyu/senpi/issues/3715)).
+
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
 - Closing a session now closes what an extension's own code left open after its `session_shutdown` handlers ran (see Fixed). An extension that opens a server, socket or timer once and shares it across sessions must open it at module scope, outside any handler, or it is closed when the first session closes ([#2292](https://github.com/code-yeongyu/senpi/issues/2292)).
 
 ### Added
@@ -22,7 +43,6 @@
 
 ### Fixed
 
-- Under `--tool-runtime child`, starting a session's tool child no longer removes anything through a short socket directory in `/tmp` before it is proven to be this user's private directory, and its secret is created as a new file that never follows or overwrites anything already at that name. On every failure the secret written there is destroyed, and it is unlinked only through a directory proven ours again, so a directory swapped in the meantime never leads the cleanup to another file; another local user holding that directory's name no longer blocks the start ([#3694](https://github.com/code-yeongyu/senpi/issues/3694)).
 - A timeout, abort or stop of a command that never started (missing binary, missing cwd) no longer SIGKILLs senpi and everything else in the terminal's foreground job on Node before 24.22 / 26.10, where `kill()` on a child without a pid signals the caller's own process group ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
 - While the agent is paused for starting too many turns on its own, a stream of incoming notices no longer adds a `Paused: ...` warning for every notice: the warning shows once per pause ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - Closing a session now closes the servers, sockets and timers an extension's own code opened during it and never stopped, after the extension's `session_shutdown` handlers run, and logs one line per extension naming what it closed. On a shared `--listen` host, an extension without teardown kept about 17 MB and a listening socket per closed session until the host exited; 30 closed sessions now leave none ([#2292](https://github.com/code-yeongyu/senpi/issues/2292)).

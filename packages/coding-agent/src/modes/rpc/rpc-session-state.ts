@@ -10,6 +10,7 @@ import { ProjectTrustStore } from "../../core/trust-manager.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
+import { sessionDialogRequests } from "./session-extension-ui-requests.ts";
 
 /**
  * Project one session into the wire state shape.
@@ -33,6 +34,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 	const lastProviderDiagnostic = sanitizeProviderDiagnostic(session.agent.state.providerDiagnostic);
 	return {
 		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
+		pendingDialogs: sessionDialogRequests.get(session)?.snapshot() ?? [],
 		model: session.model,
 		pendingModelSwitch: session.pendingModelSwitch
 			? {

@@ -1,3 +1,21 @@
+## 2026-10-19 - A bare - forces the piped-stdin read (senpi#3715)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: a bare `-` argument sets `Args.readStdin` instead of failing as `Unknown option: -`, and the help text documents it.
+
+### Why
+
+- Print mode now stops waiting for a silent stdin pipe after 2 s when a prompt argument is given (senpi#3715); `-` is the explicit way to wait for a slow producer anyway. Regression: `test/suite/regressions/issue-3715-print-stdin-open-pipe.test.ts`.
+
+### Why an extension could not handle it
+
+- Argument parsing runs before any extension loads, and a bare `-` was rejected there as an unknown short option.
+
+### Expected merge conflict zones
+
+- LOW: the `Args` field list, the short-option branch of `parseArgs`, and the `--print` help line.
+
 ## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
 
 ### What changed

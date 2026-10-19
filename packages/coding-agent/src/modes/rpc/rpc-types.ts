@@ -843,6 +843,8 @@ export interface RpcSessionState {
 	isBashRunning: boolean;
 	/** Open question prompts awaiting an answer. Absent when none are pending. */
 	pendingQuestions?: RpcQuestionUiRequest[];
+	/** Live select, confirm, input and editor request frames, including across session replacements; [] when none. */
+	pendingDialogs?: RpcExtensionUIRequest[];
 }
 
 // ============================================================================

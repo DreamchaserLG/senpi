@@ -1,3 +1,21 @@
+## 2026-10-19 - Release commands that read large output no longer fail with ENOBUFS
+
+### What changed
+
+- `scripts/release.mjs`: `captureCommand` and the CI check-run lookup read command output through `captureOutput` (`scripts/release-capture.mjs`), which raises `execFileSync`'s buffer from the 1 MiB default to 256 MiB.
+
+### Why
+
+- `scripts/release.mjs`: the pinned v2026.10.19-1 release (run 39296257099) passed its forced suite and checks, then died merging main back: `git show origin/main:packages/coding-agent/CHANGELOG.md` failed with `spawnSync git ENOBUFS` because that file is over 1 MiB. Nothing was pushed.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `captureCommand` and `lookupCiCheckRuns`.
+
 ## 2026-10-19 - A release never pushes a regenerated model catalog to main before testing it
 
 ### What changed

@@ -6,6 +6,18 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
 - Image generation results (`AssistantImages`) carry `providerDiagnostic` on failure, with the HTTP status and category, like assistant messages ([omo#10285](https://github.com/code-yeongyu/oh-my-openagent/issues/10285)).
 
 ### Changed

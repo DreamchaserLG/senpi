@@ -17,6 +17,7 @@ import { type SessionOpenedRecord, sessionOpenedLines } from "./session-status-o
 import { SessionStatusStream } from "./session-status-stream.ts";
 import { SurfaceDigestDedupe } from "./session-surface-dedupe.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
+import { isCorrelatedReply } from "./socket-peer-recovery.ts";
 
 export type { SessionEventWriterConnection } from "./session-event-fanout.ts";
 
@@ -308,6 +309,7 @@ export class SessionEventWriter {
 					keyed ? MESSAGE_KEY : undefined,
 					undefined,
 					keyed ? serializeJsonLine(demoteToDeltaOnly(tagged)) : undefined,
+					isCorrelatedReply(tagged),
 				);
 			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
 		}
@@ -399,7 +401,7 @@ export class SessionEventWriter {
 		const targetId = targetOverride ?? this.connectionContext.getStore();
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
 		if (registered) {
-			registered.actor.enqueue(serializeJsonLine(value));
+			registered.actor.enqueue(serializeJsonLine(value), undefined, undefined, undefined, isCorrelatedReply(value));
 			this.requestFlush();
 			return Promise.resolve();
 		}
@@ -539,7 +541,14 @@ export class SessionEventWriter {
 		this.sealStatus(sessionId, lifecycle);
 		const taggedResponse = { ...response, sessionId };
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
-		if (registered) registered.actor.enqueue(serializeJsonLine(taggedResponse));
+		if (registered)
+			registered.actor.enqueue(
+				serializeJsonLine(taggedResponse),
+				undefined,
+				undefined,
+				undefined,
+				isCorrelatedReply(response),
+			);
 		else this.appendSessionRecord(sessionId, taggedResponse, targetId);
 		this.requestFlush();
 	}
@@ -673,7 +682,14 @@ export class SessionEventWriter {
 		const targetId = this.connectionContext.getStore();
 		const taggedResponse = { ...response, sessionId };
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
-		if (registered) registered.actor.enqueue(serializeJsonLine(taggedResponse));
+		if (registered)
+			registered.actor.enqueue(
+				serializeJsonLine(taggedResponse),
+				undefined,
+				undefined,
+				undefined,
+				isCorrelatedReply(response),
+			);
 		else this.appendSessionRecord(sessionId, taggedResponse, targetId);
 		this.requestFlush();
 	}

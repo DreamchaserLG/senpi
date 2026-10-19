@@ -73,6 +73,8 @@ export interface Args {
 	toolRuntime?: ToolRuntimeKind;
 	messages: string[];
 	fileArgs: string[];
+	/** A bare `-` argument: read stdin to EOF even when a prompt argument is given. */
+	readStdin?: boolean;
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
 	unknownFlags: Map<string, boolean | string>;
 	diagnostics: Array<{ type: "warning" | "error"; message: string }>;
@@ -335,6 +337,8 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 					result.unknownFlags.set(flagName, true);
 				}
 			}
+		} else if (arg === "-") {
+			result.readStdin = true;
 		} else if (arg.startsWith("-") && !arg.startsWith("--")) {
 			result.diagnostics.push({ type: "error", message: `Unknown option: ${arg}` });
 		} else if (!arg.startsWith("-")) {
@@ -399,6 +403,7 @@ ${chalk.bold("Options:")}
   --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
   --mode <mode>                  Output mode: text (default), json, or rpc
   --print, -p                    Non-interactive mode: process prompt and exit
+  -                              Wait for stdin to close and prepend it to the prompt (a silent stdin pipe is otherwise skipped after 2 s when a prompt argument is given)
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
   --session <path|id>            Use specific session file or partial UUID

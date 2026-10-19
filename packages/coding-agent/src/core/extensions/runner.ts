@@ -22,6 +22,7 @@ import {
 	DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS,
 	DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS,
 	DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS,
+	DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS,
 	SettingsManager,
 } from "../settings-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
@@ -43,6 +44,7 @@ import {
 import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
+import { QuitDeadline, type QuitHandlerBudget, type SessionShutdownBudget } from "./shutdown-quit-budget.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AgentBeforeSettleEvent,
@@ -372,7 +374,9 @@ const UNBOUNDED_HANDLER_BUDGET: ExtensionHandlerBudget = { warnMs: 0, timeoutMs:
 export async function emitSessionShutdownEvent(
 	extensionRunner: ExtensionRunner,
 	event: SessionShutdownEvent,
+	options: { readonly processExit?: boolean } = {},
 ): Promise<boolean> {
+	if (options.processExit && event.reason === "quit") extensionRunner.armProcessExitBudget();
 	const emitted = extensionRunner.hasHandlers("session_shutdown");
 	if (emitted) await extensionRunner.emit(event);
 	reclaimRunnerHandles(extensionRunner);
@@ -503,6 +507,7 @@ export class ExtensionRunner {
 	private handlerStallListener: ((stall: ExtensionHandlerStall) => void) | undefined;
 	private handlerTurnScope: () => number = () => 0;
 	private reportedInvalidHandlerBudget = false;
+	private processExitRequestedAt: number | undefined;
 	private readonly heldHandlerWaits = new HeldHandlerWaits();
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private getServiceTier: () => ServiceTier | undefined = () => undefined;
@@ -1757,23 +1762,37 @@ export class ExtensionRunner {
 	 * effect without a reload). A malformed value must never break teardown, so
 	 * an invalid setting is reported and the shipped defaults are used.
 	 */
-	private resolveSessionShutdownBudget(): ExtensionHandlerBudget {
+	/**
+	 * The next `quit` emission ends in process exit, so its handlers share the total quit budget (senpi#3711). A quit
+	 * that keeps the process alive (closing one session on an RPC host) keeps only the per-handler limits.
+	 */
+	armProcessExitBudget(): void {
+		this.processExitRequestedAt ??= Date.now();
+	}
+
+	private resolveSessionShutdownBudget(): SessionShutdownBudget {
 		try {
 			const settings = SettingsManager.create(this.cwd, this.getAgentDirFn(), {
 				projectTrusted: this.isProjectTrustedFn(),
 			});
 			return {
-				warnMs: settings.getSessionShutdownHandlerWarnMs(),
-				timeoutMs: settings.getSessionShutdownHandlerTimeoutMs(),
+				handler: {
+					warnMs: settings.getSessionShutdownHandlerWarnMs(),
+					timeoutMs: settings.getSessionShutdownHandlerTimeoutMs(),
+				},
+				quitMs: settings.getSessionShutdownQuitBudgetMs(),
 			};
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			console.warn(
-				`Using the default session_shutdown handler budget (warn ${DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS}ms, hard cap ${DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS}ms): ${message}`,
+				`Using the default session_shutdown handler budget (warn ${DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS}ms, hard cap ${DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS}ms, quit ${DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS}ms): ${message}`,
 			);
 			return {
-				warnMs: DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS,
-				timeoutMs: DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS,
+				handler: {
+					warnMs: DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS,
+					timeoutMs: DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS,
+				},
+				quitMs: DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS,
 			};
 		}
 	}
@@ -1790,8 +1809,9 @@ export class ExtensionRunner {
 		extensionPath: string,
 		event: SessionShutdownEvent,
 		handler: (...args: unknown[]) => Promise<unknown>,
-		budget: ExtensionHandlerBudget,
+		{ budget, endsAtQuitDeadline }: QuitHandlerBudget,
 	): Promise<void> {
+		const startedAt = Date.now();
 		const outcome = await runBudgetedHandler({
 			extensionPath,
 			event: "session_shutdown",
@@ -1806,7 +1826,11 @@ export class ExtensionRunner {
 			},
 		});
 		if (outcome.kind === "failed") throw outcome.error;
-		if (outcome.kind === "timed_out") {
+		if (outcome.kind === "timed_out" && endsAtQuitDeadline) {
+			console.warn(
+				`Extension ${extensionPath} session_shutdown handler overran the quit budget after ${Date.now() - startedAt}ms; quitting without it.`,
+			);
+		} else if (outcome.kind === "timed_out") {
 			this.emitError({
 				extensionPath,
 				event: "session_shutdown",
@@ -1832,18 +1856,32 @@ export class ExtensionRunner {
 		// handlers without a cap (ask-user and approval dialogs legitimately block).
 		// The shutdown budget is resolved lazily so runners with no shutdown handler read no settings.
 		const isSessionShutdown = event.type === "session_shutdown";
-		let shutdownBudget: ExtensionHandlerBudget | undefined;
+		let shutdownBudget: SessionShutdownBudget | undefined;
+		let quitDeadline: QuitDeadline | undefined;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {
 				try {
 					if (isSessionShutdown) {
-						shutdownBudget ??= this.resolveSessionShutdownBudget();
+						const shutdownEvent = event as SessionShutdownEvent;
+						if (!shutdownBudget) {
+							shutdownBudget = this.resolveSessionShutdownBudget();
+							if (
+								shutdownEvent.reason === "quit" &&
+								this.processExitRequestedAt !== undefined &&
+								shutdownBudget.quitMs > 0
+							) {
+								quitDeadline = new QuitDeadline(shutdownBudget.quitMs, Date.now, this.processExitRequestedAt);
+							}
+						}
 						await this.runSessionShutdownHandler(
 							ext.path,
-							event as SessionShutdownEvent,
+							shutdownEvent,
 							handler,
-							shutdownBudget,
+							quitDeadline?.budgetFor(shutdownBudget.handler) ?? {
+								budget: shutdownBudget.handler,
+								endsAtQuitDeadline: false,
+							},
 						);
 						continue;
 					}

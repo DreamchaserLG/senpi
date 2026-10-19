@@ -194,6 +194,67 @@ Rebranded distributions read the equivalent variable under their configured envi
 `extension_events` opts the client into generic extension-owned event records; clients that omit it
 retain the previous wire stream unchanged.
 
+#### event_resync
+
+A socket client may advertise `event_resync` in its connection-scoped `set_client_info`.
+This opts that connection into same-connection recovery instead of an event-queue overflow
+or stall disconnect. An old client that omits the capability keeps the legacy `overflow`
+record and disconnect behavior. Ordinary supersession remains lossless in both modes.
+A later `set_client_info` replaces the capability list: omitting `event_resync` revokes
+recovery for future pressure. An already pending gap is still reported when the socket
+drains; the legacy stall policy applies if it does not drain.
+
+The host immediately sends `{"type":"rpc_ping"}`. The client answers by sending
+`set_client_info` without a request id, repeating its complete capability list, and repeats
+that heartbeat every 10 seconds until the socket closes. The existing connection-scoped
+handler acknowledges liveness; no session command or session attachment is needed.
+Each id-less heartbeat produces the id-less response
+`{"type":"response","command":"set_client_info","success":true}`; clients consume it
+as a heartbeat acknowledgement, not as a response to an outstanding request.
+Heartbeat pulses travel in the opposite direction from event traffic, so a blocked event
+reader can still prove it is alive. The host retains at most one buffered ping during a gap.
+An event stall still starts at 30 seconds of host loop-served time, but it sheds the queue
+rather than closing. A subsequent served budget without a heartbeat closes the peer.
+The host's loop-blocked-time credit also applies to that liveness deadline.
+
+On overflow or stall, the host drops buffered events and stops accumulating new events until
+transport drain. Correlated replies that fit within the queue's byte bound are retained and
+sent first; a reply that cannot fit has an unknown outcome. Every gap sends an untagged
+connection-level marker, including when the connection has no attached sessions. Its
+`replyLost` flag says whether a correlated reply was discarded. It then sends a snapshot for every affected
+session attached to that connection:
+
+```json
+{"type":"resync_required","reason":"stall","replyLost":false}
+{"type":"resync_required","reason":"stall","sessionId":"rpc-1","message":{"role":"assistant","content":[{"type":"text","text":"The complete partial reply"}]}}
+```
+
+`reason` is `stall` or `overflow`. A session's `message` is the complete current in-progress
+message, or `null` when none exists. If a handle was detached during the gap, its record also
+has `"closed":true`; retire that handle through the normal session-close path without closing
+the socket. The affected handle set is remembered when shedding begins, so losing a close
+event cannot silently leave a client attached to a nonexistent handle.
+Only the handle set is frozen at shed start. Message snapshots are read at drain time,
+in the same synchronous step that reopens admission, and delivered before subsequent
+deltas. They replace the client's partial-message
+baseline; they are not text to append a second time. Media placeholders still apply.
+
+Every untagged marker requires connection-wide reconciliation: unsubscribe the previous
+`subscribe_sessions` subscription and subscribe again, replacing the status snapshot and
+restarting its sequence at zero; re-read `list_sessions` and lifecycle state; and re-read
+each live session's `get_state.pendingDialogs` to restore pending select, confirm, input
+and editor requests. These dialogs are distinct from `pendingQuestions`. Discard obsolete
+status sequence expectations and dialogs absent from the authoritative state.
+
+If `replyLost` is true (or absent on an earlier host), outstanding requests may have lost
+their answers: settle them as **outcome unknown**, not success, and never automatically
+replay a mutation. When it is false, keep outstanding requests intact. Keep the socket,
+its epoch and its session handles. For each tagged marker, refresh that session with
+`get_state` and the existing paginated `get_entries` path, reconcile pending questions and
+run state, and replace its streaming preview from `message`. A read-only request may be
+retried. A closed-handle snapshot retires that session, not the connection.
+Another overflow during recovery produces another gap and a newer snapshot.
+
 #### media_placeholders
 
 A client that advertises `media_placeholders` in `set_client_info` tells the host it does not want
@@ -2048,7 +2109,8 @@ socket host, credit returns as soon as every destination of that session has ACC
 queue (64 MiB per connection), not when the peer's kernel has drained it: a client that is merely busy cannot withhold
 the producing worker's credit. On the shared stdio lane credit still waits for stdout backpressure. A five-second credit
 failure closes that session visibly (`session_error` followed by `session_closed`), rather than retaining an
-unbounded queue. Socket queues keep their independent overflow/disconnect behavior: a connection whose queue would
+unbounded queue. Socket clients advertising `event_resync` use the same-connection recovery described above.
+Other socket queues keep their independent overflow/disconnect behavior: a connection whose queue would
 exceed 64 MiB is cut immediately, and a peer that has not accepted a single pending write within 30 seconds
 (`DEFAULT_STALL_MS`) is cut as a dead peer. That budget is a transport liveness bound and is deliberately independent
 of the 5-second worker control deadline — a busy client is not a dead one. A cut connection receives one `overflow`
@@ -2058,8 +2120,8 @@ that notice, and everything already written to it, before EOF. A peer that is st
 its socket destroyed. A cut peer must reconnect and resynchronize, while the session keeps running and its other
 destinations keep receiving output. A failed or cut connection never withholds a session's credit and never fails the
 host writer; only the stdio lane can. Because credit no longer paces a session against its slowest reader, a
-session that outruns a peer fills that peer's 64 MiB queue instead of slowing down, and that peer is then cut on
-overflow. The default stdio
+session that outruns a peer fills that peer's 64 MiB queue instead of slowing down, and that peer then resynchronizes
+or, without `event_resync`, is cut on overflow. The default stdio
 queue is bounded at 64 MiB or 4096 records, with reserved terminal-failure records and one control-overflow notice.
 Close admission counts both queued output and pending close replies (including their serialized bytes) before
 releasing an attachment or waiting for teardown. An admitted first closer reserves its lifecycle and terminal reply;
@@ -2684,12 +2746,15 @@ Response:
     "sessionName": "my-feature-work",
     "autoCompactionEnabled": true,
     "messageCount": 5,
-    "pendingMessageCount": 0
+    "pendingMessageCount": 0,
+    "pendingDialogs": []
   }
 }
 ```
 
 The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitch` is always present: `null` means no held switch, while an object with `provider` and `id` identifies a switch that applies after the next compaction. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
+
+`pendingDialogs` contains the live `extension_ui_request` frames for select, confirm, input and editor dialogs, or `[]` when none await an answer. Still-open dialogs remain listed after session replacement; resolved, cancelled and timed-out requests are removed. Use these frames to reconcile dialogs during event recovery, separately from `pendingQuestions`.
 
 `serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
 
@@ -4883,6 +4948,8 @@ continues to skip cancellation. A reload that preserves a pending question does 
 a terminal outcome while detached is published once through the next bound extension runner.
 
 `RpcSessionState.pendingQuestions` (returned by `open_session` and `get_state`) lists any questions still waiting for an answer. Connections that attach after the question was asked receive the pending record immediately.
+
+`RpcSessionState.pendingDialogs` lists the still-open select, confirm, input and editor request frames, including requests that remain live across `new_session`, `switch_session`, `fork`, `clone` and `import_jsonl`. The array is empty once all dialogs are resolved, cancelled or timed out. Clients recovering from a gap can restore these dialogs and remove dialogs absent from this authoritative snapshot.
 
 Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)"), then one `input` for a comment. The result maps back to the same `QuestionResponse`.
 

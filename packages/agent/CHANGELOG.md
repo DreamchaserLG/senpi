@@ -10,6 +10,18 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - The `pico3` harness bash tool no longer SIGKILLs its own process group when a run is aborted after `bash` failed to start (Node < 24.22 / 26.10 signals the caller's group for a child without a pid) ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
 
 ### Removed
