@@ -8,8 +8,9 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_SOCKET_PATH_BYTES } from "../socket-ownership.ts";
-import { channelSocketPath, connectChannel, fallbackSocketRoot, openChannelListener } from "./channel.ts";
+import { connectChannel, openChannelListener } from "./channel.ts";
 import { ToolChildClient } from "./client.ts";
+import { channelSocketPath, fallbackSocketRoot } from "./socket-root.ts";
 
 const resolver = pathToFileURL(resolve(import.meta.dirname, "../../../experimental/source-resolver.ts")).href;
 const roleEntry = resolve(import.meta.dirname, "../../../tool-child-main.ts");

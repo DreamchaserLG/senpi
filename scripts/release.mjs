@@ -13,8 +13,8 @@
  *      and continues so the preview is usable during development).
  *   2. Resolve version: `--version` override or `computeNextVersion()` from calver.mjs.
  *   3. Test evidence (senpi#2943): regenerate the AI model catalog and check the bundled
- *      provider defaults against it. If the catalog changed, commit it alone and push it to
- *      `main`, so CI tests exactly the tree the release ships. Then wait for that commit's
+ *      provider defaults against it. If the catalog changed, commit it on the release only and
+ *      require --force-tests, so this job tests that tree before anything reaches `main`. Then wait for that commit's
  *      green "Check and test" run, the fan-in of every CI shard and required job. A red run
  *      stops the release; a run superseded by a newer `main` push moves the release onto
  *      that commit. The suite is never re-run here unless `--force-tests` asks for it.
@@ -335,14 +335,14 @@ function remoteMain() {
 
 /**
  * The release's test evidence is CI's sharded run, never a second serial run of the suite here (senpi#2943).
- * A regenerated model catalog is committed and pushed to main on its own first, so CI tests exactly the tree the
+ * A regenerated model catalog is committed on the release only and requires --force-tests (never pushed untested); the
  * release ships (the gap behind senpi#2645); then the release waits for that commit's green "Check and test".
  */
 function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
 	runGenerateModels(dryRun, runCommand, log, dryRunLog);
 	runProviderDefaultsCheck(dryRun, runCommand, log, dryRunLog);
 	if (dryRun) {
-		dryRunLog(`if the catalog changed: git commit ${REGENERATED_CATALOG_PATHS.join(" ")} and git push origin main`);
+		dryRunLog(`if the catalog changed: git commit ${REGENERATED_CATALOG_PATHS.join(" ")} on the release only (requires --force-tests)`);
 		const sha = pinnedSha ?? captureCommand("git", ["rev-parse", "HEAD"]).trim();
 		const plan = planCiEvidence({ sha, checkRuns: lookupCiCheckRuns(sha) });
 		dryRunLog(`test gate (preview, ${pinnedSha ? "pinned commit" : "HEAD"}): ${plan.reason}`);
@@ -352,21 +352,18 @@ function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
 	if (discardTimestampOnlyCatalogChange(process.cwd())) {
 		log("the regeneration changed only the catalog manifest's generatedAt stamp; keeping HEAD's catalog");
 	}
-	const catalogChanged = catalogChangedSinceHead(process.cwd());
-	if (catalogChanged && pinnedSha) {
-		// A pinned release cannot push a catalog commit to main for CI: main has moved past the pinned commit.
+	if (catalogChangedSinceHead(process.cwd())) {
+		// A regenerated catalog is never pushed to main before this job has checked and tested it: v2026.10.19-1 pushed
+		// one that dropped a model a test pinned, and main failed typecheck for every PR. It is committed on the release
+		// only, and the forced suite plus `npm run check` run on it before anything is pushed.
 		if (!forceTests) {
-			throw new Error("the regeneration changed the model catalog of a pinned release; dispatch it with force_tests so the suite runs on that tree");
+			throw new Error(
+				"the regeneration changed the model catalog; dispatch with force_tests so this job tests that tree before anything reaches main",
+			);
 		}
-		log("the regeneration changed the model catalog; committing it on the pinned release only (force_tests runs the suite on it)");
+		log("the regeneration changed the model catalog; committing it on the release only (the forced suite and checks run on it)");
 		runCommand("git", ["add", "--", ...REGENERATED_CATALOG_PATHS]);
 		gitCommit(`chore(ai): regenerate the model catalog for v${version}`, false);
-	} else if (catalogChanged) {
-		log("the regeneration changed the model catalog; committing it to main so CI tests the tree this release ships");
-		runCommand("git", ["add", "--", ...REGENERATED_CATALOG_PATHS]);
-		gitCommit(`chore(ai): regenerate the model catalog for v${version}`, false);
-		syncRemoteMainBeforePush(false, runCommand, log, dryRunLog);
-		gitPush("main", false);
 	}
 	if (forceTests) {
 		log("test gate: --force-tests given; the suite runs in this job on the release code, before version and changelog stamping");

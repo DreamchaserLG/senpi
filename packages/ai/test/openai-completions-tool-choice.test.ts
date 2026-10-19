@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { convertMessages } from "../src/api/openai-completions.ts";
-import { getModel, normalizeContext, stream, streamSimple } from "../src/compat.ts";
+import { getModel, getModels, normalizeContext, stream, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Model, SimpleStreamOptions, Tool, ToolResultMessage } from "../src/types.ts";
 import { clearForcedToolChoiceRefusals } from "../src/utils/tool-choice-fallback.ts";
 
@@ -2144,7 +2144,19 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("uses OpenRouter reasoning object instead of reasoning_effort", async () => {
-		const model = getModel("openrouter", "deepseek/deepseek-r1")!;
+		// Any OpenRouter chat model with the OpenRouter reasoning format: a pinned live id leaves the catalog on regeneration.
+		const model = getModels("openrouter").find(
+			(candidate) =>
+				candidate.api === "openai-completions" &&
+				candidate.reasoning &&
+				candidate.compat !== undefined &&
+				"thinkingFormat" in candidate.compat &&
+				candidate.compat.thinkingFormat === "openrouter",
+		);
+		if (!model)
+			throw new Error(
+				"the OpenRouter catalog has no openai-completions reasoning model with the openrouter thinking format",
+			);
 		let payload: unknown;
 
 		await streamSimple(

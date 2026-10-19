@@ -37,6 +37,7 @@ for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, f
 	{ mergeStatus: 0, ci: "superseded" },
 	{ mergeStatus: 0, ci: "success", manifestStampOnly: true },
 	{ mergeStatus: 0, ci: "success", forceTests: true },
+	{ mergeStatus: 0, ci: "success", catalogDirty: true, forceTests: true },
 ]) {
 	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-release-cli-"));
@@ -103,6 +104,28 @@ if (${JSON.stringify(name)} === "gh") {
 				timeout: 15000,
 			});
 			const commands = readFileSync(calls, "utf8").trim().split("\n").map(JSON.parse);
+			if (catalogDirty && !forceTests) {
+				// A changed catalog is never pushed to main untested (v2026.10.19-1): without --force-tests the release stops
+				// before it commits, tags or pushes anything.
+				assert.equal(result.status, 1, result.stderr);
+				assert.match(result.stderr, /dispatch with force_tests/);
+				assert.deepEqual(commands.filter((args) => args[1] === "push" || args[1] === "tag"), []);
+				return;
+			}
+			if (catalogDirty && forceTests) {
+				// The catalog commit stays on the release; the forced suite runs after it, and main is pushed once, at the end.
+				assert.equal(result.status, 0, result.stderr);
+				const index = (predicate) => commands.findIndex(predicate);
+				const catalogCommit = index((args) => args[1] === "commit" && /regenerate the model catalog/.test(args.at(-1)));
+				const test = index((args) => args[0] === "npm" && args[1] === "test");
+				const firstPush = index((args) => args[1] === "push");
+				assert.ok(catalogCommit >= 0 && catalogCommit < test && test < firstPush, JSON.stringify(commands));
+				assert.deepEqual(commands.filter((args) => args[1] === "push"), [
+					["git", "push", "origin", "main"],
+					["git", "push", "origin", "v2026.9.12-3"],
+				]);
+				return;
+			}
 			if (forceTests) {
 				// The forced suite tests the release's code before the version and changelog stamping: a test that reads a
 				// real CHANGELOG.md must see its [Unreleased] section, as CI would (v2026.10.16 release run 38824836070).
@@ -146,26 +169,6 @@ if (${JSON.stringify(name)} === "gh") {
 				return;
 			}
 			assert.equal(commands.some((args) => args[0] === "npm" && args[1] === "test"), false);
-			if (catalogDirty) {
-				// senpi#2943: the changed catalog is committed alone and pushed to main, after the remote sync,
-				// before the gate reads CI, so CI tests exactly the tree the release tags.
-				const index = (predicate) => commands.findIndex(predicate);
-				const addCatalog = index(
-					(args) => args[1] === "add" && args.includes("packages/ai/src/models.generated.ts") && args.includes("packages/ai/src/providers"),
-				);
-				const catalogCommit = index((args) => args[1] === "commit" && /regenerate the model catalog/.test(args.at(-1)));
-				const firstSync = index((args) => args[1] === "fetch");
-				const catalogPush = index((args) => args[1] === "push" && args[3] === "main");
-				const ciLookup = index((args) => args[0] === "gh" && String(args[2]).includes("/check-runs"));
-				assert.deepEqual(commands[addCatalog], ["git", "add", "--", "packages/ai/src/models.generated.ts", "packages/ai/src/providers"]);
-				assert.ok(addCatalog < catalogCommit && catalogCommit < firstSync && firstSync < catalogPush && catalogPush < ciLookup, JSON.stringify(commands));
-				assert.deepEqual(commands.filter((args) => args[1] === "push"), [
-					["git", "push", "origin", "main"],
-					["git", "push", "origin", "main"],
-					["git", "push", "origin", "v2026.9.12-3"],
-				]);
-				return;
-			}
 			assert.ok(commands.some((args) => args[0] === "git" && args[1] === "merge"), result.stderr);
 			assert.equal(result.status, mergeStatus, result.stderr);
 			assert.deepEqual(commands.filter((args) => args[1] === "push"), mergeStatus === 0 ? [
