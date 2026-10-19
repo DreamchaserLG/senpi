@@ -5,6 +5,7 @@
 ### Breaking Changes
 
 ### Added
+- When a usage limit makes the session fall back to another model, `retry_fallback_applied` carries `resetsAt` (ISO) if the limit's reset is known, and the interactive fallback notice says when it resets. The OmO desktop app shows the same reset on its fallback row ([omo-desktop-app#3353](https://github.com/sisyphuslabs/omo-desktop-app/issues/3353)).
 
 ### Changed
 
@@ -37,7 +38,6 @@
 - Extensions can fold a session's whole history without holding it in memory: `ctx.sessionManager.reduceHistory({ initial, add })` reads the history once and folds only new entries after that ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - `senpi host stop --drain` reaches a generation without signals on every platform, including win32, and `--instance <id>` drains a named (superseded) generation with `--wait-ms <n>` reporting whether it `exited`; a superseded win32 generation now drains itself once the pointer and the endpoint both name its successor ([#3653](https://github.com/code-yeongyu/senpi/issues/3653)).
 - Subscription limits are known before an account's first turn: in interactive and RPC modes the engine polls each signed-in Claude (every 5 min) and ChatGPT (every 2.5 min) subscription account's usage, so `get_subscription_limits` and the `subscription_limits` record carry its windows on a fresh session. Turns keep updating the same record, the newest reading wins, one machine-wide cache keeps several senpi processes to one request per account per interval, and a failed poll keeps the last windows and reports why in a new optional `error` field (with `plan` beside it). A login the token endpoint already rejected shows `auth stale - run /login` and is not polled again. Extensions read the same store through `pi.getSubscriptionLimits()` and `pi.onSubscriptionLimits()` ([#3684](https://github.com/code-yeongyu/senpi/issues/3684)).
-- When a usage limit makes the session fall back to another model, `retry_fallback_applied` carries `resetsAt` (ISO) if the limit's reset is known, and the interactive fallback notice says when it resets. The OmO desktop app shows the same reset on its fallback row ([omo-desktop-app#3353](https://github.com/sisyphuslabs/omo-desktop-app/issues/3353)).
 
 ### Changed
 
