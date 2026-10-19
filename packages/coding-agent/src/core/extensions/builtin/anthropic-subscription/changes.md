@@ -1,3 +1,22 @@
+## 2026-10-19 - The 1M-window refusal is recognized in Claude Code 2.1.260's wording (senpi#3408 follow-up)
+
+### What changed
+
+- `errors.ts`: `classifyErrorKind` reads a long-context refusal through `isLongContextRefusal`, which accepts the earlier wording ("Extra usage is required for long context", "Usage credits are required for long context") and, newly, any text naming the 1M or long context that says it requires extra usage, usage credits or extra credits ("Opus 5.5 (1M context) requires usage credits · /model to change").
+- A credits requirement for a model itself ("Fable 5 requires usage credits") names no long or 1M context, so it is not read as a window refusal.
+
+### Why
+
+Claude Code 2.1.260 reports an account without the 1M window in its usage-credits wording. The old pattern did not match it, so `retryAtStandardWindowOnce` never recorded the refusal: `longContextAvailable()` stayed true, every request asked for `[1m]` again, and each new chat failed. Reported from a Claude subscription on omo 5.1.34, whose senpi 2026.10.16 already carried the persisted refusal and 200k retry from #3410.
+
+### Why an extension could not handle it
+
+This is the builtin extension's own error classification.
+
+### Expected merge conflict zones
+
+`errors.ts` `classifyErrorKind` (the first check); fork-only file.
+
 ## 2026-10-19 - Single-account guidance follows the pin's source and the block's cause (senpi#3672)
 
 ### What changed

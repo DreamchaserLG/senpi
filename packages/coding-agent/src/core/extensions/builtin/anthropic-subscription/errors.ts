@@ -111,11 +111,22 @@ export function classifySdkError(error: unknown): SdkErrorClassification {
 	return modelFamily === undefined ? classification : { ...classification, modelFamily };
 }
 
+/**
+ * The account's refusal of the 1M window, in each wording Claude Code uses: "Extra usage is required for
+ * long context", and since 2.1.260 "Opus 5.5 (1M context) requires usage credits". Both the long
+ * window and a credits requirement must be named: "Fable 5 requires usage credits" is a model the
+ * account may not use at all, not a window it may retry smaller.
+ */
+function isLongContextRefusal(text: string): boolean {
+	if (/\b(?:extra usage|usage credits) (?:is|are) required for long context\b/.test(text)) return true;
+	return /\b(?:1m|long) context\b/.test(text) && /\brequires? (?:extra usage|(?:extra |usage )credits)\b/.test(text);
+}
+
 function classifyErrorKind(error: unknown): SdkErrorClassification {
 	const text = errorText(error).toLowerCase();
 	// Claude Code reports an account without the 1M window under the rate_limit code. It is a window
 	// entitlement, not a limit: retry at the standard window instead of blocking the account (senpi#3408).
-	if (/\b(?:extra usage|usage credits) (?:is|are) required for long context\b/.test(text)) {
+	if (isLongContextRefusal(text)) {
 		return { kind: "long_context_unavailable", retryable: true };
 	}
 	if (

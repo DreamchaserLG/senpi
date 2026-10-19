@@ -225,7 +225,17 @@ describe("#3408: the subscription request carries the window senpi plans against
 	it.each([
 		"Extra usage is required for long context · enable extra usage at claude.ai/settings/usage (rate_limit)",
 		"Usage credits are required for long context (rate_limit)",
+		// Claude Code 2.1.260's wording: the model's display name carries "(1M context)".
+		"Opus 5.5 (1M context) requires usage credits · /model to change (rate_limit)",
+		"Claude Opus 5.5 with 1M context requires usage credits.",
+		"1M context requires extra credits",
 	])("classifies %j as a refused window, never as a rate limit that blocks the account", (text) => {
 		expect(classifySdkError(new Error(text))).toEqual({ kind: "long_context_unavailable", retryable: true });
+	});
+
+	it("does not read a model that needs usage credits for itself as a refused 1M window", () => {
+		expect(classifySdkError(new Error("Fable 5 requires usage credits (rate_limit)")).kind).not.toBe(
+			"long_context_unavailable",
+		);
 	});
 });
