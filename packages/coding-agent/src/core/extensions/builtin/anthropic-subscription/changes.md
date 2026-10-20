@@ -1,3 +1,33 @@
+## 2026-10-20 - Native-1M models are requested by their plain id; only legacy ids use the [1m] opt-in (senpi#3801)
+
+### What changed
+
+- `context-window.ts` (new): `LEGACY_LONG_CONTEXT_MODEL_IDS` lists the ids whose 1M window is reachable only through Claude Code's `[1m]` opt-in: the rows of the bundled Claude Code catalog with `supports_1m_beta` and without `native_1m` (`claude-3-7-sonnet`, `claude-opus-4-6`, `claude-sonnet-4-0`, `claude-sonnet-4-5`, `claude-sonnet-4-6`), pinned against the installed binary by `test/suite/regressions/3801-subscription-legacy-long-context-catalog.test.ts`. `sdkModelId` (moved here from `options.ts`, with `CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW`) adds `[1m]` only for those ids while the opt-in is available; `plannedContextWindow` caps only those ids at 200k after a refusal; `asksLegacyLongContext` tells whether a built request asked for the opt-in.
+- `options.ts`: while senpi owns compaction, the SDK child gets `CLAUDE_CODE_MAX_CONTEXT_TOKENS=<planned window>` and `DISABLE_COMPACT=1` next to `CLAUDE_CODE_TOTAL_TOKENS_REMINDER=off`. With `DISABLE_COMPACT` set, Claude Code takes that variable over every model rule of its own, so it plans the window senpi plans; its native compaction was already off through `autoCompactEnabled`. `compactionOwner: "sdk"` gets none of the three.
+- `index.ts`: `anthropicSubscriptionModels` plans every model with `plannedContextWindow`, so a native model keeps its catalog window after a refusal.
+- `long-context-retry.ts` (new, moved out of `auth-lane.ts`): `sdkFailure`, `visibleSdkMessage` and `retryAtStandardWindowOnce`, which now takes whether the attempt asked for the opt-in. `classifyForRequest` reads a long-context refusal on any other request as an ordinary non-retryable failure.
+- `auth-lane.ts`: the ambient retry and the failover classifier use the request shape of the attempt they judge, so only a legacy `[1m]` request records a refusal or retries at 200k.
+- `long-context.ts`: the persisted state carries `version: 2`; a state without it (written before this change, possibly by a native-model request) is ignored and removed on first read.
+- `session-sync.ts`: the config fingerprint also hashes the planned window passed to Claude Code, which it reads once at spawn, so a switch to a model planned at another window restarts the resident process at that window.
+- `session-registry-wiring.ts`: imports `sdkModelId` from `context-window.ts`.
+
+### Why
+
+senpi#3408 asked for 1M with `[1m]` on every model above 200k. On Claude Code that suffix sends the legacy `context-1m-2025-08-07` beta, which a subscription without extra usage refuses ("Extra usage is required for long context") even for models whose 1M window is native on every plan. The refusal then capped every model at 200k for 6 hours.
+
+### Why an extension could not handle it
+
+This is the anthropic-subscription builtin's own request options, model registration, refusal state and retry policy.
+
+### Expected merge conflict zones
+
+- `options.ts`: the imports and the compaction-owner env block;
+- `index.ts`: `anthropicSubscriptionModels` and the imports;
+- `auth-lane.ts`: the imports, the ambient branch and the `runFailover` call (`runAttempt`, `classify`);
+- `long-context.ts`: `load` and the persisted write in `markLongContextRefused`;
+- `session-sync.ts`: the fingerprint toolset hash;
+- `session-registry-wiring.ts`: the imports.
+
 ## 2026-10-19 - Single-account guidance follows the pin's source and the block's cause (senpi#3672)
 
 ### What changed

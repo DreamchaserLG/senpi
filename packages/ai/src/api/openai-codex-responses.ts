@@ -6,6 +6,7 @@ import type {
 	ResponseInput,
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import { getWireIdentity } from "../wire-identity.ts";
 
 type ProcessWithOsBuiltinModule = typeof process & {
@@ -47,6 +48,8 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { attachProviderDiagnostic } from "../utils/provider-diagnostic-carrier.ts";
+import { transportProviderDiagnosticFromError } from "../utils/provider-diagnostic-sources.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { getDeclaredTools, getInitialSystemMessage, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
@@ -63,6 +66,10 @@ import {
 	recordWebSocketSseFallback,
 	recordWebSocketSuccess,
 } from "./openai-codex-responses/fallback-state.ts";
+import {
+	codexEventProviderDiagnostic,
+	codexHttpProviderDiagnostic,
+} from "./openai-codex-responses/provider-diagnostic.ts";
 import { buildCodexReasoning, type CodexReasoningSummaryInput } from "./openai-codex-responses/reasoning.ts";
 import { applyChatGptSubscriptionCacheAffinityHeaders, clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
@@ -481,7 +488,10 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 							errorMessage = appendRetryAfterMsMarker(errorMessage, hintMs);
 						}
 					}
-					throw new Error(errorMessage);
+					throw attachProviderDiagnostic(
+						new Error(errorMessage),
+						codexHttpProviderDiagnostic(response.status, errorText),
+					);
 				} catch (error) {
 					if (error instanceof Error) {
 						if (error.name === "AbortError" || error.message === "Request was aborted") {
@@ -532,6 +542,11 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			const providerDiagnostic =
+				output.stopReason === "error"
+					? (readProviderDiagnostic(error) ?? transportProviderDiagnosticFromError(error))
+					: undefined;
+			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -855,21 +870,26 @@ async function* mapCodexEvents(
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
 			}
-			throw new CodexApiError(errorText, {
-				code: code || undefined,
-				payload: event,
-			});
+			throw attachProviderDiagnostic(
+				new CodexApiError(errorText, { code: code || undefined, payload: event }),
+				codexEventProviderDiagnostic(event),
+			);
 		}
 
 		if (type === "response.failed") {
 			const code = getCodexEventErrorCode(event);
 			const message = getCodexEventErrorMessage(event);
-			let errorText = message || "Codex response failed";
+			let errorText =
+				describeChatGptUsageLimitEvent({ ...event, error: getCodexEventError(event) }) ??
+				(message || "Codex response failed");
 			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
 			}
-			throw new CodexApiError(errorText, { code, payload: event });
+			throw attachProviderDiagnostic(
+				new CodexApiError(errorText, { code, payload: event }),
+				codexEventProviderDiagnostic(event),
+			);
 		}
 
 		if (type === "response.done" || type === "response.completed" || type === "response.incomplete") {

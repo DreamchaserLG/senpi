@@ -16,6 +16,26 @@ The fallback decision and the failure that caused it live inside the session's r
 
 The `retry_fallback_applied` member of the session event union, and the `RetryFallbackController` construction in the `AgentSession` constructor.
 
+## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
+
+### What changed
+
+- `packages/coding-agent/src/core/user-text-blocks.ts`: new `joinUserTextBlocks(blocks)` (the newline join `userTextContent` already enforced, now its single definition) and `userMessageText(content)`, the one key a queued user message is tracked by.
+- `packages/coding-agent/src/core/agent-session.ts`: enqueue and dequeue both read that key. `sendUserMessage` joins its text blocks with `joinUserTextBlocks`; the `message_start` match that removes a started user message from `_steeringMessages` / `_followUpMessages` and the queued-input order reads `userMessageText(content)` instead of `contentText(content, "")`; a started prompt that a competing run displaced into the steer queue is recorded by `userMessageText` too (the private `_extractUserMessageText` is gone).
+
+### Why
+
+- Since senpi#2920 a later ask-user answer keeps its frame and the user's words in separate text blocks, and `userTextContent` keeps blocks only while their newline join equals the text. The queue records that text; the old match joined with no separator, so a multi-block steer or follow-up reached the model but stayed queued for the rest of the session (the TUI kept showing `Steering: [Answer to question <id>]`; `pendingMessageCount`, `getQueuedInputs()` and RPC queue snapshots counted it). One shared key keeps the two sides from drifting again: `userMessageText(userTextContent(text, blocks)) === text`.
+- Regressions: `test/suite/regressions/issue-3588-multi-block-queued-input-leaves-queue.test.ts` (extension steer, extension follow-up, identified steer with `clientMessageId`, displaced started prompt) and `test/suite/regressions/issue-3768-ask-user-answer-leaves-steer-queue.test.ts` (the real `ask_user_question` tool answered with a comment and with typed words during a busy run; steering, pending count, queued inputs, the last `queue_update` and the RPC state all empty; plus the key invariant).
+
+### Why an extension could not handle it
+
+- Queue bookkeeping for delivered input lives in the session's event handler.
+
+### Expected merge conflict zones
+
+- LOW: the `user-text-blocks.ts` import, the `message_start` match, the displaced-prompt `text`, and the `sendUserMessage` join in `agent-session.ts`.
+
 ## 2026-10-19 - Releasing an ended holder's lease fences out its writer first (senpi#3658)
 
 ### What changed

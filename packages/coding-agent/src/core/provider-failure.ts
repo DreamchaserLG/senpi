@@ -15,6 +15,8 @@ export interface ProviderFailure {
 	readonly provider: string;
 	readonly httpStatus?: number;
 	readonly code?: string;
+	/** When the limit lifts (epoch ms), for a `quota` or `rate_limit` failure whose provider named it. */
+	readonly resetsAt?: number;
 	readonly reason: string;
 	readonly action: string;
 }
@@ -47,12 +49,15 @@ export function describeProviderFailure(diagnostic: ProviderDiagnostic | undefin
 					action: "retry once; if it repeats, switch the model or report the code",
 				}
 			: ACTIONS[category];
+	const resetsAt = diagnostic?.resetsAt;
 	return {
 		category,
 		provider,
 		...(diagnostic?.httpStatus === undefined ? {} : { httpStatus: diagnostic.httpStatus }),
 		...(diagnostic?.code === undefined ? {} : { code: diagnostic.code }),
+		...(resetsAt === undefined ? {} : { resetsAt }),
 		...detail,
+		...(resetsAt === undefined ? {} : { reason: `${detail.reason} until ${new Date(resetsAt).toISOString()}` }),
 	};
 }
 

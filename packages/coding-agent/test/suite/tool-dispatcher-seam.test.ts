@@ -236,10 +236,13 @@ describe("ToolDispatcher seam (senpi#3566 todo 2)", () => {
 		}
 	});
 
-	it("stub: executeBash without an override fails closed under the child runtime", async () => {
+	it("executeBash without an override runs on the tool child, and a pinned override still runs as given", async () => {
 		const harness = await createHarness({ toolRuntime: "child" });
 		try {
-			await expect(harness.session.executeBash("echo nope")).rejects.toThrow(/tool_runtime_unavailable/);
+			const onChild = await harness.session.executeBash("echo parent=$PPID");
+			const parent = Number(/parent=(\d+)/.exec(onChild.output)?.[1] ?? Number.NaN);
+			expect(parent).not.toBe(process.pid);
+			expect(harness.session.toolChildRow()).toMatchObject({ state: "live", pid: parent });
 			const operations = fakeBashOperations("still-pinned-ran\n");
 			const pinned = await harness.session.executeBash("sentinel", undefined, { operations });
 			expect(pinned.output).toBe("still-pinned-ran\n");

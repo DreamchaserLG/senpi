@@ -1,3 +1,22 @@
+## 2026-10-20 - chatgpt-subscription failures carry a classified providerDiagnostic (senpi#3771)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: the HTTP refusal, the in-stream `error` event and the `response.failed` event attach a diagnostic from `codexHttpProviderDiagnostic` / `codexEventProviderDiagnostic` to the error they throw, and the outer `catch` copies `readProviderDiagnostic(error) ?? transportProviderDiagnosticFromError(error)` onto `output.providerDiagnostic` for `stopReason: "error"`. `response.failed` uses `describeChatGptUsageLimitEvent` on its nested `response.error` like the `error` branch does.
+- `packages/ai/src/api/openai-codex-responses/provider-diagnostic.ts` (fork-only): reads `error.code`/`error.type`, the inline or HTTP status, and `resets_at`/`resets_in_seconds`. A recognized code classifies (`usage_limit_reached`, `usage_not_included` -> `quota`; `rate_limit_exceeded` -> `rate_limit`) with `resetsAt`; otherwise a classifying status, then a safe lowercase error type (or the event type) as the code of an `unknown` diagnostic.
+
+### Why
+
+The adapter never minted a diagnostic, so every ChatGPT-subscription failure, a usage limit included, read "could not be classified (chatgpt-subscription, no code)".
+
+### Why an extension could not handle it
+
+The diagnostic rides the provider's thrown error inside the adapter, before any extension sees the failure.
+
+### Expected merge conflict zones
+
+- LOW: the HTTP `throw` in the retry loop, the outer `catch` of `stream()`, and the `error` / `response.failed` branches of `mapCodexEvents` in `openai-codex-responses.ts`.
+
 ## 2026-10-19 - ChatGPT subscription Fast and Ultrafast costs use the included-usage rates (oh-my-openagent#10540)
 
 ### What changed

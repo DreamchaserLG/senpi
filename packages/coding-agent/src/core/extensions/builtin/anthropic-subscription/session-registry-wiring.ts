@@ -3,7 +3,7 @@ import { convertToLlm } from "../../../messages.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import { restoreColdSeedCalibration } from "./cold-seed-budget.ts";
-import { sdkModelId } from "./options.ts";
+import { sdkModelId } from "./context-window.ts";
 import {
 	BINDING_ENTRY_TYPE,
 	BINDING_MARKER,

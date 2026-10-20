@@ -403,7 +403,7 @@ import {
 } from "./turn-deadline.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
-import { keepsTextBlocksVerbatim, userTextContent } from "./user-text-blocks.ts";
+import { joinUserTextBlocks, keepsTextBlocksVerbatim, userMessageText, userTextContent } from "./user-text-blocks.ts";
 import {
 	findLatestResponse,
 	getBranchSelection,
@@ -3029,7 +3029,7 @@ export class AgentSession {
 					userMessage?.role === "user"
 						? {
 								...readClientMessageIdentity(userMessage),
-								text: this._extractUserMessageText(userMessage.content),
+								text: userMessageText(userMessage.content),
 								images:
 									typeof userMessage.content === "string"
 										? undefined
@@ -3050,15 +3050,6 @@ export class AgentSession {
 			await this._emitAgentSettled();
 			throw error;
 		}
-	}
-
-	/** Extract text content used to track fork-owned queued user messages. */
-	private _extractUserMessageText(content: string | Array<{ type: string; text?: string }>): string {
-		if (typeof content === "string") return content;
-		return content
-			.filter((part): part is { type: "text"; text: string } => part.type === "text")
-			.map((part) => part.text)
-			.join("");
 	}
 
 	// Track last assistant message for auto-compaction check
@@ -3451,7 +3442,7 @@ export class AgentSession {
 		if (event.type === "message_start" && event.message.role === "user") {
 			this._overflowRecoveryRungs = 0;
 			this._retryFallback.resetTurn();
-			const messageText = contentText(event.message.content, "");
+			const messageText = userMessageText(event.message.content);
 			if (messageText) {
 				const { clientMessageId } = readClientMessageIdentity(event.message);
 				const queued =
@@ -6428,7 +6419,7 @@ export class AgentSession {
 						images.push(part);
 					}
 				}
-				text = textParts.join("\n");
+				text = joinUserTextBlocks(textParts);
 				if (textParts.length > 1) textBlocks = textParts;
 				if (images.length === 0) images = undefined;
 			}
