@@ -7,6 +7,7 @@ import { buildRpcSessionState } from "./connection-handler.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
+import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import {
 	clearHandoverParkedSession,
 	type HandoverParkedEntry,
@@ -877,6 +878,7 @@ export class SessionCommandRouter {
 					sessionPath: command.sessionPath,
 					holderEndpoint: {
 						host_instance: instanceId,
+						...(process.env[HOST_DAEMON_DIR_ENV] ? { host_daemon_dir: process.env[HOST_DAEMON_DIR_ENV] } : {}),
 						...(this.defaults.hostContext?.host_socket === undefined
 							? {}
 							: { host_socket: this.defaults.hostContext.host_socket }),

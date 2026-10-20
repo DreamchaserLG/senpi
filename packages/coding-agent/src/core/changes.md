@@ -16,6 +16,44 @@ The fallback decision and the failure that caused it live inside the session's r
 
 The `retry_fallback_applied` member of the session event union, and the `RetryFallbackController` construction in the `AgentSession` constructor.
 
+## 2026-10-19 - Releasing an ended holder's lease fences out its writer first (senpi#3658)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-holder-records.ts`: `liveHolders` takes a `fenceSession` callback; a holder whose pid is alive but unprovable and whose generation ended (`holderEnded`) is released only after the callback advanced the session file's write fence. Without the callback, or when it fails, the holder stands.
+- `packages/coding-agent/src/core/session-holders.ts`: `liveSessionHolders` passes `advanceSessionFence(sessionFile)` as that callback.
+
+### Why
+
+- `packages/coding-agent/src/core/session-holder-records.ts`: `holderEnded` judges a generation over on heartbeat age alone, and a frozen loop or a sleeping machine stops the heartbeat too. Holder leases are shared by every endpoint, so a host on another endpoint could release the lease and open the file without ever meeting the frozen host's reservation claim; the frozen host would then resume writing. The fence refuses its writes (#3659 review). Test: `test/suite/regressions/3658-holder-release-fences-writer.test.ts`.
+- `packages/coding-agent/src/core/session-holders.ts`: the session file is known only here.
+
+### Why an extension could not handle it
+
+- Session holder leases and the session write funnel are core persistence.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-holder-records.ts` the `holderEnded` branch of `liveHolders`; `packages/coding-agent/src/core/session-holders.ts` `liveSessionHolders`.
+
+## 2026-10-19 - A session file taken over from a presumed-done generation fences out its old writer (senpi#3652)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: every write funnel (`_persist`, `_writeHeaderAsync`, `_rewriteFile`) asks `SessionWriteFence.assertOwned` before writing; opening a persisted file records its fence token (`core/session-write-fence.ts`, fork-only, new). When the token on disk changed since the open, the write throws `SessionFencedError` and so does every later write of that manager to that file.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: an RPC host may take a session file over from a generation it only presumes done (its heartbeat stopped; senpi#3652). A frozen event loop or a sleeping machine stops the heartbeat too, and that generation would resume writing the same file: two writers. The takeover advances the fence first, so the old writer's next write is refused and the file stays as the new owner keeps it. Test: `test/suite/regressions/3652-takeover-write-fence.test.ts`.
+
+### Why an extension could not handle it
+
+- The write funnel of the session file is core persistence; extensions write through it, not around it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-manager.ts` the `writeFence` field, `_beginSessionFile`, and the first lines of `_persist`, `_writeHeaderAsync` and `_rewriteFile`.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

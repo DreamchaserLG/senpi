@@ -207,7 +207,8 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 	});
 
 	// #3054: a dead supervisor's retained generation belongs to an OS process identity, not just a pid.
-	it.each(["same", "reused", "unreadable"] as const)(
+	// #3658: an unreadable identity is released once the generation's heartbeat stopped; with no heartbeat it stays guarded.
+	it.each(["same", "reused", "unreadable", "unreadable-heartbeat-stopped"] as const)(
 		"judges a kept generation with a %s child start time",
 		async (identity) => {
 			const r = await rig("held-kill");
@@ -228,11 +229,13 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 			await writeJsonAtomic(r.generation.childPidFile, {
 				pid: r.hostPid,
 				processStartTime:
-					identity === "unreadable"
+					identity === "unreadable" || identity === "unreadable-heartbeat-stopped"
 						? null
 						: new Date(startMs - (identity === "reused" ? 60_000 : 0)).toISOString(),
 			});
-			if (identity === "reused") {
+			if (identity === "unreadable-heartbeat-stopped")
+				await writeJsonAtomic(r.generation.aliveFile, { at: new Date(Date.now() - 10 * 60_000).toISOString() });
+			if (identity === "reused" || identity === "unreadable-heartbeat-stopped") {
 				expect(await hostChildAlive(r.generation), "reused PID must not guard the old generation").toBe(false);
 				expect(await anyGenerationLive(r.paths)).toBe(false);
 				expect((await pruneDeadGenerations(r.paths)).generations, "reused PID generation must be released").toEqual(

@@ -43,7 +43,7 @@ import {
 	sameEndpoint,
 } from "./host-daemon-paths.ts";
 import { isRecord, parseJson, readFileOrUndefined, writeStateFile } from "./host-daemon-state.ts";
-import { pruneDeadGenerations } from "./host-generations.ts";
+import { endClaimsOfEndedGenerations, pruneDeadGenerations } from "./host-generations.ts";
 import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
@@ -171,6 +171,7 @@ export async function clearHostRegistration(paths: HostDaemonPaths): Promise<voi
 	if (typeof pointer?.instance_id === "string") {
 		if (await hostChildAlive(generationPaths(paths, pointer.instance_id)))
 			throw new Error(`refusing to clear generation ${pointer.instance_id} with a live host child`);
+		await endClaimsOfEndedGenerations(paths, new Set([pointer.instance_id]));
 		await rm(generationPaths(paths, pointer.instance_id).dir, { recursive: true, force: true });
 	}
 	await rm(paths.settingsFile, { force: true });

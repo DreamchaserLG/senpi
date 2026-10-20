@@ -9,13 +9,11 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import {
 	breakStaleLock,
 	errorCode,
-	type LockProbes,
 	publishExclusive,
 	readLeaseText,
 	reclaimLockState,
@@ -29,9 +27,18 @@ import {
 	SessionMovedError,
 	SessionMovingError,
 } from "./session-hold-errors.ts";
+import { type HolderGeneration, liveHolders, type SessionHolderProbes } from "./session-holder-records.ts";
 import { encodedSessionId } from "./session-sidecar-store.ts";
+import { advanceSessionFence } from "./session-write-fence.ts";
 
-export { SessionHeldError, type SessionHolder, SessionMovedError, SessionMovingError };
+export {
+	type HolderGeneration,
+	SessionHeldError,
+	type SessionHolder,
+	type SessionHolderProbes,
+	SessionMovedError,
+	SessionMovingError,
+};
 
 /**
  * Cross-process ownership of a session file. Every process that has a session open publishes a holder
@@ -45,7 +52,6 @@ export { SessionHeldError, type SessionHolder, SessionMovedError, SessionMovingE
 
 const HOLDERS_DIR = "session-holders";
 const MOVE_LOCK = "move.lock";
-const HOLDER_RECORD = /^\d+\.json$/;
 // A move rewrites one file and a few sidecars; a lock older than this belongs to a mover that died.
 const MOVE_LOCK_STALE_MS = 30_000;
 const DEFAULT_MOVE_LOCK_WAIT_MS = 5_000;
@@ -134,12 +140,6 @@ function parsePid(raw: string): number | undefined {
 	}
 }
 
-function parseCwd(raw: string): string | undefined {
-	const parsed: unknown = JSON.parse(raw);
-	if (typeof parsed !== "object" || parsed === null || !("cwd" in parsed)) return undefined;
-	return typeof parsed.cwd === "string" ? parsed.cwd : undefined;
-}
-
 /**
  * Publishes this process as a holder of `sessionFile` until `release()`. Throws `SessionMovingError`
  * while another process is moving the session, and `SessionMovedError` when a session that was read
@@ -202,36 +202,6 @@ function publishHolderRecord(dir: string, record: string, content: string): void
 	}
 }
 
-async function liveHolders(dir: string, probes: LockProbes = {}): Promise<SessionHolder[]> {
-	const holders: SessionHolder[] = [];
-	for (const name of await readdir(dir)) {
-		if (!HOLDER_RECORD.test(name)) continue;
-		const path = join(dir, name);
-		const before = await readLeaseText(path);
-		const state = await reclaimLockState(path, probes);
-		if (state.state === "stale") await breakStaleLock(path, state.raw);
-		if (state.state !== "held" || state.holder === undefined) continue;
-		const raw = await readLeaseText(path);
-		// Never publish endpoint labels from a record replaced during the identity probe.
-		const stable = raw !== undefined && raw === before;
-		const parsed: unknown = stable ? JSON.parse(raw) : undefined;
-		const endpoint =
-			typeof parsed === "object" &&
-			parsed !== null &&
-			"host_instance" in parsed &&
-			typeof parsed.host_instance === "string"
-				? {
-						host_instance: parsed.host_instance,
-						...("host_socket" in parsed && typeof parsed.host_socket === "string"
-							? { host_socket: parsed.host_socket }
-							: {}),
-					}
-				: {};
-		holders.push({ pid: state.holder.pid, cwd: stable ? parseCwd(raw) : undefined, ...endpoint });
-	}
-	return holders;
-}
-
 /**
  * Live processes that have `sessionFile` open right now (stale records of dead or reused pids are
  * reclaimed on the way). A caller about to start another writer uses it to wait instead of racing one.
@@ -239,10 +209,10 @@ async function liveHolders(dir: string, probes: LockProbes = {}): Promise<Sessio
 export async function liveSessionHolders(
 	sessionFile: string,
 	sessionId: string,
-	probes: LockProbes = {},
+	probes: SessionHolderProbes = {},
 ): Promise<SessionHolder[]> {
 	try {
-		return await liveHolders(holdersDir(sessionFile, sessionId), probes);
+		return await liveHolders(holdersDir(sessionFile, sessionId), probes, () => advanceSessionFence(sessionFile));
 	} catch (error) {
 		if (errorCode(error) === "ENOENT") return [];
 		throw error;

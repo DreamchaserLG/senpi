@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readProcessIdentity, readProcessStartTime } from "../../utils/process-identity.ts";
+import { readProcessIdentity, readProcessStartTime, waitForStartTime } from "../../utils/process-identity.ts";
 import { writeJsonAtomic } from "./host-state-json.ts";
 import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";
 import { MAX_SOCKET_PATH_BYTES } from "./socket-ownership.ts";
@@ -72,12 +72,36 @@ export async function createInternalSocketPath(
 	return { socket: join(dir, "host.sock"), dir, secretPath: join(dir, ".secret") };
 }
 
-/** Best-effort, 0600, by rename; released with the generation directory. */
-export async function recordChildPid(file: string, pid: number): Promise<void> {
+/** The bounded startup wait for the child's identity, then the one unhurried read (#3658). */
+const CHILD_START_TIME_WAIT_MS = 10_000;
+const CHILD_START_TIME_UNHURRIED_MS = 15_000;
+
+async function readChildStartTime(pid: number, timeoutMs: number): Promise<string | undefined> {
+	const identity = await readProcessIdentity(pid, process.platform, timeoutMs, undefined, "UTC");
+	if (identity.kind === "error") throw identity.error;
+	return identity.kind === "present" ? identity.identity : undefined;
+}
+
+/**
+ * Best-effort, 0600, by rename; released with the generation directory.
+ *
+ * The pid is recorded at once and its start time added when it can be read, the way the supervisor's own
+ * record is (`host-ensure-start.ts`): a bounded wait of 1 s probes, then one unhurried read. A single
+ * 1 s CIM probe fired right after spawn came back empty on every Windows generation (#3658). An identity
+ * read after the child exited is never recorded: its pid may already name an unrelated process.
+ */
+export async function recordChildPid(file: string, pid: number, running: () => boolean): Promise<void> {
 	try {
-		const identity = await readProcessIdentity(pid, process.platform, 1_000, undefined, "UTC");
-		const processStartTime = identity.kind === "present" ? identity.identity : null;
-		if (processStartTime === null) supervisorLog(`host child pid ${pid} start time unreadable at recording`);
+		await writeJsonAtomic(file, { pid, processStartTime: null });
+		const processStartTime =
+			(await waitForStartTime(pid, CHILD_START_TIME_WAIT_MS, (p) => readChildStartTime(p, 1_000)).catch(
+				() => undefined,
+			)) ?? (await readChildStartTime(pid, CHILD_START_TIME_UNHURRIED_MS).catch(() => undefined));
+		if (processStartTime === undefined) {
+			supervisorLog(`host child pid ${pid} start time unreadable at recording`);
+			return;
+		}
+		if (!running()) return;
 		await writeJsonAtomic(file, { pid, processStartTime });
 	} catch (cause) {
 		supervisorLog(`could not record the host child pid: ${errorMessage(cause)}`);

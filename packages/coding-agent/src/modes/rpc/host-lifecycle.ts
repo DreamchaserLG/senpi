@@ -135,7 +135,12 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// death notification. Errors on it must not crash the supervisor.
 	child.stdio[HOST_CHILD_WATCH_FD]?.on("error", () => {});
 	// The CHILD's own identity, so a reader can tell "supervisor gone, child still running" apart.
-	if (child.pid !== undefined) void recordChildPid(generation.childPidFile, child.pid);
+	if (child.pid !== undefined)
+		void recordChildPid(
+			generation.childPidFile,
+			child.pid,
+			() => child.exitCode === null && child.signalCode === null,
+		);
 	child.once("exit", (code, signal) => {
 		// Recorded BEFORE any shutdown it triggers: `shutdown` ends in `process.exit`. A stop the
 		// supervisor is performing itself is recorded too, as the engine stop it is.

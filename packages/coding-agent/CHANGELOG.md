@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- A session file left claimed by a stopped engine host no longer blocks reopening its thread. If that host was only frozen or asleep, it can no longer write to the file once another host has taken it over ([#3652](https://github.com/code-yeongyu/senpi/issues/3652)).
+- On Windows, an engine host killed together with its process tree no longer keeps every later start refused as `host_stalled` once Windows reuses its process id: the host's process identity is now recorded, a host whose identity cannot be read is released once it stopped heartbeating, the dead host's session lease no longer refuses every reopen as `session_held` once that host's generation ended, and its session claim ends with that generation instead of refusing every reopen as `session_path_in_use` ([#3658](https://github.com/code-yeongyu/senpi/issues/3658)).
 - Each mounted message no longer keeps its own copy of the markdown theme, and a tool card above the kept history no longer keeps a second copy of its result in its renderer: about 640 bytes per message and 2 KB per tool card for the rest of the session ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - A bundled install's RPC host supervisor now starts from its own small program instead of the whole CLI, so each supervisor stays near the size of its own code. The desktop runs one per open thread ([#3743](https://github.com/code-yeongyu/senpi/issues/3743)).
 
