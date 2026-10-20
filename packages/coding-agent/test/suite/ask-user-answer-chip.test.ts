@@ -171,7 +171,8 @@ describe("ask-user answer chips", () => {
 		expect(delivery.harness.sessionManager.buildSessionContext().messages).toEqual(before);
 		response.resolve(answered);
 		await settled;
-		expect(delivery.deliveries).toEqual([{ content: frame, options: { deliverAs: "followUp" } }]);
+		// #3785: async answers retain their frame and take priority over queued input.
+		expect(delivery.deliveries).toEqual([{ content: frame, options: { deliverAs: "followUp", ahead: true } }]);
 	});
 	it.each(["answered", "timed_out", "comment-submitted"] as const)(
 		"renders a saved %s frame as a chip through session replay",

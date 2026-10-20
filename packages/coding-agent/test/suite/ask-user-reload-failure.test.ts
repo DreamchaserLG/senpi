@@ -51,7 +51,8 @@ it.each(["missing", "throw", "reject"] as const)(
 		expect(delivery.deliveries).toEqual([
 			{
 				content: formatUserMessage(response, entry.request.requestId, entry.request.questions),
-				options: { deliverAs: "followUp" },
+				// #3785: resumed outcomes take priority over queued input.
+				options: { deliverAs: "followUp", ahead: true },
 			},
 		]);
 		expect(notify).toHaveBeenCalledTimes(1);
