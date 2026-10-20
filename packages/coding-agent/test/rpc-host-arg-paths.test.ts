@@ -5,7 +5,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { absoluteHostArgs, withAbsoluteHostArgs } from "../src/modes/rpc/protocol-identity.ts";
 import { resolveCliPaths } from "../src/utils/paths.ts";
 
-// senpi#3783: path-valued host args follow `resolveCliPaths`, the CLI's own rule, against the caller's cwd.
+/**
+ * Makes each path-valued host arg absolute against the CALLER's cwd (senpi#3783), with `resolveCliPaths`, the CLI's own
+ * rule: every local value resolves whether or not it exists yet, a bare name included (`--session-dir sessions` is
+ * `<caller>/sessions`, `--theme dark` is `<caller>/dark`, exactly as the CLI reads them); package specs stay verbatim.
+ * The supervisor and its host child run in the agent dir, so a relative value must never reach them unresolved.
+ */
 describe("host arg paths (senpi#3783)", () => {
 	const created: string[] = [];
 	afterEach(() => {

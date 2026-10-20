@@ -6,7 +6,7 @@
 
 ### Why
 
-One rule for path-valued CLI flags: the CLI and the RPC host's caller-side normalization (`modes/rpc/protocol-identity.ts` `absoluteHostArgs`) must not drift.
+One rule for path-valued CLI flags: the CLI and the RPC host's caller-side normalization (`absoluteHostArgs`, beside it in `utils/paths.ts`) must not drift.
 
 ### Why an extension could not handle it
 

@@ -239,6 +239,29 @@ export function resolveCliPaths(cwd: string, paths: readonly string[] | undefine
 	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
 }
 
+const PATH_VALUED_HOST_FLAGS = new Set([
+	"--extension",
+	"-e",
+	"--skill",
+	"--prompt-template",
+	"--theme",
+	"--session-dir",
+]);
+
+/**
+ * An RPC host's path-valued args read with {@link resolveCliPaths} against `cwd`, the directory of whoever launched it
+ * (senpi#3783): every local value becomes absolute, existing or not - a theme NAME too (`--theme dark` is `<cwd>/dark`,
+ * exactly as the CLI reads it) - and package specs stay verbatim. Lives here, beside the rule, because the lifecycle
+ * supervisor needs it before it moves into its agent dir and this module is already in its import graph.
+ */
+export function absoluteHostArgs(hostArgs: readonly string[], cwd: string): string[] {
+	return hostArgs.map((arg, index) =>
+		index > 0 && PATH_VALUED_HOST_FLAGS.has(hostArgs[index - 1] ?? "")
+			? (resolveCliPaths(cwd, [arg])?.[0] ?? arg)
+			: arg,
+	);
+}
+
 export function getCwdRelativePath(filePath: string, cwd: string): string | undefined {
 	const resolvedCwd = resolvePath(cwd);
 	const resolvedPath = resolvePath(filePath, resolvedCwd);

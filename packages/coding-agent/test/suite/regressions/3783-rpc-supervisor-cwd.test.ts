@@ -1,6 +1,6 @@
-import { execFileSync, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -22,19 +22,19 @@ describe.skipIf(process.platform === "win32")("RPC host supervisor cwd", () => {
 	afterEach(() => {
 		for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
 	});
+	const tsx = import.meta.resolve("tsx");
 
-	it("leaves the caller's directory for its agent dir and spawns the host child there", async () => {
-		const root = mkdtempSync(join(tmpdir(), "rpc3783-"));
-		created.push(root);
-		const caller = join(root, "caller-worktree");
-		mkdirSync(caller);
-		const agentDir = join(root, "agent");
-		mkdirSync(agentDir);
-		const socketPath = join(root, "rpc.sock");
-		const childCwdReport = join(root, "child-cwd");
-		const tsx = import.meta.resolve("tsx");
+	/** Starts `host-lifecycle.ts` DIRECTLY (no ensureHost behind it) from `caller`, runs `check` once it is ready. */
+	async function withDirectSupervisor(
+		caller: string,
+		agentDir: string,
+		args: readonly string[],
+		check: (supervisor: ChildProcess) => void,
+		options: { readonly execArgv?: readonly string[]; readonly env?: NodeJS.ProcessEnv } = {},
+	): Promise<void> {
 		const env: NodeJS.ProcessEnv = {
 			...process.env,
+			...options.env,
 			...hermeticProviderEnv(),
 			PI_OFFLINE: "1",
 			OMO_CODING_AGENT_DIR: agentDir,
@@ -48,20 +48,9 @@ describe.skipIf(process.platform === "win32")("RPC host supervisor cwd", () => {
 			[
 				"--import",
 				tsx,
+				...(options.execArgv ?? []),
 				resolve(import.meta.dirname, "../../../src/modes/rpc/host-lifecycle.ts"),
-				"--socket",
-				socketPath,
-				"--agent-dir",
-				agentDir,
-				"--child-command",
-				process.execPath,
-				"--child-args",
-				JSON.stringify([
-					"--import",
-					tsx,
-					resolve(import.meta.dirname, "../../fixtures/rpc-cwd-reporting-child.ts"),
-					childCwdReport,
-				]),
+				...args,
 			],
 			{ cwd: caller, env, stdio: ["ignore", "ignore", "pipe"] },
 		);
@@ -77,10 +66,7 @@ describe.skipIf(process.platform === "win32")("RPC host supervisor cwd", () => {
 		})();
 		try {
 			await ready;
-			const expected = realpathSync(agentDir);
-			if (supervisor.pid === undefined) throw new Error("supervisor has no pid");
-			expect(realpathSync(processCwd(supervisor.pid))).toBe(expected);
-			expect(realpathSync(readFileSync(childCwdReport, "utf8"))).toBe(expected);
+			check(supervisor);
 		} finally {
 			try {
 				if (supervisor.pid !== undefined) {
@@ -91,5 +77,75 @@ describe.skipIf(process.platform === "win32")("RPC host supervisor cwd", () => {
 				stderr.close();
 			}
 		}
+	}
+
+	function tempLayout(): { root: string; caller: string; agentDir: string } {
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "rpc3783-")));
+		created.push(root);
+		const caller = join(root, "caller-worktree");
+		mkdirSync(caller);
+		const agentDir = join(root, "agent");
+		mkdirSync(agentDir);
+		return { root, caller, agentDir };
+	}
+
+	it("leaves the caller's directory for its agent dir and spawns the host child there", async () => {
+		const { root, caller, agentDir } = tempLayout();
+		const childCwdReport = join(root, "child-cwd");
+		const childArgs = ["--import", tsx, resolve(import.meta.dirname, "../../fixtures/rpc-cwd-reporting-child.ts")];
+		await withDirectSupervisor(
+			caller,
+			agentDir,
+			[
+				"--socket",
+				join(root, "rpc.sock"),
+				"--agent-dir",
+				agentDir,
+				"--child-command",
+				process.execPath,
+				"--child-args",
+				JSON.stringify([...childArgs, childCwdReport]),
+			],
+			(supervisor) => {
+				const expected = realpathSync(agentDir);
+				if (supervisor.pid === undefined) throw new Error("supervisor has no pid");
+				expect(realpathSync(processCwd(supervisor.pid))).toBe(expected);
+				expect(realpathSync(readFileSync(childCwdReport, "utf8"))).toBe(expected);
+			},
+		);
 	}, 45_000);
+
+	// Review round 3: a DIRECT launch (no ensureHost/handoffHost to absolutize first) still reads relative path-valued
+	// host args against the directory it was started from, the CLI's `resolveCliPaths` rule, never against the agent dir.
+	it("resolves a direct launch's relative --session-dir and -e against the inherited cwd", async () => {
+		const { root, caller, agentDir } = tempLayout();
+		writeFileSync(join(caller, "ext.ts"), "export default function () {}\n");
+		const argvReport = join(root, "child-argv.json");
+		await withDirectSupervisor(
+			caller,
+			agentDir,
+			[
+				"--socket",
+				join(root, "rpc.sock"),
+				"--agent-dir",
+				agentDir,
+				"--no-extensions",
+				"--no-skills",
+				"--no-prompt-templates",
+				"--session-dir",
+				"sessions",
+				"-e",
+				"./ext.ts",
+			],
+			() => {
+				const argv: string[] = JSON.parse(readFileSync(argvReport, "utf8"));
+				expect(argv[argv.indexOf("--session-dir") + 1]).toBe(join(caller, "sessions"));
+				expect(argv[argv.indexOf("-e") + 1]).toBe(join(caller, "ext.ts"));
+			},
+			{
+				execArgv: ["--import", resolve(import.meta.dirname, "../../fixtures/rpc-host-argv-recorder.mjs")],
+				env: { RPC_HOST_ARGV_REPORT: argvReport },
+			},
+		);
+	}, 60_000);
 });

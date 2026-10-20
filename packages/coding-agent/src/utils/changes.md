@@ -1,5 +1,23 @@
 # changes
 
+## 2026-10-20 - `absoluteHostArgs` moves beside `resolveCliPaths` (senpi#3783 review round 3)
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts`: exports `absoluteHostArgs(hostArgs, cwd)`, moved from `modes/rpc/protocol-identity.ts`: each `--extension`/`-e`/`--skill`/`--prompt-template`/`--theme`/`--session-dir` value through `resolveCliPaths` against `cwd`.
+
+### Why
+
+The RPC host lifecycle supervisor must apply it before it moves into its agent dir, and this module is already in the supervisor's import graph while `protocol-identity.ts` (which imports the CLI parser) must stay out of it.
+
+### Why an extension could not handle it
+
+Shared by core CLI startup and the core RPC host entry points.
+
+### Expected merge conflict zones
+
+- LOW: the lines after `resolveCliPaths` in `paths.ts`.
+
 ## 2026-10-20 - `resolveCliPaths` moves into `utils/paths.ts` (senpi#3783 review round 2)
 
 ### What changed

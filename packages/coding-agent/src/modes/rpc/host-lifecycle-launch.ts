@@ -8,6 +8,7 @@ import { mkdirSync } from "node:fs";
 import { Socket } from "node:net";
 import { extname, isAbsolute, resolve } from "node:path";
 import { isBunBinary } from "../../config.ts";
+import { absoluteHostArgs } from "../../utils/paths.ts";
 import { runtimeExecArgv } from "../../utils/runtime-exec-argv.ts";
 import { resolveCliMainPath } from "./host-cli-entry.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
@@ -278,8 +279,9 @@ const absoluteFrom = (from: string, path: string): string => (isAbsolute(path) ?
 /**
  * The supervisor leaves its caller's cwd before anything else (senpi#3783): it outlives the ensure that started it
  * and would pin that checkout. Changes the process cwd to `agentDir` (created if missing); the result names it, so the host child is told it.
- * `hostArgs` pass through untouched: `ensureHost`/`handoffHost` (`withAbsoluteHostArgs` in `protocol-identity.ts`, the CLI's
- * `resolveCliPaths` rule, which this module's import budget cannot carry) already made every path-valued one absolute. */
+ * Every entry reaches this first - `ensureHost`/`handoffHost` (which already absolutized `hostArgs`) and every DIRECT launch
+ * (`host-lifecycle.ts` run as a program, `main()`'s hidden route, the bundled `host-supervisor-entry.ts`) - so path-valued
+ * `hostArgs` are read here with the CLI's own rule (`absoluteHostArgs`) against the INHERITED cwd, before the chdir. */
 export function anchorSupervisorCwd(
 	launch: SupervisorLaunch,
 	agentDir: string,
@@ -289,6 +291,7 @@ export function anchorSupervisorCwd(
 	const anchored = {
 		...launch,
 		socket: absoluteFrom(from, launch.socket),
+		hostArgs: absoluteHostArgs(launch.hostArgs, from),
 		agentDir: anchoredAgentDir,
 		...(launch.bindSocket !== undefined ? { bindSocket: absoluteFrom(from, launch.bindSocket) } : {}),
 	};

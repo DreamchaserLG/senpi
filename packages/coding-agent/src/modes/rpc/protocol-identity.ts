@@ -16,11 +16,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { parseArgs, resolveSessionRuntime } from "../../cli/args.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
-import { resolveCliPaths } from "../../utils/paths.ts";
+import { absoluteHostArgs, resolveCliPaths } from "../../utils/paths.ts";
 import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import type { RpcLaunchProfile, RpcLaunchProfileCore, RpcProtocolIdentity } from "./rpc-types.ts";
 
-export { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV };
+export { absoluteHostArgs, HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV };
 
 /** Identity of THIS host process, fixed for its lifetime. */
 const INSTANCE_ID = resolveInstanceId(process.env[HOST_INSTANCE_ID_ENV]);
@@ -65,28 +65,6 @@ export function hostLaunchProfile(argv: readonly string[], cwd: string): RpcLaun
  */
 export function socketHostLaunchProfile(hostArgs: readonly string[], cwd: string): RpcLaunchProfile {
 	return hostLaunchProfile(["--mode", "rpc", "--multi-session", "--listen", "unix://", ...hostArgs], cwd);
-}
-
-const PATH_VALUED_HOST_FLAGS = new Set([
-	"--extension",
-	"-e",
-	"--skill",
-	"--prompt-template",
-	"--theme",
-	"--session-dir",
-]);
-
-/**
- * Path-valued host args read the way the CLI reads them (`resolveCliPaths`), against the CALLER's cwd (senpi#3783):
- * every local value, existing or not, becomes absolute; package specs stay verbatim. The supervisor and its host child
- * run in the agent dir, so they must only ever see the result, never a relative value they would anchor there.
- */
-export function absoluteHostArgs(hostArgs: readonly string[], cwd: string): string[] {
-	return hostArgs.map((arg, index) =>
-		index > 0 && PATH_VALUED_HOST_FLAGS.has(hostArgs[index - 1] ?? "")
-			? (resolveCliPaths(cwd, [arg])?.[0] ?? arg)
-			: arg,
-	);
 }
 
 /** `options` with `hostArgs` made absolute against this process's cwd: the caller-side entry for ensure and handoff. */
