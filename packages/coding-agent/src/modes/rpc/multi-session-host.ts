@@ -86,6 +86,13 @@ export {
 
 /** Win32 named-pipe close can leave libuv's server callback pending after handles are destroyed. */
 const WINDOWS_SHUTDOWN_HARD_EXIT_MS = 2_000;
+/**
+ * How long a win32 shutdown waits for its sessions to finish closing (#3652). A TerminateProcess'd
+ * supervisor runs no stop of its own, its watchdog removes the pointer at once, and until the
+ * connections detach this host's claims still read `attached: true` - so an unbounded dispose would
+ * hold every session file it served for as long as one close stays wedged.
+ */
+const WINDOWS_SHUTDOWN_DISPOSE_BOUND_MS = 10_000;
 
 interface Connection {
 	readonly id: string;
@@ -451,7 +458,9 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		try {
 			// Dispose while connections are still registered so `session_closed`
 			// `{ reason: "host_shutdown" }` reaches clients before the sockets die.
-			await router.dispose();
+			await (process.platform === "win32"
+				? Promise.race([router.dispose(), delay(WINDOWS_SHUTDOWN_DISPOSE_BOUND_MS)])
+				: router.dispose());
 			await writer.flush();
 			for (const connection of connections.values()) {
 				connection.detach();

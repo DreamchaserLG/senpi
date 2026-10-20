@@ -54,6 +54,7 @@ import { type HistoryReducer, HistoryReductions } from "./session-history-reduce
 import { planLoadedTail } from "./session-loaded-tail.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
+import { SessionWriteFence } from "./session-write-fence.ts";
 import {
 	discardFailedFirstFlush,
 	discardFailedFirstFlushAsync,
@@ -1124,6 +1125,7 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private readonly writeGuard = new SessionWriteGuard();
+	private readonly writeFence = new SessionWriteFence();
 	private flushed: boolean = false;
 	private headerWrite: Promise<void> | undefined;
 	// The file persistHeaderNow() created in this process; only it may be discarded on close (senpi#3263).
@@ -1312,7 +1314,10 @@ export class SessionManager {
 	/** Points this manager at `sessionFile`; the path when it exists, undefined when a new session was started there. */
 	private _beginSessionFile(sessionFile: string, newSessionOptions?: NewSessionOptions): string | undefined {
 		const resolvedFile = resolvePath(sessionFile);
-		if (this.persist) reserveSessionWrite(resolvedFile);
+		if (this.persist) {
+			reserveSessionWrite(resolvedFile);
+			this.writeFence.opened(resolvedFile);
+		}
 		this.sessionFile = resolvedFile;
 		this.mirrorTrimmed = false;
 		this.trimmedIds.clear();
@@ -1534,6 +1539,7 @@ export class SessionManager {
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
 		this.writeGuard.assertRewritable(this.fileEntries, this.sessionFile);
+		this.writeFence.assertOwned(this.sessionFile);
 		reserveSessionWrite(this.sessionFile);
 		replaceFileAtomically(this.sessionFile, this._serializedFileEntries());
 	}
@@ -1621,6 +1627,7 @@ export class SessionManager {
 	}
 
 	private async _writeHeaderAsync(sessionFile: string): Promise<void> {
+		this.writeFence.assertOwned(sessionFile);
 		reserveSessionWrite(sessionFile);
 		const entries = this.fileEntries;
 		const serialize = (batch: readonly FileEntry[]): string =>
@@ -1673,6 +1680,7 @@ export class SessionManager {
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 		this.writeGuard.assertWritable(this.fileEntries, entry, this.sessionFile);
+		this.writeFence.assertOwned(this.sessionFile);
 		reserveSessionWrite(this.sessionFile);
 		const persistedEntry = this.residentStore.materialize(entry);
 

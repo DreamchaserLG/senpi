@@ -141,6 +141,8 @@ export function streamWithCredentialRotation(
 								lease: undefined,
 								blockedUntil: undefined,
 								blockReason: undefined,
+								// A healthy answer ends the failure run; a later limit starts its backoff afresh (senpi#3771).
+								failureCount: undefined,
 								// Serving one model says nothing about another model's quota:
 								// only the blocks on the model that just served are lifted.
 								modelBlocks: pruneModelBlocks(current.modelBlocks, now(), options.modelId),

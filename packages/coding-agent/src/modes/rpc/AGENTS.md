@@ -90,6 +90,7 @@ changes.md                Fork-specific RPC behavior record
 - Inbound messages over `MAX_RPC_MESSAGE_CHARACTERS` are rejected with a typed error; non-object JSON is rejected.
 - Pending work is rejected on disconnect or child exit; preserve request/response correlation.
 - Child stderr is emitted and embedded raw; treat diagnostics as secret-bearing.
+- Documented lazy boundaries (the root rule allows inline `import()` only at documented ones): `host-reservations.ts` (`claim()`, on the takeover of an unprovable claim) and `host-generations.ts` (the prune of an ended generation's unproven claims) load `core/session-write-fence.ts` on first use, so the lifecycle supervisor, which imports both modules, keeps the fence module and its synchronous read out of its startup graph (`test/supervisor-import-graph.test.ts`).
 
 ### Shared-daemon invariants (I1-I4)
 

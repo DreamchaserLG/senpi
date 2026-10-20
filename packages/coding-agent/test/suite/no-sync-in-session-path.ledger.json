@@ -193,6 +193,13 @@
 			"note": "this process's holder record for the open session (~100 bytes), written once per session open or switch (senpi#2184)"
 		},
 		{
+			"file": "src/core/session-write-fence.ts",
+			"api": "readFileSync",
+			"symbol": "readSessionFence",
+			"count": 1,
+			"note": "DELIBERATE transcript path (senpi#3652): the session file's write fence (<file>.fence, ~40 bytes, normally ENOENT) re-read right before each transcript write, in the same synchronous step as the write it guards, so a writer whose file was taken over cannot append in between"
+		},
+		{
 			"file": "src/core/session-manager.ts",
 			"api": "appendFileSync",
 			"symbol": "_persist",

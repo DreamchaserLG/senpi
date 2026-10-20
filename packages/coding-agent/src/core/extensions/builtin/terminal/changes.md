@@ -1,3 +1,21 @@
+## 2026-10-18 - An unreadable holder start time is reported as unproven (senpi#3658)
+
+### What changed
+
+- `lease-file.ts`: `reclaimLockState` still returns `held` for a live pid whose start time cannot be read now, but marks it `unproven: true`. A readable start time is compared as before.
+
+### Why
+
+- An unreadable start time cannot tell the holder from a process wearing its reused pid. The session-holder reader (`core/session-holders.ts`) may then reclaim the record on positive evidence that the holder's host generation ended; without that evidence it stays held (#1609). Windows run: sisyphuslabs/omo-desktop-app#3157, https://github.com/sisyphuslabs/omo-desktop-app/actions/runs/39166325038.
+
+### Why an extension could not handle it
+
+- The lease primitives are this builtin's own.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `reclaimLockState`.
+
 ## 2026-10-18 - Terminal launches can pass the tool child's execution barrier (senpi#3566 todo 9)
 
 ### What changed
