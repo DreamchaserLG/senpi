@@ -67,7 +67,10 @@ describe("async ask-user delivery over the RPC bridge", () => {
 		await settled;
 
 		expect(delivery.deliveries).toEqual([
-			{ content: "[Answer to question rpc-answer]\nLibrary: OAuth", options: { deliverAs: "followUp", ahead: true } },
+			{
+				content: "[Answer to question rpc-answer]\nLibrary: OAuth",
+				options: { deliverAs: "followUp", ahead: true },
+			},
 		]);
 	});
 
