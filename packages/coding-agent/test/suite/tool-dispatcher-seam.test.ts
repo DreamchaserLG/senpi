@@ -31,10 +31,7 @@ describe("ToolDispatcher seam (senpi#3566 todo 2)", () => {
 			const dispatcher = new InProcessToolDispatcher();
 			const cases: Array<{ definition: ToolDefinition<any, any>; params: unknown }> = [
 				{ definition: createReadToolDefinition(dir), params: { path: join(dir, "probe.txt") } },
-				{
-					definition: createBashToolDefinition(dir, { operations: fakeBashOperations("bash-ok\n") }),
-					params: { command: "echo seam" },
-				},
+				{ definition: createBashToolDefinition(dir), params: { command: "printf 'bash-ok\\n'" } },
 				{ definition: probeDefinition, params: { value: "x" } },
 			];
 			for (const { definition, params } of cases) {
@@ -167,10 +164,10 @@ describe("ToolDispatcher seam (senpi#3566 todo 2)", () => {
 			const operations = fakeBashOperations("pinned-ran\n");
 			const pinned: ToolDefinition<any, any> = createBashToolDefinition(harness.tempDir, { operations });
 			pinned.placement = "child";
-			const notices: Array<{ event: string; kind?: unknown }> = [];
+			const notices: Array<{ event: string; tool?: unknown }> = [];
 			const dispatcher = createToolDispatcher({
 				runtime: "child",
-				notify: (event, data) => notices.push({ event, kind: data?.kind }),
+				notify: (event, data) => notices.push({ event, tool: data?.tool }),
 			});
 			const dispatched: ToolDispatchedInfo[] = [];
 			dispatcher.onDispatched((info) => dispatched.push(info));
@@ -192,7 +189,7 @@ describe("ToolDispatcher seam (senpi#3566 todo 2)", () => {
 			expect(operations.commands).toEqual(["echo pinned", "echo pinned"]);
 			expect(dispatched.map((info) => info.placement)).toEqual(["server", "server"]);
 			expect(notices.filter((notice) => notice.event === "tool_placement_pinned")).toEqual([
-				{ event: "tool_placement_pinned", kind: "bash" },
+				{ event: "tool_placement_pinned", tool: "bash" },
 			]);
 		} finally {
 			harness.cleanup();

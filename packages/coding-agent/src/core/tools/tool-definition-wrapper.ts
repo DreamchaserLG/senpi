@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ExtensionToolContext, ToolDefinition } from "../extensions/types.ts";
-import type { ToolDispatcher } from "../tool-dispatch/tool-dispatcher.ts";
+import type { ToolDispatcher, ToolUnavailableDetails } from "../tool-dispatch/tool-dispatcher.ts";
 
 /** Creates the context for one tool call. */
 export type ToolContextFactory = (toolCallId: string, signal: AbortSignal | undefined) => ExtensionToolContext;
@@ -10,7 +10,7 @@ export function wrapToolDefinition<TDetails = unknown>(
 	definition: ToolDefinition<any, TDetails>,
 	ctxFactory?: ToolContextFactory,
 	dispatcher?: ToolDispatcher,
-): AgentTool<any, TDetails> {
+): AgentTool<any, TDetails | ToolUnavailableDetails> {
 	return {
 		name: definition.name,
 		label: definition.label,
@@ -23,19 +23,11 @@ export function wrapToolDefinition<TDetails = unknown>(
 		executionMode: definition.executionMode,
 		execute: (toolCallId, params, signal, onUpdate, ctx?: ExtensionToolContext) => {
 			const resolved = ctx ?? ctxFactory?.(toolCallId, signal);
-			if (dispatcher && resolved !== undefined) {
-				return dispatcher.run({
-					definition,
-					toolCallId,
-					params,
-					signal,
-					onUpdate,
-					ctx: resolved,
-				});
-			}
 			// Upstream idiom: a definition wrapped without a context factory legitimately gets no
 			// context (see the ToolDefinition docs); the interface requires the parameter, hence the cast.
-			return definition.execute(toolCallId, params, signal, onUpdate, resolved as ExtensionToolContext);
+			const context = resolved as ExtensionToolContext;
+			if (dispatcher) return dispatcher.run({ definition, toolCallId, params, signal, onUpdate, ctx: context });
+			return definition.execute(toolCallId, params, signal, onUpdate, context);
 		},
 	};
 }
