@@ -33,7 +33,8 @@ afterEach(() => {
 async function world(waitForAnswer: boolean) {
 	const asked = Promise.withResolvers<string>();
 	const bridge = new ConnectionQuestionBridge((record) => {
-		if ("method" in record && record.method === "question") asked.resolve((record as { id: string }).id);
+		const frame = record as Record<string, unknown>;
+		if (frame.method === "question") asked.resolve(String(frame.id));
 	});
 	const release = Promise.withResolvers<void>();
 	const waitTool: AgentTool = {
