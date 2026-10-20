@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmod, mkdir, symlink, unlink, writeFile } from "node:fs/promises";
 import * as fs from "node:fs/promises";
+import { chmod, mkdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -54,6 +54,7 @@ describe.skipIf(process.platform === "win32")("public RPC client verification", 
 		"size",
 		"directory",
 		"root-mode",
+		"rpc-mode",
 		"version",
 		"launch-id",
 		"owner",
@@ -114,7 +115,8 @@ describe.skipIf(process.platform === "win32")("public RPC client verification", 
 			}
 			if (state === "mode") await chmod(record, 0o644);
 			if (state === "directory") await chmod(keys, 0o755);
-			if (state === "root-mode") await chmod(qa.agentDir, 0o755);
+			if (state === "root-mode") await chmod(qa.agentDir, 0o775);
+			if (state === "rpc-mode") await chmod(join(qa.agentDir, "rpc"), 0o775);
 			if (state === "unreadable") {
 				const realOpen = fs.open;
 				vi.spyOn(fs, "open").mockImplementation((...args) => {

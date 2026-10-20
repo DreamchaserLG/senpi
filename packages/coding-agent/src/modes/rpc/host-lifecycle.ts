@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import { realpathSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
 import { HostAdmission } from "./host-admission.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
+import { isCliModuleEntry } from "./host-cli-entry.ts";
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
@@ -35,7 +34,8 @@ import {
 	supervisorSender,
 } from "./host-lifecycle-shutdown.ts";
 import { startSupervisorTicker } from "./host-lifecycle-ticker.ts";
-import { errorMessage, writeStderrLine } from "./host-supervisor-log.ts";
+import { errorMessage, writeHostReady, writeStderrLine } from "./host-supervisor-log.ts";
+import { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import { PUBLIC_SOCKET_IDENTITY_FILE, statSocketIdentity, writeSocketIdentityFile } from "./socket-ownership.ts";
 import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";
 
@@ -79,6 +79,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const generation = generationPaths(paths, instanceId);
 	const policy = resolveHostPolicy(await readSettingsFile(paths.settingsFile), process.env);
 	const publicSocket = launch.socket;
+	const publicEndpoint =
+		process.platform === "win32" ? undefined : new RpcPublicEndpoint(launch.agentDir ?? getAgentDir(), publicSocket);
 	// A successor generation binds its own name and adopts the public one by rename; an ordinary
 	// start binds the public name directly. Everything downstream - the child's environment, the
 	// ownership token, the teardown - is expressed in terms of the PUBLIC path either way.
@@ -172,6 +174,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		internalSocket,
 		...(internalSecret ? { internalSecret } : {}),
 		...(publicSecret ? { publicSecret } : {}),
+		...(publicEndpoint ? { publicEndpoint } : {}),
 		clients: activity.clients,
 		admission,
 		onDetach: () => activity.refresh(),
@@ -203,6 +206,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		drain,
 		admission,
 		state,
+		...(publicEndpoint ? { publicEndpoint } : {}),
 		stopWatchers: () => {
 			for (const stop of watchers.splice(0)) stop();
 		},
@@ -229,6 +233,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		await activity.openObserver();
 		await prepareSocketPath(bindSocket);
 		await listen(server, bindSocket, publicSecret);
+		await publicEndpoint?.publish();
 		state.publicSocketOwned = true;
 		if (successor) await adoptPublicSocket(bindSocket, publicSocket, launch.replaceIdentity);
 		state.publicSocketIdentity = await statSocketIdentity(publicSocket);
@@ -263,25 +268,11 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			),
 		);
 	}
-	writeStderrLine(
-		`senpi rpc host ready on unix://${publicSocket} (coldStart=${policy.coldStart}, idleExitMs=${
-			policy.coldStart === "persistent" ? "never" : String(policy.idleExitMs)
-		})`,
-	);
+	writeHostReady(publicSocket, policy.coldStart, policy.idleExitMs);
 	await new Promise<never>(() => {});
 }
 
-function isEntryScript(): boolean {
-	const entry = process.argv[1];
-	if (!entry) return false;
-	try {
-		return fileURLToPath(import.meta.url) === realpathSync(entry);
-	} catch {
-		return false;
-	}
-}
-
-if (!isBundledNode && isEntryScript()) {
+if (!isBundledNode && isCliModuleEntry(import.meta.url)) {
 	const launch = parseSupervisorArgs(process.argv.slice(2));
 	if (!launch) {
 		writeStderrLine("usage: host-lifecycle.ts --socket <path> [host cli args...]");

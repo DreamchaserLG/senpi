@@ -27,11 +27,13 @@ import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
 import type { EffectState, EffectStatus } from "./effect-record.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
+import type { RpcProtocolInfo, RpcProtocolInfoCommand } from "./rpc-protocol-types.ts";
 import type { SessionStatusRecord } from "./session-status.ts";
 
 export type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";
 export type { RpcCommandsChangedEvent, RpcSlashCommand } from "./rpc-command-surface.ts";
+export type { RpcProtocolInfo } from "./rpc-protocol-types.ts";
 
 import type { RpcSubscriptionLimitsEvent } from "./rpc-host-lifecycle-types.ts";
 
@@ -495,12 +497,7 @@ export interface RpcEffectAnswer {
 /** Every established command accepts an additive routing envelope. */
 export type RpcCommand =
 	| (RpcSessionCommand & { sessionId?: string })
-	| {
-			id?: string;
-			type: "get_protocol_info";
-			/** An observing read: this connection never counts as host activity (docs/rpc.md, idle exit). */
-			observe?: boolean;
-	  }
+	| RpcProtocolInfoCommand
 	| {
 			id?: string;
 			type: "open_session";
@@ -883,21 +880,6 @@ export interface RpcProtocolIdentity {
 	/** `[year, month, day, postRelease, buildEpoch]`, compared with `compareEngineOrdinal`. */
 	readonly engineOrdinal: EngineOrdinal;
 	readonly launch_profile: RpcLaunchProfile;
-}
-
-export interface RpcProtocolInfo extends RpcProtocolIdentity {
-	/** Supervised socket hosts expose admission state independently of child responsiveness. */
-	readonly lifecycle?: "ready" | "stopping";
-	readonly protocolVersion: 1;
-	/** Informational engine version. Never compare it for compatibility - use the fields above. */
-	readonly serverVersion: string;
-	readonly capabilities: string[];
-	readonly mode: "classic" | "multi";
-	/**
-	 * Multi-session hosts only: whether this host's memory sampler currently reads its memory footprint above
-	 * `SENPI_RPC_HOST_RSS_WARN_MB` (the state `host_memory_pressure` records announce). Observability only.
-	 */
-	readonly memory_pressure?: boolean;
 }
 
 // Success responses with data

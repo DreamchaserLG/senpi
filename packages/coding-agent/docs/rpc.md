@@ -318,6 +318,94 @@ senpi --mode rpc --listen /tmp/senpi-rpc.sock [options]
 `unix://@name` where supported by the host platform. Socket mode accepts concurrent connections while retaining one
 process-global session registry.
 
+### Authentication
+
+Public POSIX endpoints advertise `socket_auth` and prove possession of a fresh per-launch key.
+This applies to ensured hosts, direct supervisors, and bare `--listen` hosts. Windows pipes keep
+their existing raw `.secret` handshake. Terminal control sockets and tool-child channels are unchanged.
+
+The host publishes `<agentDir>/rpc/keys/<launch_id>` before answering any connection. The agent
+directory and `rpc` must be user-owned, non-symlink directories without group/other write
+permission (0755 is supported). Only `rpc/keys` must be 0700. Before publication, the host
+tightens an existing user-owned, non-symlink `rpc/keys` directory to 0700; clients refuse
+unsafe modes rather than changing them.
+The record is exclusively created with `O_NOFOLLOW`, fsynced, and checked to be a user-owned
+regular file with mode 0600. Publication failure closes the endpoint with `key_publication_failed`.
+Each launch generates a new UUID and a new 32-byte key in memory. Hosts delete only their own
+record; `senpi host gc` also collects records whose process is dead or whose PID has been reused.
+
+The JSON record is
+`{version:1, launch_id, key, pid, process_start, endpoint, created_at}`:
+`key` is 64 lowercase hexadecimal characters, `process_start` is the process start identity
+or `null`, and `created_at` is an ISO-8601 UTC timestamp. Never copy the record into logs.
+
+The client's key root defaults to its own agent directory. `SENPI_RPC_KEY_ROOT`,
+`senpi host ... --rpc-key-root <dir>`, and the `keyRoot` option on `RpcClient` and socket probes
+select the host's credential directory without changing the client's models, settings, skills,
+MCP environment, or other profile data. For example, a client using profile B can authenticate
+to an endpoint launched by profile A by selecting A as its key root while keeping B active.
+
+The exchange uses strict LF-delimited JSON:
+
+1. Preserve the caller's own first `get_protocol_info` frame, including `observe` and
+   `origin_host_instance`, and add top-level `auth: {client_nonce}`. A caller starting with
+   another command first sends an observing protocol probe. Both nonces are 32 fresh random
+   bytes encoded as 64 lowercase hex characters.
+2. The normal response's **`data.auth`** contains `{launch_id, server_nonce, server_proof}`.
+   Read and validate the named record, including `version === 1`, matching `launch_id`,
+   a 32-byte key, directory ownership/modes, and an `O_NOFOLLOW` file open.
+3. Verify the server proof, then send `{id, type:"authenticate", client_proof}`. Wait for
+   its successful correlated response before sending any other command. Proofs are lowercase
+   hex HMAC-SHA256 digests, compared as 32 raw bytes in constant time:
+
+   ```js
+   import { createHmac, timingSafeEqual } from "node:crypto";
+
+   const key = Buffer.from(record.key, "hex");
+   const serverProof = createHmac("sha256", key)
+     .update(["senpi-rpc-server", launchId, clientNonce, serverNonce].join("\n"), "utf8")
+     .digest();
+   // Validate that the received proof is exactly 64 lowercase hex characters first.
+   if (!timingSafeEqual(serverProof, Buffer.from(receivedServerProof, "hex")))
+     throw new Error("host_identity_unproven");
+   const clientProof = createHmac("sha256", key)
+     .update(["senpi-rpc-client", launchId, serverNonce, clientNonce].join("\n"), "utf8")
+     .digest("hex");
+   ```
+
+For third-party scripts, the shipped client implements the record checks and complete exchange:
+
+```js
+import { RpcClient } from "@code-yeongyu/senpi";
+
+const client = new RpcClient({ socketPath: endpoint, keyRoot: hostAgentDirectory });
+await client.start();
+try {
+  console.log(await client.listSessions());
+} finally {
+  await client.stop();
+}
+```
+
+The raw key never crosses the socket. A wrong server proof closes the client with
+`host_identity_unproven`; an unsafe record closes it with `unsafe_key_record`. Neither falls
+back. A host's `auth_failed` triggers one fresh connection and credential lookup, not an
+unauthenticated retry.
+
+This release serves clients that never prove the key, with one stderr deprecation line per
+connection. `SENPI_RPC_REQUIRE_TOKEN=1` enforces now: an unproven command receives
+`auth_required`, a wrong proof receives `auth_failed`, then the connection closes before any
+later frame executes. Pre-authentication input is limited to 8 KiB and 2 seconds.
+Clients accept pre-change hosts whose protocol answer has no `data.auth`. A missing record
+is the one grace exception: the client logs the key-root remedy and continues without sending
+`authenticate`; an enforcing host then refuses subsequent commands. Enforcement defaults and
+refusal of legacy hosts are separate follow-ups.
+
+Keep endpoints under the protected agent directory for the sandbox boundary. Choosing a `/tmp`
+path or Linux abstract name permits a process that can later bind that name to pose as a legacy
+host during the compatibility period. Challenge-response still prevents disclosure of the key
+to a listener that cannot prove it.
+
 ### Session runtime (`--session-runtime in-process|worker`)
 
 `--session-runtime` selects where a multi-session host runs its sessions:
@@ -1211,8 +1299,8 @@ survive it, and every subcommand accepts any of the three (plus the session's `n
 on every call, resuming a parked session as described above. A session parked before its first message has no
 transcript yet and cannot be resumed; a reference to it is `unknown_session`.
 
-Ownership: reaching the socket is the trust boundary. Any client that can connect (the socket is `0600` in a
-`0700` directory, so only its owning user) may `prompt`, `steer`, `abort`, `model`, `read` or `wait` on any
+Ownership: public endpoints use [authentication](#authentication). Any admitted client (including a client
+served during compatibility grace) may `prompt`, `steer`, `abort`, `model`, `read` or `wait` on any
 session the host lists, including one another client is driving. Only `close` is ownership-checked: it releases the
 caller's own attachment and closes the session only when no other client still holds one.
 
@@ -1781,7 +1869,8 @@ registrant opens no socket and writes no registry directory.
   fresh instance id). When that path is longer than a Unix socket path allows, it moves to
   `/tmp/senpi-rpc-<8hex>/tui/`, which must be a private directory of this user. The directory is 0700 and the
   socket 0600. A 32-byte secret is written 0600 beside the socket, and every connection must send it first, the
-  handshake every RPC socket shares; a wrong secret is disconnected before a line is read. After that it is
+  TUI-specific handshake; public RPC hosts use [challenge-response](#authentication). A wrong TUI secret
+  is disconnected before a line is read. After that it is
   ordinary RPC framing: one LF-terminated JSON object per request, one response carrying its `id`.
 - **Registration order.** Registering first writes the session header (so the session id is durable), reaps dead
   `tui` endpoints (`senpi host gc` scoped to `kinds: ["tui"]`), binds the socket and only then writes the

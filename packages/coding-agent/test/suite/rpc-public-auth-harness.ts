@@ -79,7 +79,7 @@ export class Peer {
 	private readonly notifications = new Set<() => void>();
 	readonly closed: Promise<unknown>;
 	constructor(readonly socket: Socket) {
-		this.closed = once(socket, "close");
+		this.closed = new Promise((resolve) => socket.once("close", resolve));
 		socket.on("error", () => {});
 		attachJsonlLineReader(socket, (line) => {
 			this.records.push(JSON.parse(line));

@@ -1,3 +1,33 @@
+## 2026-10-20 - Public POSIX endpoints prove per-launch keys before command admission (senpi#3795)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: socket startup performs the public POSIX challenge-response, accepts a connection-scoped `keyRoot`, and waits for authentication before exposing the transport. Windows and terminal raw-secret transports keep their existing path. `packages/coding-agent/src/modes/rpc/rpc-types.ts` adds the optional protocol request nonce and response challenge.
+- `packages/coding-agent/src/modes/rpc/rpc-auth-proof.ts`, `rpc-public-key.ts`, `rpc-public-auth.ts`, `rpc-auth-client.ts` (new, fork-only): canonical newline-separated HMAC proofs; exclusive, fsynced, private per-launch JSON records; publication barrier; 8 KiB / 2 s pre-authentication bounds; strict or once-logged grace admission; safe credential lookup and one reconnect on `auth_failed`.
+- `rpc-client-socket.ts`, `rpc-protocol-types.ts`, `host-socket-connections.ts` hold the touched dial, protocol, and connection-registration units separately from the existing large client and host modules. The root and `rpc` permit owned 0755 directories, but never group/other write access; only `rpc/keys` is private 0700, tightened by the publisher when it is owned and not a symlink.
+- `host-cli-entry.ts` owns the lifecycle entry check; `host-ensure-client.ts` owns the unchanged ensure compatibility decision, keeping their orchestration callers below the source-size limit.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `host-lifecycle-proxy.ts`, `host-admission-proxy.ts`, `host-lifecycle-shutdown.ts`, `multi-session-host.ts`: public supervisor and bare listeners own their launch record and authenticate before forwarding. The internal supervisor-child hop publishes no record and remains unchanged.
+- `packages/coding-agent/src/modes/rpc/host-socket-request.ts`, `host-probe.ts`, `host-ensure.ts`, `host-ensure-types.ts`: public command probes authenticate, preserving the caller's first protocol fields and the ensure hold; key-root context propagates through nested host operations without changing the profile.
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`: `authenticate` does not turn an observer into an attachment.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`, `host-gc-pass.ts`: collect only key records whose recorded process is dead or has a different observed start identity. Connect-only gc and ownership probes remain unchanged.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: public POSIX listeners previously accepted command traffic without proving either endpoint's possession of a credential. The client must verify host identity without sending a bearer secret, preserve old-host compatibility, and keep key-root selection separate from profile selection.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the public protocol types must describe the additive wire fields.
+- The public binders and probe helpers enforce the same wire contract for ensured, direct-supervisor, and bare launches, including fragmented/coalesced first frames and publication failures.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: socket startup and command admission happen before session extensions exist; an extension cannot authenticate the public endpoint or intercept every host probe.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the transport's protocol envelope is not an extension-owned type.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClientOptions`, `startSocket`, and the socket transport imports.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `get_protocol_info` and `RpcProtocolInfo`.
+- The public listener callbacks and bind/teardown blocks in `host-lifecycle.ts` and `multi-session-host.ts`; request/reply filtering in `host-admission-proxy.ts`; `connectAndAsk` in `host-socket-request.ts`.
+
 ## 2026-10-19 - Removing a dead generation also ends its unproven session claims, behind the write fence (senpi#3658)
 
 ### What changed

@@ -5,7 +5,7 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { createConnection, type Socket } from "node:net";
+import type { Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
@@ -39,6 +39,7 @@ export class RpcCommandError extends Error {
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
+import { connectRpcClientSocket } from "./rpc-client-socket.ts";
 import {
 	armRequestDeadline,
 	OPEN_AFTER_QUEUED_DEADLINE_MS,
@@ -74,13 +75,6 @@ import type {
 	RpcUnloadAnswer,
 } from "./rpc-types.ts";
 import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
-import {
-	readSocketSecret,
-	resolveSocketTransportAddress,
-	sendSocketHandshake,
-	socketSecretPath,
-} from "./socket-transport.ts";
-import { socketNeedsHandshake } from "./tui-socket.ts";
 
 // ============================================================================
 // Types
@@ -95,6 +89,8 @@ type RpcCommandBody = DistributiveOmit<RpcCommand, "id">;
 export interface RpcClientOptions {
 	/** Connect to an existing multi-session Unix socket instead of spawning a child. */
 	socketPath?: string;
+	/** Endpoint credential lookup only; does not change the client's configuration profile. */
+	keyRoot?: string;
 	/** Called once when an established transport disconnects. */
 	onDisconnect?: (error: RpcTransportGoneError) => void;
 	/** Path to the CLI entry point (default: searches for dist/cli.js) */
@@ -414,27 +410,8 @@ export class RpcClient {
 	}
 
 	private async startSocket(path: string): Promise<void> {
-		const secret = socketNeedsHandshake(path) ? await readSocketSecret(socketSecretPath(path)) : undefined;
-		const socket = createConnection(resolveSocketTransportAddress(path, process.platform, secret));
+		const socket = await connectRpcClientSocket(path, this.options);
 		this.socket = socket;
-		await new Promise<void>((resolve, reject) => {
-			const onConnect = () => {
-				cleanup();
-				resolve();
-			};
-			const onError = (error: Error) => {
-				cleanup();
-				this.socket = null;
-				reject(error);
-			};
-			const cleanup = () => {
-				socket.off("connect", onConnect);
-				socket.off("error", onError);
-			};
-			socket.once("connect", onConnect);
-			socket.once("error", onError);
-		});
-		if (secret) sendSocketHandshake(socket, secret);
 		this.stopReadingStdout = attachJsonlLineReader(socket, (line) => this.handleLine(line));
 		socket.once("close", () => {
 			if (this.socket !== socket) return;

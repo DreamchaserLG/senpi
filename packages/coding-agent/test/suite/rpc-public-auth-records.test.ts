@@ -98,7 +98,7 @@ describe.skipIf(process.platform === "win32")("public RPC launch key records", (
 	it("closes held connections when publication fails", async () => {
 		const qa = await endpoint();
 		await mkdir(join(qa.agentDir, "rpc", "keys"), { recursive: true, mode: 0o700 });
-		await chmod(join(qa.agentDir, "rpc", "keys"), 0o755);
+		await chmod(join(qa.agentDir, "rpc"), 0o777);
 		const server = createServer((socket) => {
 			new PublicRpcConnection(socket, qa.endpoint);
 		});
@@ -108,6 +108,16 @@ describe.skipIf(process.platform === "win32")("public RPC launch key records", (
 		const closed = once(client.socket, "close");
 		await expect(qa.endpoint.publish()).rejects.toMatchObject({ code: "key_publication_failed" });
 		await closed;
+	});
+
+	it("tightens an existing user-owned keys directory before publishing", async () => {
+		const qa = await endpoint();
+		const keys = join(qa.agentDir, "rpc", "keys");
+		await mkdir(keys, { recursive: true, mode: 0o755 });
+		await chmod(keys, 0o755);
+		await qa.endpoint.publish();
+		expect((await stat(keys)).mode & 0o7777).toBe(0o700);
+		expect((await stat(qa.endpoint.recordPath)).mode & 0o7777).toBe(0o600);
 	});
 
 	it("collects only dead or reused-pid records in the existing gc pass", async () => {

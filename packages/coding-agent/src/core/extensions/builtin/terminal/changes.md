@@ -1,3 +1,21 @@
+## 2026-10-20 - RPC monitors authenticate public POSIX hosts before subscribing (senpi#3795)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-observer.ts`: the public POSIX dial performs challenge-response before `subscribe_sessions` and accepts `keyRoot`. Raw-secret TUI and Windows endpoints keep their existing handshake.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-observer.ts`: observing connections also need to prove the public endpoint key without counting as host attachments.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-observer.ts`: this is the terminal extension's own transport bootstrap.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-observer.ts`: imports and connection/subscription setup.
+
 ## 2026-10-18 - An unreadable holder start time is reported as unproven (senpi#3658)
 
 ### What changed

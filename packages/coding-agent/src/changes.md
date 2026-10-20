@@ -1,3 +1,22 @@
+## 2026-10-20 - Host commands can select endpoint credentials without changing profile (senpi#3795)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command.ts` and `packages/coding-agent/src/cli/host-session-command.ts`: accept `--rpc-key-root` on host commands and scope credential lookup to that root throughout nested host operations. `SENPI_RPC_KEY_ROOT` is the environment default; session settings and resource roots remain those of the caller.
+- `packages/coding-agent/src/cli/host-command-args.ts` contains the host argument parser extracted from `host-command.ts`, which keeps its existing parser export. An explicit flag takes precedence over the environment throughout asynchronous nested operations.
+
+### Why
+
+- `packages/coding-agent/src/cli/host-command.ts`, `packages/coding-agent/src/cli/host-session-command.ts`: a client using a separate profile must be able to prove the key of the endpoint it dials without changing models, settings, skills, or MCP configuration.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli/host-command.ts`, `packages/coding-agent/src/cli/host-session-command.ts`: host CLI parsing and endpoint startup precede session extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/host-command.ts`, `packages/coding-agent/src/cli/host-session-command.ts`: option parsing, usage text, and the runner invocation.
+
 ## 2026-10-19 - Print mode stops waiting for a silent stdin pipe (senpi#3715)
 
 ### What changed

@@ -1,14 +1,17 @@
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdirSync } from "node:fs";
+import { chmod, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { getAgentDir } from "../../src/config.ts";
 import { RpcClient } from "../../src/modes/rpc/rpc-client.ts";
 import { authenticate, challenge, launchHost, Peer, proof, sandbox, teardown } from "./rpc-public-auth-harness.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+	vi.unstubAllEnvs();
 });
 
 async function host(path: "bare" | "direct" | "ensured", strict = true) {
@@ -82,6 +85,25 @@ describe.skipIf(process.platform === "win32")("public POSIX authentication", () 
 		});
 	}
 
+	it("starts and authenticates with a normal recursive-mkdir 0755 agent directory", async () => {
+		const qa = await sandbox();
+		cleanups.push(() => teardown(qa.root));
+		await rm(qa.agentDir, { recursive: true });
+		mkdirSync(qa.agentDir, { recursive: true });
+		await chmod(qa.agentDir, 0o755);
+		mkdirSync(join(qa.agentDir, "rpc"), { recursive: true });
+		await chmod(join(qa.agentDir, "rpc"), 0o755);
+		const running = await launchHost(qa, "bare");
+		cleanups.push(() => teardown(qa.root, running.child));
+		const client = new RpcClient({ socketPath: qa.socket, keyRoot: qa.agentDir });
+		cleanups.push(() => client.stop());
+		await client.start();
+		expect(await client.listSessions()).toEqual([]);
+		expect((await stat(qa.agentDir)).mode & 0o7777).toBe(0o755);
+		expect((await stat(join(qa.agentDir, "rpc"))).mode & 0o7777).toBe(0o755);
+		expect((await stat(join(qa.agentDir, "rpc", "keys"))).mode & 0o7777).toBe(0o700);
+	});
+
 	it("serves keyless grace traffic with exactly one deprecation line", async () => {
 		const qa = await host("bare", false);
 		const client = await peer(qa.socket);
@@ -89,6 +111,9 @@ describe.skipIf(process.platform === "win32")("public POSIX authentication", () 
 		await client.request({ id: "b", type: "list_sessions" });
 		client.socket.destroy();
 		await client.closed;
+		const drained = once(qa.child, "close");
+		qa.child.kill("SIGTERM");
+		await drained;
 		expect(
 			qa
 				.stderr()
@@ -151,6 +176,13 @@ describe.skipIf(process.platform === "win32")("public POSIX authentication", () 
 		const qa = await host("bare");
 		const profile = await sandbox();
 		cleanups.push(() => teardown(profile.root));
+		const settings = {
+			skills: ["./profile-b-skills"],
+			mcpServers: { fixture: { command: "fixture", env: { FIXTURE_PROFILE: "B" } } },
+			defaultProvider: "profile-b",
+		};
+		await writeFile(join(profile.agentDir, "settings.json"), JSON.stringify(settings));
+		vi.stubEnv("SENPI_CODING_AGENT_DIR", profile.agentDir);
 		const options = {
 			socketPath: qa.socket,
 			keyRoot: qa.agentDir,
@@ -160,7 +192,8 @@ describe.skipIf(process.platform === "win32")("public POSIX authentication", () 
 		cleanups.push(() => client.stop());
 		await client.start();
 		expect(await client.listSessions()).toEqual([]);
-		expect(options.env.SENPI_CODING_AGENT_DIR).toBe(profile.agentDir);
+		expect(getAgentDir()).toBe(profile.agentDir);
+		expect(JSON.parse(await readFile(join(getAgentDir(), "settings.json"), "utf8"))).toEqual(settings);
 	});
 
 	it("deletes only its own launch record on normal shutdown", async () => {

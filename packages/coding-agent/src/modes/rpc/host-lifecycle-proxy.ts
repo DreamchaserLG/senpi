@@ -9,6 +9,8 @@ import { dirname } from "node:path";
 import type { HostAdmission } from "./host-admission.ts";
 import { proxyWithAdmission } from "./host-admission-proxy.ts";
 import type { ClientOccupancy } from "./host-client-occupancy.ts";
+import { PublicRpcConnection } from "./rpc-public-auth.ts";
+import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import {
 	type ListenerState,
 	MAX_SOCKET_PATH_BYTES,
@@ -28,6 +30,7 @@ export interface PublicProxyOptions {
 	readonly internalSocket: string;
 	readonly internalSecret?: Buffer;
 	readonly publicSecret?: Buffer;
+	readonly publicEndpoint?: RpcPublicEndpoint;
 	readonly clients: ClientOccupancy;
 	/** Shared authority for stopping, protocol replies and new-session admission. */
 	readonly admission: HostAdmission;
@@ -40,6 +43,7 @@ export interface PublicProxyOptions {
 export function createPublicProxy(options: PublicProxyOptions): Server {
 	const { internalSocket, internalSecret, publicSecret, clients } = options;
 	return createServer((client) => {
+		const auth = options.publicEndpoint ? new PublicRpcConnection(client, options.publicEndpoint) : undefined;
 		const accept = (): void => {
 			// Teardown is terminal even for an accept that raced socket shielding/server.close.
 			if (!clients.admit(client)) return;
@@ -59,7 +63,7 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 				internal?.destroy();
 				client.destroy();
 			};
-			proxyWithAdmission(client, internal, options.admission);
+			proxyWithAdmission(client, internal, options.admission, auth);
 			client.once("close", detach);
 			client.once("error", detach);
 		};

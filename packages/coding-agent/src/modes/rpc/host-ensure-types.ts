@@ -14,6 +14,7 @@ export type HostUpgradePolicy = "never" | "if-engine-differs";
 export interface EnsureHostOptions {
 	readonly socket: string;
 	readonly agentDir?: string;
+	readonly keyRoot?: string;
 	/** Opt in to this caller process's lifetime. Attach holds remain independently releasable. */
 	readonly owner?: "caller";
 	/** Host lifecycle policy recorded in settings.json (env overrides win at runtime). */
