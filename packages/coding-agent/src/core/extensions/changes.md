@@ -3746,7 +3746,7 @@ The compaction context/action declarations in `types.ts` and callback storage, b
 
 ### What changed
 
-`runner.ts` exposes the session's `isPaused()` reader. `types.ts` adds persistence callbacks to `sendMessage` and a human-command-only resume action. `session-control-types.ts` distinguishes paused notice custody from emitted delivery.
+`packages/coding-agent/src/core/extensions/runner.ts` exposes the session's `isPaused()` reader. `packages/coding-agent/src/core/extensions/types.ts` adds persistence callbacks to `sendMessage` and a human-command-only resume action. `session-control-types.ts` distinguishes paused notice custody from emitted delivery.
 
 ### Why
 

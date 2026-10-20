@@ -7007,7 +7007,7 @@ The classic capability list in `connection-handler.ts`.
 
 ### What changed
 
-`rpc-session-state.ts` projects `paused` and `pausedNoticeCount` from the engine; `rpc-types.ts` declares the additive fields. The shared session event stream carries pause changes and persisted/consumed notice receipts.
+`rpc-session-state.ts` projects `paused` and `pausedNoticeCount` from the engine; `packages/coding-agent/src/modes/rpc/rpc-types.ts` declares the additive fields. The shared session event stream carries pause changes and persisted/consumed notice receipts.
 
 ### Why
 

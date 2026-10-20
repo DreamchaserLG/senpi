@@ -11162,7 +11162,7 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 ### What changed
 
-`agent-session.ts` owns the pause and the `_admitSessionTurn` gate for prompts, custom triggers, external deliveries and scheduled continuations. `session-pause.ts` rebuilds pause and unconsumed notices from session history; `session-manager.ts` persists a Stop even before the first turn. Accepted human input or `/resume` releases the pause. Notice receipts separate persistence from model consumption, and notices survive branch navigation.
+`packages/coding-agent/src/core/agent-session.ts` owns the pause and the `_admitSessionTurn` gate for prompts, custom triggers, external deliveries and scheduled continuations. `session-pause.ts` rebuilds pause and unconsumed notices from session history; `packages/coding-agent/src/core/session-manager.ts` persists a Stop even before the first turn. Accepted human input or `/resume` releases the pause. Notice receipts separate persistence from model consumption, and notices survive branch navigation. `packages/coding-agent/src/core/slash-commands.ts` describes the paused-run action and preserves `/sessions` for browsing history.
 
 ### Why
 

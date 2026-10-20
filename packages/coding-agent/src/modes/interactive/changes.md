@@ -3056,7 +3056,7 @@ The shared markdown theme and the tool card's renderer are interactive-mode inte
 
 ### What changed
 
-`session-control-rpc-commands.ts` maps `notice_persisted` to a queued delivery acknowledgment. `/resume` resumes the current run when paused and otherwise retains its session-picker behavior; `/sessions` always opens the picker.
+`session-control-rpc-commands.ts` maps `notice_persisted` to a queued delivery acknowledgment. In `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, `/resume` resumes the current run when paused and otherwise retains its session-picker behavior; `/sessions` always opens the picker.
 
 ### Why
 
