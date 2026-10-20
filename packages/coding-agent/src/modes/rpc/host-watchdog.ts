@@ -6,21 +6,22 @@
  * crashed supervisor run no JS handler, and the host is then reparented to init
  * as a permanent orphan holding its private socket forever.
  *
- * The binding used here is the OS itself. The supervisor spawns the host with an
- * extra inherited pipe and keeps the write end open without ever writing to it.
- * The kernel closes that end when the supervisor dies for ANY reason, so the
- * host's read end reaches EOF and the host shuts down cleanly.
+ * POSIX children watch the reopened stdin key pipe, or poll the recorded supervisor's
+ * pid and start time when reopening is unavailable. Slot three is not trusted after
+ * wrappers/re-exec. Windows and explicit embedding callers retain their fd binding.
  *
- * Both variables are unset for every other host launch, so nothing changes for
+ * The bindings are unset for every other host launch, so nothing changes for
  * plain `senpi --mode rpc` runs, hosts started by hand, or embedders.
  */
 import { rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { Socket } from "node:net";
 import { envValue } from "../../core/brand.ts";
+import { processStartTimeMs, readProcessStartTime } from "../../utils/process-identity.ts";
 import { recordHostCrash } from "./host-crash-record.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import { watchHostLifetime } from "./host-lifetime-reader.ts";
 
 /** Inherited fd whose EOF means "the supervisor died"; set by the supervisor only. */
 export const HOST_WATCH_FD_ENV = "SENPI_RPC_HOST_WATCH_FD";
@@ -30,6 +31,7 @@ export const HOST_SCRATCH_DIR_ENV = "SENPI_RPC_HOST_SCRATCH_DIR";
 export const HOST_PUBLIC_SOCKET_ENV = "SENPI_RPC_HOST_PUBLIC_SOCKET";
 /** Fallback binding when no inherited fd is available: poll this pid. */
 export const HOST_WATCH_PPID_ENV = "SENPI_RPC_HOST_WATCH_PPID";
+export const HOST_WATCH_PSTART_ENV = "SENPI_RPC_HOST_WATCH_PSTART";
 /** Poll cadence for the ppid fallback. */
 export const HOST_WATCH_PPID_INTERVAL_MS = 250;
 export const HOST_CLEANUP_PATHS_ENV = "SENPI_RPC_HOST_CLEANUP_PATHS";
@@ -37,6 +39,8 @@ export const HOST_CLEANUP_PATHS_ENV = "SENPI_RPC_HOST_CLEANUP_PATHS";
 export interface HostWatchdogConfig {
 	readonly fd?: number;
 	readonly ppid?: number;
+	readonly processStartTime?: string;
+	readonly lifetimeFd?: number;
 	readonly scratchDir?: string;
 	readonly cleanupPaths?: readonly string[];
 	readonly publicSocket?: string;
@@ -67,8 +71,10 @@ function parsePositiveInteger(value: string | undefined): number | undefined {
 export function readHostWatchdogConfig(
 	env: Readonly<Record<string, string | undefined>> = process.env,
 ): HostWatchdogConfig | undefined {
-	const fd = parsePositiveInteger(env[HOST_WATCH_FD_ENV]);
 	const ppid = parsePositiveInteger(env[HOST_WATCH_PPID_ENV]);
+	// Slot three may have been closed/reused by a launcher. POSIX supervised children never arm it.
+	const fd =
+		process.platform !== "win32" && ppid !== undefined ? undefined : parsePositiveInteger(env[HOST_WATCH_FD_ENV]);
 	if (fd === undefined && ppid === undefined) return undefined;
 	const scratchDir = env[HOST_SCRATCH_DIR_ENV];
 	const cleanupPaths = env[HOST_CLEANUP_PATHS_ENV]?.split("\n").filter(Boolean);
@@ -78,6 +84,7 @@ export function readHostWatchdogConfig(
 	return {
 		fd,
 		ppid,
+		...(env[HOST_WATCH_PSTART_ENV] ? { processStartTime: env[HOST_WATCH_PSTART_ENV] } : {}),
 		scratchDir: scratchDir === undefined || scratchDir === "" ? undefined : scratchDir,
 		cleanupPaths,
 		publicSocket: publicSocket === "" ? undefined : publicSocket,
@@ -94,6 +101,7 @@ export function readHostWatchdogConfigFromBrandEnv(): HostWatchdogConfig | undef
 	return readHostWatchdogConfig({
 		[HOST_WATCH_FD_ENV]: process.env[HOST_WATCH_FD_ENV] ?? envValue("RPC_HOST_WATCH_FD"),
 		[HOST_WATCH_PPID_ENV]: process.env[HOST_WATCH_PPID_ENV] ?? envValue("RPC_HOST_WATCH_PPID"),
+		[HOST_WATCH_PSTART_ENV]: process.env[HOST_WATCH_PSTART_ENV] ?? envValue("RPC_HOST_WATCH_PSTART"),
 		[HOST_SCRATCH_DIR_ENV]: process.env[HOST_SCRATCH_DIR_ENV] ?? envValue("RPC_HOST_SCRATCH_DIR"),
 		[HOST_PUBLIC_SOCKET_ENV]: process.env[HOST_PUBLIC_SOCKET_ENV] ?? envValue("RPC_HOST_PUBLIC_SOCKET"),
 		[HOST_CLEANUP_PATHS_ENV]: process.env[HOST_CLEANUP_PATHS_ENV] ?? envValue("RPC_HOST_CLEANUP_PATHS"),
@@ -117,7 +125,11 @@ export function armHostWatchdog(
 	onSupervisorGone: (reason: string, cleanup?: Promise<void>) => void,
 ): () => void {
 	if (!config) return () => {};
+	let stopped = false;
+	let fired = false;
 	const fire = (reason: string): void => {
+		if (stopped || fired) return;
+		fired = true;
 		disarm();
 		// First, before any cleanup: a supervisor that died this way runs no exit handler of its own.
 		if (config.daemonDir !== undefined && config.instanceId !== undefined) {
@@ -142,10 +154,23 @@ export function armHostWatchdog(
 	};
 	const disarmers: Array<() => void> = [];
 	const disarm = (): void => {
+		stopped = true;
 		for (const stop of disarmers.splice(0)) stop();
 	};
+	let polling = false;
+	const fallback = (): void => {
+		if (stopped || polling || config.ppid === undefined) return;
+		polling = true;
+		disarmers.push(watchPpid(config.ppid, config.processStartTime, fire));
+	};
+	if (config.lifetimeFd !== undefined) {
+		try {
+			disarmers.push(watchHostLifetime(config.lifetimeFd, () => fire("supervisor stdin lifetime closed"), fallback));
+		} catch {
+			fallback();
+		}
+	} else fallback();
 	if (config.fd !== undefined) disarmers.push(watchFdForEof(config.fd, fire));
-	if (config.ppid !== undefined) disarmers.push(watchPpid(config.ppid, fire));
 	return disarm;
 }
 
@@ -199,28 +224,46 @@ function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
 }
 
 /**
- * Fallback binding: the supervisor pid is gone, or this process was reparented
- * to init because the supervisor died. Polling covers the case where no extra
- * fd could be inherited.
+ * Poll only the recorded supervisor, never process.ppid (a wrapper may be the parent).
+ * An absent pid or observed start-time mismatch is death; every observation error is unknown.
  */
-function watchPpid(supervisorPid: number, fire: (reason: string) => void): () => void {
+function watchPpid(
+	supervisorPid: number,
+	recordedStart: string | undefined,
+	fire: (reason: string) => void,
+): () => void {
 	// Tests and embedders may bind the watchdog to this process itself; that
 	// is a valid live binding rather than evidence of supervisor loss.
 	if (supervisorPid === process.pid) return () => {};
+	let stopped = false;
+	let probing = false;
 	const timer = setInterval(() => {
-		if (!processAlive(supervisorPid)) {
-			fire(`supervisor pid ${supervisorPid} is gone (ppid=${process.ppid})`);
-			return;
-		}
-		// A dead supervisor is reaped by its own parent and this process is then
-		// reparented, so the ppid comparison observes the loss without spawning
-		// `ps` every tick; both checks here are free syscalls.
-		if (process.ppid !== supervisorPid) {
-			fire(`supervisor pid ${supervisorPid} is gone (ppid=${process.ppid})`);
-		}
+		if (probing || stopped) return;
+		probing = true;
+		void (async () => {
+			try {
+				if (!processAlive(supervisorPid)) {
+					if (!stopped) fire(`supervisor pid ${supervisorPid} is gone`);
+					return;
+				}
+				if (!recordedStart) return;
+				const observed = await readProcessStartTime(supervisorPid, process.platform, 1000);
+				const recordedMs = processStartTimeMs(recordedStart);
+				const observedMs = observed === undefined ? undefined : processStartTimeMs(observed);
+				if (!stopped && recordedMs !== undefined && observedMs !== undefined && recordedMs !== observedMs)
+					fire(`supervisor pid ${supervisorPid} start time changed`);
+			} catch {
+				// Permission, timeout and unreadable/missing start time are unknown, never death.
+			} finally {
+				probing = false;
+			}
+		})();
 	}, HOST_WATCH_PPID_INTERVAL_MS);
 	timer.unref?.();
-	return () => clearInterval(timer);
+	return () => {
+		stopped = true;
+		clearInterval(timer);
+	};
 }
 
 function processAlive(pid: number): boolean {
@@ -228,7 +271,7 @@ function processAlive(pid: number): boolean {
 		process.kill(pid, 0);
 		return true;
 	} catch (cause) {
-		return cause instanceof Error && "code" in cause && cause.code !== "ESRCH";
+		return !(cause instanceof Error && "code" in cause && cause.code === "ESRCH");
 	}
 }
 

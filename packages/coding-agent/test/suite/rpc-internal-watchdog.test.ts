@@ -9,6 +9,7 @@ vi.mock("../../src/utils/process-identity.ts", async (original) => ({
 		return probe.identity;
 	},
 }));
+
 import { armHostWatchdog, readHostWatchdogConfig } from "../../src/modes/rpc/host-watchdog.ts";
 
 const start = "Tue Oct 20 10:00:00 2026";
@@ -32,23 +33,26 @@ describe("recorded supervisor lifetime", () => {
 		expect(config?.processStartTime).toBe(start);
 	});
 
-	it.each(["wrapper", "missing", "unreadable", "permission"] as const)("keeps a live supervisor up with %s identity", async (kind) => {
-		vi.useFakeTimers();
-		vi.spyOn(process, "kill").mockImplementation(() => {
-			if (kind === "permission") throw Object.assign(new Error("denied"), { code: "EPERM" });
-			return true;
-		});
-		probe.identity = kind === "wrapper" ? start : undefined;
-		probe.fail = kind === "unreadable";
-		const fired = vi.fn();
-		const stop = armHostWatchdog({ ppid: 4242, processStartTime: start }, fired);
-		try {
-			await vi.advanceTimersByTimeAsync(1000);
-			expect(fired).not.toHaveBeenCalled();
-		} finally {
-			stop();
-		}
-	});
+	it.each(["wrapper", "missing", "unreadable", "permission"] as const)(
+		"keeps a live supervisor up with %s identity",
+		async (kind) => {
+			vi.useFakeTimers();
+			vi.spyOn(process, "kill").mockImplementation(() => {
+				if (kind === "permission") throw Object.assign(new Error("denied"), { code: "EPERM" });
+				return true;
+			});
+			probe.identity = kind === "wrapper" ? start : undefined;
+			probe.fail = kind === "unreadable";
+			const fired = vi.fn();
+			const stop = armHostWatchdog({ ppid: 4242, processStartTime: start }, fired);
+			try {
+				await vi.advanceTimersByTimeAsync(1000);
+				expect(fired).not.toHaveBeenCalled();
+			} finally {
+				stop();
+			}
+		},
+	);
 
 	it.each(["ESRCH", "reuse"] as const)("ends the host on confirmed %s", async (kind) => {
 		vi.useFakeTimers();

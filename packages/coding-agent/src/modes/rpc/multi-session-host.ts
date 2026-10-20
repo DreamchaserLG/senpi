@@ -1,7 +1,9 @@
 import { chmod } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { basename, dirname, join } from "node:path";
+import type { Duplex } from "node:stream";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
+import { VERSION } from "../../config.ts";
 import type { CreateAgentSessionRuntimeFactory } from "../../core/agent-session-runtime.ts";
 import { envValue } from "../../core/brand.ts";
 import { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
@@ -32,6 +34,8 @@ import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "./host-watchdog.ts";
+import { getInternalHostBootstrap } from "./internal-bootstrap.ts";
+import { acceptInternalConnection } from "./internal-channel.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
@@ -360,7 +364,12 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		process.platform === "win32"
 			? await ensureSocketSecret(process.env[SOCKET_SECRET_FILE_ENV] ?? socketSecretPath(socketPath))
 			: undefined;
-	const watchdogConfig = readHostWatchdogConfigFromBrandEnv();
+	const bootstrap = getInternalHostBootstrap();
+	const configuredWatchdog = readHostWatchdogConfigFromBrandEnv();
+	const watchdogConfig = configuredWatchdog && {
+		...configuredWatchdog,
+		...(bootstrap?.lifetimeFd === undefined ? {} : { lifetimeFd: bootstrap.lifetimeFd }),
+	};
 	// This host's OWN copy of the crash-path cleanup list. A drain empties it: once a successor
 	// generation is registered, the daemon state files under those paths describe the successor,
 	// and a crash of this (already replaced) host must not take them with it.
@@ -380,8 +389,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			: undefined;
 	let boundIdentity: SocketFileIdentity | undefined;
 	let supervisorPublicIdentity: SocketFileIdentity | undefined;
-	const server = createServer((socket) => {
-		const accept = (): void => {
+	const server = createServer((rawSocket) => {
+		const accept = (socket: Duplex = rawSocket): void => {
 			if (draining || shuttingDown) {
 				socket.destroy();
 				return;
@@ -432,7 +441,14 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			socket.once("close", detach);
 			socket.once("error", () => detach());
 		};
-		if (secret) authenticateSocket(socket, secret, accept);
+		if (bootstrap)
+			void acceptInternalConnection(rawSocket, bootstrap.key, {
+				protocolVersion: 1,
+				serverVersion: VERSION,
+			})
+				.then(accept)
+				.catch(() => rawSocket.destroy());
+		else if (secret) authenticateSocket(rawSocket, secret, () => accept());
 		else accept();
 	});
 	server.on("error", (cause) => {

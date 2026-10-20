@@ -22,5 +22,13 @@ armHostWatchdog({ lifetimeFd: bootstrap.lifetimeFd }, () => {
 });
 const stdinNull = fstatSync(0).isCharacterDevice() && fstatSync(0).rdev === statSync("/dev/null").rdev;
 const cat = spawn("cat", [], { stdio: ["inherit", "ignore", "inherit"] });
-cat.once("exit", (code) => process.send?.({ type: "ready", key: bootstrap.key.toString("hex"), stdinNull, catCode: code, lifetime: bootstrap.lifetimeFd !== undefined }));
+cat.once("exit", (code) =>
+	process.send?.({
+		type: "ready",
+		key: bootstrap.key.toString("hex"),
+		stdinNull,
+		catCode: code,
+		lifetime: bootstrap.lifetimeFd !== undefined,
+	}),
+);
 process.on("message", () => process.exit(0));

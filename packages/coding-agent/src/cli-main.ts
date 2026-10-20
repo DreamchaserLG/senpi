@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "./modes/rpc/internal-bootstrap.ts";
 import "./valid-cwd.ts";
 import "./internal-role.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";

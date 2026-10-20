@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
+import { readProcessStartTime } from "../../utils/process-identity.ts";
 import { HostAdmission } from "./host-admission.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
@@ -94,6 +95,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const internalSocket = internal.socket;
 	const internalSecretPath = internal.secretPath ?? socketSecretPath(internalSocket);
 	const internalSecret = process.platform === "win32" ? await createSocketSecret(internalSecretPath) : undefined;
+	const internalKey = process.platform === "win32" ? undefined : randomBytes(32);
+	const supervisorStartTime = internalKey
+		? await readProcessStartTime(process.pid, process.platform, 1000).catch(() => undefined)
+		: undefined;
 	const state: SupervisorState = {
 		shuttingDown: false,
 		shutdownReason: undefined,
@@ -107,6 +112,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		idleExitMs: policy.coldStart === "persistent" ? Number.POSITIVE_INFINITY : policy.idleExitMs,
 		internalSocket,
 		...(internalSecret ? { internalSecret } : {}),
+		...(internalKey ? { internalKey } : {}),
 		instanceId,
 		settled: () => state.shuttingDown,
 		onActivity: () => owner.activity(),
@@ -118,6 +124,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		internalSocket,
 		internal: { ...internal, secretPath: internalSecretPath },
 		...(internalSecret ? { internalSecret } : {}),
+		...(internalKey ? { internalKey } : {}),
+		supervisorStartTime,
 		daemonDir: paths.dir,
 		instanceId,
 		cleanupPaths: hostCrashCleanupPaths({
@@ -171,6 +179,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const server = createPublicProxy({
 		internalSocket,
 		...(internalSecret ? { internalSecret } : {}),
+		...(internalKey ? { internalKey } : {}),
 		...(publicSecret ? { publicSecret } : {}),
 		clients: activity.clients,
 		admission,
@@ -225,7 +234,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
 			await owner.start(launch.ownerFd);
 		}
-		await waitForListener(internalSocket, 30_000, internalSecret);
+		await waitForListener(internalSocket, 30_000, internalSecret, internalKey);
 		await activity.openObserver();
 		await prepareSocketPath(bindSocket);
 		await listen(server, bindSocket, publicSecret);

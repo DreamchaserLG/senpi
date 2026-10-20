@@ -14,21 +14,40 @@ afterEach(async () => {
 });
 
 function start(runtime: string, args: string[] = []) {
-	const child = spawn(runtime, [...(runtime === "bun" ? [] : ["--import", "tsx"]), join(import.meta.dirname, "rpc-internal-bootstrap-harness.ts"), ...args], {
-		env: { ...process.env, SENPI_RPC_INTERNAL_KEY_STDIN: "1" },
-		stdio: ["pipe", "ignore", "pipe", "pipe", "ipc"],
-	});
+	const child = spawn(
+		runtime,
+		[
+			...(runtime === "bun" ? [] : ["--import", "tsx"]),
+			join(import.meta.dirname, "rpc-internal-bootstrap-harness.ts"),
+			...args,
+		],
+		{
+			env: { ...process.env, SENPI_RPC_INTERNAL_KEY_STDIN: "1" },
+			stdio: ["pipe", "ignore", "pipe", "pipe", "ipc"],
+		},
+	);
 	children.push(child);
 	let stderr = "";
-	child.stderr?.on("data", (data) => { stderr += String(data); });
+	child.stderr?.on("data", (data) => {
+		stderr += String(data);
+	});
 	return { child, stderr: () => stderr };
 }
 
 function message(child: ChildProcess): Promise<unknown> {
 	return new Promise((resolve, reject) => {
-		const received = (value: unknown) => { cleanup(); resolve(value); };
-		const exited = (code: number | null) => { cleanup(); reject(new Error(`bootstrap exited ${code} before reporting`)); };
-		const cleanup = () => { child.off("message", received); child.off("exit", exited); };
+		const received = (value: unknown) => {
+			cleanup();
+			resolve(value);
+		};
+		const exited = (code: number | null) => {
+			cleanup();
+			reject(new Error(`bootstrap exited ${code} before reporting`));
+		};
+		const cleanup = () => {
+			child.off("message", received);
+			child.off("exit", exited);
+		};
 		child.once("message", received);
 		child.once("exit", exited);
 	});
@@ -74,6 +93,13 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 			const { child, stderr } = start(runtime);
 			const exit = once(child, "exit");
 			child.stdin?.end();
+			expect((await exit)[0]).not.toBe(0);
+			expect(stderr()).toContain("internal_key_unavailable");
+		});
+
+		it(`${runtime} bounds a missing key even while the writer stays open`, async () => {
+			const { child, stderr } = start(runtime);
+			const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
 			expect((await exit)[0]).not.toBe(0);
 			expect(stderr()).toContain("internal_key_unavailable");
 		});

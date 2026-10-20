@@ -9,6 +9,8 @@ import { dirname } from "node:path";
 import type { HostAdmission } from "./host-admission.ts";
 import { proxyWithAdmission } from "./host-admission-proxy.ts";
 import type { ClientOccupancy } from "./host-client-occupancy.ts";
+import { connectInternalConnection } from "./internal-channel.ts";
+import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import {
 	type ListenerState,
 	MAX_SOCKET_PATH_BYTES,
@@ -27,6 +29,7 @@ import {
 export interface PublicProxyOptions {
 	readonly internalSocket: string;
 	readonly internalSecret?: Buffer;
+	readonly internalKey?: Buffer;
 	readonly publicSecret?: Buffer;
 	readonly clients: ClientOccupancy;
 	/** Shared authority for stopping, protocol replies and new-session admission. */
@@ -40,9 +43,10 @@ export interface PublicProxyOptions {
 export function createPublicProxy(options: PublicProxyOptions): Server {
 	const { internalSocket, internalSecret, publicSecret, clients } = options;
 	return createServer((client) => {
-		const accept = (): void => {
+		const accept = async (): Promise<void> => {
 			// Teardown is terminal even for an accept that raced socket shielding/server.close.
 			if (!clients.admit(client)) return;
+			client.pause();
 			// Draining peers can still probe and receive typed open refusals, without a child hop.
 			const internal = options.admission.stopping
 				? undefined
@@ -59,12 +63,25 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 				internal?.destroy();
 				client.destroy();
 			};
-			proxyWithAdmission(client, internal, options.admission);
 			client.once("close", detach);
 			client.once("error", detach);
+			try {
+				const hop =
+					internal && options.internalKey
+						? await connectInternalConnection(internal, options.internalKey)
+						: internal;
+				if (client.destroyed) {
+					hop?.destroy();
+					return;
+				}
+				proxyWithAdmission(client, hop, options.admission);
+				client.resume();
+			} catch {
+				detach();
+			}
 		};
-		if (publicSecret) authenticateSocket(client, publicSecret, accept);
-		else accept();
+		if (publicSecret) authenticateSocket(client, publicSecret, () => void accept());
+		else void accept();
 	});
 }
 
@@ -106,16 +123,54 @@ export async function ensurePublicSocketSecret(publicSocket: string): Promise<Bu
 	}
 }
 
-export async function waitForListener(socketPath: string, timeoutMs: number, secret?: Uint8Array): Promise<void> {
+export async function waitForListener(
+	socketPath: string,
+	timeoutMs: number,
+	secret?: Uint8Array,
+	internalKey?: Buffer,
+): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() <= deadline) {
-		if (await canConnect(socketPath, secret)) return;
+		if (await canConnect(socketPath, secret, internalKey)) return;
 		await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 50));
 	}
 	throw new Error(`${socketPath}: host did not start listening within ${timeoutMs}ms`);
 }
 
-function canConnect(socketPath: string, secret?: Uint8Array): Promise<boolean> {
+async function canConnect(socketPath: string, secret?: Uint8Array, internalKey?: Buffer): Promise<boolean> {
+	if (internalKey) {
+		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
+		try {
+			const stream = await connectInternalConnection(socket, internalKey);
+			return await new Promise<boolean>((resolve) => {
+				const timer = setTimeout(() => settle(false), 2000);
+				timer.unref();
+				const settle = (ready: boolean) => {
+					clearTimeout(timer);
+					stream.destroy();
+					resolve(ready);
+				};
+				stream.once("error", () => settle(false));
+				stream.once("close", () => settle(false));
+				attachJsonlLineReader(
+					stream,
+					(line) => {
+						try {
+							const response = JSON.parse(line);
+							if (response.id === "internal-ready") settle(response.success === true);
+						} catch {
+							settle(false);
+						}
+					},
+					{ maxLineLength: MAX_RPC_LINE_CHARACTERS },
+				);
+				stream.write('{"id":"internal-ready","type":"get_protocol_info","observe":true}\n');
+			});
+		} catch {
+			socket.destroy();
+			return false;
+		}
+	}
 	return new Promise((resolve) => {
 		const socket: Socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
 		if (secret) sendSocketHandshake(socket, secret);

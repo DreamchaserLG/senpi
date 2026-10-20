@@ -1,3 +1,34 @@
+## 2026-10-20 - Seal the POSIX internal hop and bind lifetime through stdin or recorded identity (senpi#3795)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: generate a fresh memory-only internal key, send it once through piped stdin, retain the writer, export the recorded supervisor start time, and stop forwarding a POSIX secret-file environment. Windows retains its existing secret file and raw handshake.
+- `packages/coding-agent/src/modes/rpc/internal-bootstrap.ts`: read exactly 32 key bytes synchronously with a two-second EAGAIN budget; reopen stdin close-on-exec and restore fd 0 to `/dev/null`. Any reopen error logs the identity-poll fallback; missing/short keys refuse startup.
+- `packages/coding-agent/src/modes/rpc/host-watchdog.ts` and `packages/coding-agent/src/modes/rpc/host-lifetime-reader.ts`: Node watches reopened-stdin EOF through an unref'd Socket; Bun uses its file stream. Supervised POSIX children never arm slot three. Recorded-pid polling fires only on ESRCH or observed start-time mismatch; missing, unreadable, timed-out and permission-denied identity observations stay unknown. Explicit fd callers and Windows retain the fd path.
+- `packages/coding-agent/src/modes/rpc/internal-channel.ts`: internal connections use the canonical newline/hex challenge-response, `data.auth`, `socket_auth`, and launch id `internal`, with an 8 KiB / two-second pre-auth budget and no legacy downgrade.
+- `packages/coding-agent/src/modes/rpc/internal-record-cipher.ts` and `packages/coding-agent/src/modes/rpc/internal-record-stream.ts`: directional HKDF-SHA256 keys, AES-256-GCM records, direction/counter AAD, bounded framing, verify-before-release, truncation rejection and the 2^32-record limit. JSONL spans records without a new line-size ceiling; every output record awaits downstream writes.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts` and `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: authenticate/seal proxy, readiness and observer hops; unwrap the child stream before JSONL and occupancy classification.
+- `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts` and `packages/coding-agent/src/modes/rpc/socket-sink.ts`: accept a Duplex byte stream so sealed and raw transports share the same admission, occupancy and output behavior.
+- The hop directory placement and `host-internal-dir-reaper.ts` are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`, `packages/coding-agent/src/modes/rpc/internal-bootstrap.ts`: key custody belongs only to supervisor and host memory, while descendants must keep null stdin.
+- `packages/coding-agent/src/modes/rpc/host-watchdog.ts`, `packages/coding-agent/src/modes/rpc/host-lifetime-reader.ts`: wrappers legitimately change the direct parent; Bun's net.Socket fd reader did not deliver EOF. Slot-three identity cannot be established across re-exec (approved v7.1 delta).
+- `packages/coding-agent/src/modes/rpc/internal-channel.ts`, `packages/coding-agent/src/modes/rpc/internal-record-cipher.ts`, `packages/coding-agent/src/modes/rpc/internal-record-stream.ts`: socket substitution must disclose neither the key nor session traffic, and must not permit injection after authentication.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`, `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`, `packages/coding-agent/src/modes/rpc/socket-sink.ts`: every internal caller must use the same protected transport without changing public JSONL semantics.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`, `packages/coding-agent/src/modes/rpc/internal-bootstrap.ts`, `packages/coding-agent/src/modes/rpc/host-watchdog.ts`, `packages/coding-agent/src/modes/rpc/host-lifetime-reader.ts`: process bootstrap and lifetime binding run before extensions.
+- `packages/coding-agent/src/modes/rpc/internal-channel.ts`, `packages/coding-agent/src/modes/rpc/internal-record-cipher.ts`, `packages/coding-agent/src/modes/rpc/internal-record-stream.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`, `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`, `packages/coding-agent/src/modes/rpc/socket-sink.ts`: authentication, transport framing and admission have no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: imports and child launch in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`; watchdog config/arming in `packages/coding-agent/src/modes/rpc/host-watchdog.ts`; connection setup in `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts` and `packages/coding-agent/src/modes/rpc/multi-session-host.ts`.
+- LOW: transport type annotations in `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts` and `packages/coding-agent/src/modes/rpc/socket-sink.ts`.
+- NONE: fork-only new modules `packages/coding-agent/src/modes/rpc/internal-bootstrap.ts`, `packages/coding-agent/src/modes/rpc/host-lifetime-reader.ts`, `packages/coding-agent/src/modes/rpc/internal-channel.ts`, `packages/coding-agent/src/modes/rpc/internal-record-cipher.ts`, `packages/coding-agent/src/modes/rpc/internal-record-stream.ts`.
+
 ## 2026-10-19 - Removing a dead generation also ends its unproven session claims, behind the write fence (senpi#3658)
 
 ### What changed

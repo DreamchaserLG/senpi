@@ -1626,12 +1626,30 @@ the host counts the calling process as an attached client, so a transient host w
 never starts its idle window: a long-lived caller that ensures and never releases keeps the host up for its whole
 lifetime. The hold never keeps the calling process alive, and the operating system ends it when that process exits.
 
-The RPC host can never outlive its supervisor. It is spawned with an extra inherited pipe on fd 3 whose write end the
-supervisor holds and never writes to; the kernel closes that end whenever the supervisor dies — including `SIGKILL`, an
-OOM kill, or a crash, where no signal handler runs — so the host reads EOF, shuts down cleanly and removes its private
-internal directory. The supervisor also exports `SENPI_RPC_HOST_WATCH_PPID` as a polling fallback. Both bindings are
-set only by the supervisor: a host started any other way (plain `senpi --mode rpc --listen …`, embedders, hand-started
-hosts) sees neither variable and is unaffected. A host whose supervisor is alive is never touched by this binding.
+On POSIX, the supervisor writes a fresh 32-byte internal key once to its child's stdin and keeps the write end
+open. Before the CLI touches `process.stdin`, the child reads exactly that key within a two-second startup budget,
+reopens `/dev/fd/0` as a close-on-exec lifetime descriptor, and restores fd 0 to `/dev/null`. Descendants that inherit
+stdin therefore receive immediate EOF. A missing or short key refuses startup with `internal_key_unavailable`.
+
+Where reopening succeeds, Node watches lifetime EOF with an unref'd `net.Socket`; Bun uses a `Bun.file(fd).stream()`
+reader that does not hold `process.exit()`. Any reopen failure, including Linux socketpair stdin's `ENXIO`, is logged
+and falls back to polling `SENPI_RPC_HOST_WATCH_PPID` and `SENPI_RPC_HOST_WATCH_PSTART`. Only `ESRCH` or an observed
+start-time mismatch ends the host. Missing, unreadable, timed-out or permission-denied identity observations keep it
+running. The direct parent is never compared: spawning wrappers may legitimately be between supervisor and host.
+Slot 3 is still passed but is not armed for supervised POSIX children because wrappers can close or reuse it.
+Windows retains its inherited lifetime pipe. Bare hosts and embedders without supervisor configuration are unaffected.
+
+The POSIX internal hop stays in its per-launch temporary directory and publishes no key file. Proxy, readiness and
+activity-observer connections all prove the in-memory key with challenge-response before sending session traffic.
+The child announces `launch_id: "internal"` and `socket_auth`; neither side sends the key. After authentication,
+HKDF-SHA256 derives separate `senpi-rpc-internal c2s` and `senpi-rpc-internal s2c` keys using the two raw nonces as salt.
+Each record has a four-byte big-endian ciphertext length (17..65552), AES-256-GCM ciphertext and a 16-byte tag.
+The nonce is four zero bytes followed by a big-endian 64-bit direction counter, starting at zero; AAD is the
+UTF-8 direction label (`c2s` or `s2c`) followed by that eight-byte counter. A direction closes at 2^32 records.
+Plaintext (1..65536 bytes per record) is released only after tag verification. Tampering, replay, reordering,
+invalid lengths and incomplete records at EOF close the hop. Complete-record truncation is ordinary transport loss.
+JSONL lines span records with backpressure and retain the existing 16 Mi-character ceiling. Windows retains the
+secret-file/raw-handshake internal hop.
 
 ### Supersession lifecycle: `host_superseded`
 

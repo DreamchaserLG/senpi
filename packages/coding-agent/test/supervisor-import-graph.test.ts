@@ -50,6 +50,14 @@ const SUPERVISOR_CORE_ALLOWLIST = new Set(["brand.js", "process-crash-record.js"
  * every forbidden-import assertion below remain unchanged; this is no allowance for further graph growth.
  */
 const SUPERVISOR_MODULE_CEILING = 55;
+// senpi#3795: the approved sealed hop adds only these transport/lifetime leaves. Count
+// the leaves actually loaded, not four slots of generic headroom: the pre-existing
+// graph still has its original ceiling even if a leaf is later removed.
+const INTERNAL_HOP_LEAVES = new Set(
+	["internal-channel", "internal-record-cipher", "internal-record-stream", "host-lifetime-reader"].map(
+		(name) => `packages/coding-agent/dist/modes/rpc/${name}.js`,
+	),
+);
 
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {
 	const repo = `file://${repoRoot}`;
@@ -65,7 +73,10 @@ describe("RPC host supervisor import graph", () => {
 		const modules = loadedModules(
 			probeImportGraph(repoRoot, `${repoRoot}/packages/coding-agent/dist/modes/rpc/host-lifecycle.js`).entries,
 		);
-		console.info(`supervisor graph: ${modules.length} modules (ceiling ${SUPERVISOR_MODULE_CEILING})`);
+		const internalHopLeaves = modules.filter((url) => INTERNAL_HOP_LEAVES.has(url)).length;
+		console.info(
+			`supervisor graph: ${modules.length} modules (base ceiling ${SUPERVISOR_MODULE_CEILING}, internal hop ${internalHopLeaves})`,
+		);
 
 		const core = modules.filter((url) => url.startsWith("packages/coding-agent/dist/core/"));
 		expect(
@@ -73,7 +84,7 @@ describe("RPC host supervisor import graph", () => {
 		).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/interactive/"))).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/app-server/"))).toEqual([]);
-		expect(modules.length).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
+		expect(modules.length - internalHopLeaves).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
 	});
 
 	// senpi#3743: a bundled install starts its supervisor through `dist/bundle/host-supervisor.js`. Before it

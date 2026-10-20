@@ -18,24 +18,31 @@ describe("internal sealed records", () => {
 		const plaintext = Buffer.from("hello");
 		const expectedCipher = createCipheriv("aes-256-gcm", derived, Buffer.alloc(12));
 		expectedCipher.setAAD(Buffer.concat([Buffer.from("c2s"), Buffer.alloc(8)]));
-		const body = Buffer.concat([expectedCipher.update(plaintext), expectedCipher.final(), expectedCipher.getAuthTag()]);
+		const body = Buffer.concat([
+			expectedCipher.update(plaintext),
+			expectedCipher.final(),
+			expectedCipher.getAuthTag(),
+		]);
 		const length = Buffer.alloc(4);
 		length.writeUInt32BE(body.length);
 		expect(new InternalRecordCipher(derived, "c2s").seal(plaintext)).toEqual(Buffer.concat([length, body]));
 		expect(new InternalRecordCipher(derived, "c2s").open(body)).toEqual(plaintext);
 	});
 
-	it.each(["tamper", "reorder", "replay", "direction"] as const)("rejects %s without releasing plaintext", (attack) => {
-		const sender = new InternalRecordCipher(derived, "c2s");
-		const first = sender.seal(Buffer.from("first")).subarray(4);
-		const second = sender.seal(Buffer.from("second")).subarray(4);
-		const receiver = new InternalRecordCipher(derived, attack === "direction" ? "s2c" : "c2s");
-		let forged = Buffer.from(first);
-		if (attack === "tamper") forged[0] ^= 1;
-		if (attack === "reorder") forged = Buffer.from(second);
-		if (attack === "replay") expect(receiver.open(first).toString()).toBe("first");
-		expect(() => receiver.open(forged)).toThrow();
-	});
+	it.each(["tamper", "reorder", "replay", "direction"] as const)(
+		"rejects %s without releasing plaintext",
+		(attack) => {
+			const sender = new InternalRecordCipher(derived, "c2s");
+			const first = sender.seal(Buffer.from("first")).subarray(4);
+			const second = sender.seal(Buffer.from("second")).subarray(4);
+			const receiver = new InternalRecordCipher(derived, attack === "direction" ? "s2c" : "c2s");
+			let forged = Buffer.from(first);
+			if (attack === "tamper") forged[0] ^= 1;
+			if (attack === "reorder") forged = Buffer.from(second);
+			if (attack === "replay") expect(receiver.open(first).toString()).toBe("first");
+			expect(() => receiver.open(forged)).toThrow();
+		},
+	);
 
 	it.each([0, 16, 65553])("rejects invalid body length %s", (length) => {
 		expect(() => new InternalRecordCipher(derived, "c2s").open(Buffer.alloc(length))).toThrow();
@@ -52,8 +59,20 @@ describe("internal sealed records", () => {
 	it("preserves a 131 KiB JSONL line across records and backpressure", async () => {
 		const a = new PassThrough({ highWaterMark: 32 });
 		const b = new PassThrough({ highWaterMark: 32 });
-		const client = createInternalRecordStream(Duplex.from({ readable: b, writable: a }), key, clientNonce, serverNonce, "client");
-		const host = createInternalRecordStream(Duplex.from({ readable: a, writable: b }), key, clientNonce, serverNonce, "server");
+		const client = createInternalRecordStream(
+			Duplex.from({ readable: b, writable: a }),
+			key,
+			clientNonce,
+			serverNonce,
+			"client",
+		);
+		const host = createInternalRecordStream(
+			Duplex.from({ readable: a, writable: b }),
+			key,
+			clientNonce,
+			serverNonce,
+			"server",
+		);
 		const line = JSON.stringify({ text: "x".repeat(131 * 1024) });
 		const received = new Promise<string>((resolve) => attachJsonlLineReader(host, resolve));
 		try {
@@ -71,7 +90,13 @@ describe("internal sealed records", () => {
 	it("handles fragmented headers and coalesced records", async () => {
 		const input = new PassThrough();
 		const output = new PassThrough();
-		const stream = createInternalRecordStream(Duplex.from({ readable: input, writable: output }), key, clientNonce, serverNonce, "server");
+		const stream = createInternalRecordStream(
+			Duplex.from({ readable: input, writable: output }),
+			key,
+			clientNonce,
+			serverNonce,
+			"server",
+		);
 		const sender = new InternalRecordCipher(derived, "c2s");
 		const wire = Buffer.concat([sender.seal(Buffer.from("one")), sender.seal(Buffer.from("two"))]);
 		const received: Buffer[] = [];
@@ -88,7 +113,13 @@ describe("internal sealed records", () => {
 	it.each(["header", "body", "length"] as const)("closes on incomplete or invalid %s at EOF", async (part) => {
 		const input = new PassThrough();
 		const output = new PassThrough();
-		const stream = createInternalRecordStream(Duplex.from({ readable: input, writable: output }), key, clientNonce, serverNonce, "server");
+		const stream = createInternalRecordStream(
+			Duplex.from({ readable: input, writable: output }),
+			key,
+			clientNonce,
+			serverNonce,
+			"server",
+		);
 		const errors = once(stream, "error");
 		const record = new InternalRecordCipher(derived, "c2s").seal(Buffer.from("never released"));
 		let released = 0;

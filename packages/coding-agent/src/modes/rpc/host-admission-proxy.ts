@@ -1,4 +1,5 @@
 import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { type HostAdmission, hostStoppingResponse } from "./host-admission.ts";
 import { MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
@@ -8,7 +9,7 @@ import { MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
  * Opens remain concurrent with control commands. Stop refuses every pending open,
  * while other commands retain their wire order and child-owned semantics.
  */
-export function proxyWithAdmission(client: Socket, internal: Socket | undefined, admission: HostAdmission): void {
+export function proxyWithAdmission(client: Socket, internal: Duplex | undefined, admission: HostAdmission): void {
 	const pending: unknown[] = [];
 	const refused = new Set<unknown>();
 	let protocols = 0;
@@ -88,7 +89,7 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 		internal?.end();
 	}
 
-	async function responses(source: Socket): Promise<void> {
+	async function responses(source: Duplex): Promise<void> {
 		// Keep complete records together so local refusals cannot split a streaming delta.
 		// After admission, ordinary traffic stays as raw bytes with one write per chunk.
 		let fragments: Buffer[] = [];
@@ -158,7 +159,7 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 	}
 }
 
-async function write(socket: Socket, line: string | Buffer): Promise<void> {
+async function write(socket: Duplex, line: string | Buffer): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
 		socket.write(line, (error) => (error ? reject(error) : resolve()));
 	});

@@ -1,3 +1,22 @@
+## 2026-10-20 - Internal RPC stdin bootstrap precedes the CLI graph (senpi#3795)
+
+### What changed
+
+- `packages/coding-agent/src/cli-main.ts`: imports the POSIX internal-host bootstrap before any CLI module can touch stdin.
+- `packages/coding-agent/src/bun/cli.ts`: imports the same bootstrap after sandbox env restoration and before runtime setup.
+
+### Why
+
+- `packages/coding-agent/src/cli-main.ts` and `packages/coding-agent/src/bun/cli.ts`: the internal key must be consumed synchronously before the runtime instantiates `process.stdin`, then fd 0 must become `/dev/null` for descendants. Launchers keep forwarding stdin unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli-main.ts` and `packages/coding-agent/src/bun/cli.ts`: extensions load after the CLI graph and cannot own the first stdin read.
+
+### Expected merge conflict zones
+
+- LOW: the initial side-effect import order in `packages/coding-agent/src/cli-main.ts` and `packages/coding-agent/src/bun/cli.ts`.
+
 ## 2026-10-19 - Print mode stops waiting for a silent stdin pipe (senpi#3715)
 
 ### What changed

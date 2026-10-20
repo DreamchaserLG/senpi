@@ -17,6 +17,7 @@ import {
 	HOST_SCRATCH_DIR_ENV,
 	HOST_WATCH_FD_ENV,
 	HOST_WATCH_PPID_ENV,
+	HOST_WATCH_PSTART_ENV,
 } from "./host-watchdog.ts";
 import type { SocketFileIdentity } from "./socket-ownership.ts";
 import { SOCKET_SECRET_FILE_ENV } from "./socket-transport.ts";
@@ -235,6 +236,8 @@ export function spawnHostChild(options: {
 	readonly internalSocket: string;
 	readonly internal: { readonly dir?: string; readonly secretPath: string };
 	readonly internalSecret?: Buffer;
+	readonly internalKey?: Buffer;
+	readonly supervisorStartTime?: string;
 	readonly daemonDir: string;
 	readonly instanceId: string;
 	readonly cleanupPaths: readonly string[];
@@ -242,7 +245,7 @@ export function spawnHostChild(options: {
 }): ChildProcess {
 	const { launch, internalSocket, internal, internalSecret, publicSocket } = options;
 	const childLaunch = spawnableChildLaunch(resolveHostChildLaunch(launch, internalSocket));
-	return spawn(childLaunch.command, childLaunch.args, {
+	const child = spawn(childLaunch.command, childLaunch.args, {
 		env: {
 			...process.env,
 			...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
@@ -252,19 +255,27 @@ export function spawnHostChild(options: {
 			[HOST_INSTANCE_ID_ENV]: options.instanceId,
 			[HOST_WATCH_FD_ENV]: String(HOST_CHILD_WATCH_FD),
 			[HOST_WATCH_PPID_ENV]: String(process.pid),
+			[HOST_WATCH_PSTART_ENV]: options.supervisorStartTime,
 			...(internal.dir ? { [HOST_SCRATCH_DIR_ENV]: internal.dir } : {}),
-			...(internalSecret ? { [SOCKET_SECRET_FILE_ENV]: internal.secretPath } : {}),
+			[SOCKET_SECRET_FILE_ENV]: process.platform === "win32" && internalSecret ? internal.secretPath : undefined,
+			SENPI_RPC_INTERNAL_KEY_STDIN: options.internalKey ? "1" : undefined,
 			[HOST_CLEANUP_PATHS_ENV]: options.cleanupPaths.join("\n"),
 			...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
 		},
 		// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
 		// wait on and keeps the write end owned by this process alone.
 		shell: childLaunch.shell,
-		stdio: ["ignore", "ignore", "inherit", "pipe"],
+		stdio: [process.platform === "win32" ? "ignore" : "pipe", "ignore", "inherit", "pipe"],
 		// The supervisor is spawned detached, so on win32 it owns no console. A
 		// console-subsystem child started from it would allocate a fresh one,
 		// which Windows Terminal renders as an empty window that takes focus.
 		// CREATE_NO_WINDOW gives the child a console with no window instead.
 		windowsHide: true,
 	});
+	if (options.internalKey) {
+		child.stdin?.on("error", () => {});
+		// One write only. Keep its write end alive until this supervisor exits.
+		child.stdin?.write(options.internalKey);
+	}
+	return child;
 }

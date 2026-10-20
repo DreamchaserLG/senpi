@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
-import { readProcessStartTime } from "../../src/utils/process-identity.ts";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "../../src/modes/rpc/host-watchdog.ts";
+import { readProcessStartTime } from "../../src/utils/process-identity.ts";
 
 const [role, runtime, endpoint] = process.argv.slice(2);
 const args = [...(runtime === "bun" ? [] : ["--import", "tsx"]), import.meta.filename];

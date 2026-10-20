@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
-import { type Duplex } from "node:stream";
+import type { Duplex } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { HostAdmission } from "../../src/modes/rpc/host-admission.ts";
 import { ClientOccupancy } from "../../src/modes/rpc/host-client-occupancy.ts";
@@ -45,15 +45,37 @@ describe.skipIf(process.platform === "win32")("authenticated internal connection
 				if (frame.type === "get_protocol_info") {
 					expect(frame.auth.client_nonce).toMatch(/^[a-f0-9]{64}$/);
 					const nonce = "0b".repeat(32);
-					socket.write(`${JSON.stringify({ id: frame.id, type: "response", command: frame.type, success: true, data: {
-						capabilities: ["socket_auth"],
-						auth: { launch_id: "internal", server_nonce: nonce, server_proof: createHmac("sha256", key).update(`senpi-rpc-server\ninternal\n${frame.auth.client_nonce}\n${nonce}`).digest("hex") },
-					} })}\n`);
+					socket.write(
+						`${JSON.stringify({
+							id: frame.id,
+							type: "response",
+							command: frame.type,
+							success: true,
+							data: {
+								capabilities: ["socket_auth"],
+								auth: {
+									launch_id: "internal",
+									server_nonce: nonce,
+									server_proof: createHmac("sha256", key)
+										.update(`senpi-rpc-server\ninternal\n${frame.auth.client_nonce}\n${nonce}`)
+										.digest("hex"),
+								},
+							},
+						})}\n`,
+					);
 					socket.once("data", (data) => {
 						const auth = JSON.parse(String(data));
-						expect(auth).toMatchObject({ type: "authenticate", client_proof: createHmac("sha256", key).update(`senpi-rpc-client\ninternal\n${nonce}\n${frame.auth.client_nonce}`).digest("hex") });
+						expect(auth).toMatchObject({
+							type: "authenticate",
+							client_proof: createHmac("sha256", key)
+								.update(`senpi-rpc-client\ninternal\n${nonce}\n${frame.auth.client_nonce}`)
+								.digest("hex"),
+						});
 					});
-				} else if (frame.type === "authenticate") socket.write(`${JSON.stringify({ id: frame.id, type: "response", command: "authenticate", success: true })}\n`);
+				} else if (frame.type === "authenticate")
+					socket.write(
+						`${JSON.stringify({ id: frame.id, type: "response", command: "authenticate", success: true })}\n`,
+					);
 			});
 		});
 		await listen(server, path);
@@ -66,10 +88,13 @@ describe.skipIf(process.platform === "win32")("authenticated internal connection
 		const root = mkdtempSync("/tmp/rpc-hop-forged-");
 		roots.push(root);
 		const path = join(root, "host.sock");
-		await listen(createServer((socket) => {
-			sockets.push(socket);
-			void acceptInternalConnection(socket, Buffer.alloc(32, 8)).catch(() => socket.destroy());
-		}), path);
+		await listen(
+			createServer((socket) => {
+				sockets.push(socket);
+				void acceptInternalConnection(socket, Buffer.alloc(32, 8)).catch(() => socket.destroy());
+			}),
+			path,
+		);
 		await expect(connectInternalConnection(peer(path), key)).rejects.toThrow();
 	});
 
@@ -80,38 +105,51 @@ describe.skipIf(process.platform === "win32")("authenticated internal connection
 		const relayPath = join(root, "relay");
 		const publicPath = join(root, "public");
 		const commands: string[] = [];
-		await listen(createServer((socket) => {
-			sockets.push(socket);
-			void acceptInternalConnection(socket, key).then((stream) => {
-				sockets.push(stream);
-				stream.on("error", () => {});
-				attachJsonlLineReader(stream, (line) => commands.push(JSON.parse(line).type));
-			}).catch(() => socket.destroy());
-		}), hostPath);
+		await listen(
+			createServer((socket) => {
+				sockets.push(socket);
+				void acceptInternalConnection(socket, key)
+					.then((stream) => {
+						sockets.push(stream);
+						stream.on("error", () => {});
+						attachJsonlLineReader(stream, (line) => commands.push(JSON.parse(line).type));
+					})
+					.catch(() => socket.destroy());
+			}),
+			hostPath,
+		);
 		let inject: (() => void) | undefined;
 		const authenticated = Promise.withResolvers<void>();
-		await listen(createServer((client) => {
-			sockets.push(client);
-			const host = peer(hostPath);
-			client.pipe(host);
-			let pending = "";
-			host.on("data", (data: Buffer) => {
-				client.write(data);
-				if (inject) return;
-				pending += data.toString();
-				if (pending.includes('"command":"authenticate"')) {
-					inject = () => host.write('{"id":"forged","type":"list_sessions"}\n');
-					authenticated.resolve();
-				}
-			});
-			host.on("close", () => client.destroy());
-			client.on("close", () => host.destroy());
-		}), relayPath);
+		await listen(
+			createServer((client) => {
+				sockets.push(client);
+				const host = peer(hostPath);
+				client.pipe(host);
+				let pending = "";
+				host.on("data", (data: Buffer) => {
+					client.write(data);
+					if (inject) return;
+					pending += data.toString();
+					if (pending.includes('"command":"authenticate"')) {
+						inject = () => host.write('{"id":"forged","type":"list_sessions"}\n');
+						authenticated.resolve();
+					}
+				});
+				host.on("close", () => client.destroy());
+				client.on("close", () => host.destroy());
+			}),
+			relayPath,
+		);
 		const proxy = createPublicProxy({
 			internalSocket: relayPath,
 			internalKey: key,
 			clients: new ClientOccupancy(() => {}),
-			admission: new HostAdmission({ protocolVersion: 1, serverVersion: "test", capabilities: [], instanceId: "test" }),
+			admission: new HostAdmission({
+				protocolVersion: 1,
+				serverVersion: "test",
+				capabilities: [],
+				instanceId: "test",
+			}),
 			onDetach: () => {},
 		});
 		await listen(proxy, publicPath);
