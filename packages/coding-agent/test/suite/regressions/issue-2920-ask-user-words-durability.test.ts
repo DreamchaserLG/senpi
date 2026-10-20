@@ -189,18 +189,27 @@ describe("senpi#2920 every word is labelled with the question it answers", () =>
 		expect(results[1]?.kind === "toolResult" && results[1].text).toContain(commentLabel("toolu_second"));
 	});
 
-	it("a steer typed while the question was open comes after the answer's words", async () => {
-		const { next } = await blockingRun(async () => {
-			await harnesses.at(-1)?.session.steer(STEER);
-			return ANSWER;
-		});
+	// senpi#3774: typed input wins over the UI response while a blocking question waits.
+	it("a message typed while a blocking question is open becomes its labelled durable answer", async () => {
+		const { harness, next } = await blockingRun(
+			async () => {
+				await harnesses.at(-1)?.session.steer(STEER);
+				return ANSWER;
+			},
+			{ persistSession: true },
+		);
 		if (!next) throw new Error("no request followed the answer");
-		expect((await wordsAfterResults(anthropic, next)).slice(0, 5)).toEqual([...answerWordBlocks(), STEER]);
+		expect(await wordsAfterResults(anthropic, next)).toEqual([commentLabel(CALL_ID), STEER]);
+		expect((await wordsAfterResults(anthropic, resumedContext(harness))).slice(0, 2)).toEqual([
+			commentLabel(CALL_ID),
+			STEER,
+		]);
+		expect(harness.session.getSteeringMessages()).toEqual([]);
 	});
 });
 
 describe("senpi#2920 an input rewrite keeps a later answer's blocks apart", () => {
-	it("an input handler that rewrites a mention leaves the frame and the words in their own blocks", async () => {
+	it("a steer and an input rewrite leave an async answer's frame and words in their own blocks", async () => {
 		const mention = "see @mcp:docs/plan please";
 		const rewriter = (pi: ExtensionAPI) => {
 			pi.on("input", async (event) =>
@@ -221,6 +230,8 @@ describe("senpi#2920 an input rewrite keeps a later answer's blocks apart", () =
 			},
 		]);
 		await harness.session.prompt("Set up auth");
+		// senpi#3774 only consumes messages for blocking questions; this remains a separate steer.
+		await harness.session.steer(STEER);
 		const answered = new Promise<void>((resolve) => {
 			const unsubscribe = harness.session.subscribe((event) => {
 				if (event.type !== "agent_end" || !next) return;
@@ -236,7 +247,11 @@ describe("senpi#2920 an input rewrite keeps a later answer's blocks apart", () =
 			(item) => item.kind === "userText" && item.text.startsWith(`[Answer to question ${CALL_ID}]`),
 		);
 		expect(frame).toBeGreaterThan(-1);
+		expect(textsOf(items)).toContain(STEER);
 		expect(textsOf(items.slice(frame + 1, frame + 3))).toEqual([commentLabel(CALL_ID), mention]);
+		const answerFrame = items[frame];
+		if (answerFrame?.kind !== "userText") throw new Error("no answer frame on the wire");
+		expectReferencesResolve(answerFrame.text, items.slice(frame + 1));
 		expect(textsOf(items.slice(frame, frame + 1))[0]).not.toContain(COMMENT);
 		const forkable = harness.session.getUserMessagesForForking().map((message) => message.text);
 		expect(forkable).toContain(
