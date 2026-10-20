@@ -3052,11 +3052,12 @@ The shared markdown theme and the tool card's renderer are interactive-mode inte
 ### Expected merge conflict zones
 
 - LOW: `sharedMarkdownTheme()` in `theme.ts`; the theme imports and default arguments of the seven message components; `releaseContent()` in `tool-execution-renderer.ts`.
+
 ## 2026-10-20 - Session-control RPC recognizes paused notice custody (senpi#3811)
 
 ### What changed
 
-`session-control-rpc-commands.ts` maps `notice_persisted` to a queued delivery acknowledgment. In `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, `/resume` resumes the current run when paused and otherwise retains its session-picker behavior; `/sessions` always opens the picker.
+- `session-control-rpc-commands.ts` maps `notice_persisted` to a queued delivery acknowledgment. In `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, `/resume` resumes the current run when paused and otherwise retains its session-picker behavior; `/sessions` always opens the picker.
 
 ### Why
 

@@ -7003,11 +7003,12 @@ Capability advertisement is core RPC.
 ### Expected merge conflict zones
 
 The classic capability list in `connection-handler.ts`.
+
 ## 2026-10-20 - RPC reports engine pause and the held-notice count (senpi#3811)
 
 ### What changed
 
-`rpc-session-state.ts` projects `paused` and `pausedNoticeCount` from the engine; `packages/coding-agent/src/modes/rpc/rpc-types.ts` declares the additive fields. The shared session event stream carries pause changes and persisted/consumed notice receipts.
+- `rpc-session-state.ts` projects `paused` and `pausedNoticeCount` from the engine; `packages/coding-agent/src/modes/rpc/rpc-types.ts` declares the additive fields. The shared session event stream carries pause changes and persisted/consumed notice receipts.
 
 ### Why
 

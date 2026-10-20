@@ -11158,11 +11158,12 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 - `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
 - `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.
+
 ## 2026-10-20 - Stop holds automatic turns as persisted notices (senpi#3811)
 
 ### What changed
 
-`packages/coding-agent/src/core/agent-session.ts` owns the pause and the `_admitSessionTurn` gate for prompts, custom triggers, external deliveries and scheduled continuations. `session-pause.ts` rebuilds pause and unconsumed notices from session history; `packages/coding-agent/src/core/session-manager.ts` persists a Stop even before the first turn. Accepted human input or `/resume` releases the pause. Notice receipts separate persistence from model consumption, and notices survive branch navigation. `packages/coding-agent/src/core/slash-commands.ts` describes the paused-run action and preserves `/sessions` for browsing history.
+- `packages/coding-agent/src/core/agent-session.ts` owns the pause and the `_admitSessionTurn` gate for prompts, custom triggers, external deliveries and scheduled continuations. `session-pause.ts` rebuilds pause and unconsumed notices from session history; `packages/coding-agent/src/core/session-manager.ts` persists a Stop even before the first turn. Accepted human input or `/resume` releases the pause. Notice receipts separate persistence from model consumption, and notices survive branch navigation. `packages/coding-agent/src/core/slash-commands.ts` describes the paused-run action and preserves `/sessions` for browsing history.
 
 ### Why
 

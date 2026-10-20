@@ -3742,11 +3742,12 @@ Only the session owns account suppression and pending model selection.
 ### Expected merge conflict zones
 
 The compaction context/action declarations in `types.ts` and callback storage, binding, and context construction in `runner.ts`.
+
 ## 2026-10-20 - Extensions read the engine pause and receive persistence receipts (senpi#3811)
 
 ### What changed
 
-`packages/coding-agent/src/core/extensions/runner.ts` exposes the session's `isPaused()` reader. `packages/coding-agent/src/core/extensions/types.ts` adds persistence callbacks to `sendMessage` and a human-command-only resume action. `session-control-types.ts` distinguishes paused notice custody from emitted delivery.
+- `packages/coding-agent/src/core/extensions/runner.ts` exposes the session's `isPaused()` reader. `packages/coding-agent/src/core/extensions/types.ts` adds persistence callbacks to `sendMessage` and a human-command-only resume action. `session-control-types.ts` distinguishes paused notice custody from emitted delivery.
 
 ### Why
 

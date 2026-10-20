@@ -2022,11 +2022,12 @@ final clear render. A later `sync()` with a live ctx re-arms them. Covered by
 ### Expected merge conflict zones
 
 - LOW: `cache-warm.ts` backstop constants and metrics function, the delay expression in `monitor-continuation.ts` `#schedule()`, the `warmLine()` branch in `cache-warm-renderer.ts`, and `parseCache()` in `parked-wait.ts`.
+
 ## 2026-10-20 - User Stop pauses a goal until accepted human input (senpi#3811)
 
 ### What changed
 
-User abort transitions the goal to `paused`, displayed as `Paused: resume to continue`. Startup continuation consults engine pause; accepted human input and `/goal resume` reactivate the goal through the shared engine state.
+- User abort transitions the goal to `paused`, displayed as `Paused: resume to continue`. Startup continuation consults engine pause; accepted human input and `/goal resume` reactivate the goal through the shared engine state.
 
 ### Why
 
