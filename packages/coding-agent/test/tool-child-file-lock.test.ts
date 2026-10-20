@@ -1,6 +1,7 @@
 // senpi#3566 todo 7: drain-before-release file locks across two sessions' tool children. A lock is the file's slot in
 // the session's mutation queue; it passes on only after the holder's write is done (or its child is gone), never on a
 // cancel.
+import { execFileSync } from "node:child_process";
 import { existsSync, watch } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -90,11 +91,13 @@ describe.skipIf(process.platform === "win32")("tool child file locks", () => {
 		const file = join(work, "shared.txt");
 		await writeFile(file, "");
 		const held = join(work, "a-held");
+		// A FIFO, not a watched file: macOS can deliver a directory-watch event after the cancel grace, or never (#3836).
 		const gate = join(work, "a-gate");
+		execFileSync("mkfifo", [gate]);
 		const cancelA = new AbortController();
 		const runA = a.client.run(
 			"module",
-			{ modulePath, export: "appendWhenGated", args: { file, line: "A", held, gate } },
+			{ modulePath, export: "appendWhenFifoOpens", args: { file, line: "A", held, gate } },
 			cancelA.signal,
 		);
 		void runA.catch(() => undefined);
@@ -102,7 +105,7 @@ describe.skipIf(process.platform === "win32")("tool child file locks", () => {
 		cancelA.abort();
 		const runB = b.client.run("module", { modulePath, export: "appendLocked", args: { file, line: "B" } });
 		expect(await settlesWithin(runB, 500)).toBe(false);
-		await writeFile(gate, "");
+		await writeFile(gate, "go");
 		expect(await runB).toBe("A\nB\n");
 	}, 60_000);
 
