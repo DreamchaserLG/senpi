@@ -1,3 +1,21 @@
+## 2026-10-20 - An ask-user answer is delivered ahead of input queued before it (senpi#3785)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `QueuedInputOptions.ahead`, `PromptOptions.ahead` and `sendUserMessage`'s `ahead` option queue a message before the input already waiting: the native queue, the text mirror and the post-compaction deferral are all prepended, and its `enqueueOrder` sorts before every queued input (`_orderAheadOfQueued`).
+
+### Why
+
+An answer to an asynchronous question arrived as a steer appended behind messages the user queued earlier, so the model acted on them before getting the answer it had asked for.
+
+### Why an extension could not handle it
+
+The ask-user builtin can only submit through `sendUserMessage`; queue placement is owned by `AgentSession`.
+
+### Expected merge conflict zones
+
+- LOW: `_enqueuePreparedInput` and `sendUserMessage` in `agent-session.ts`, plus one field in each options type.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

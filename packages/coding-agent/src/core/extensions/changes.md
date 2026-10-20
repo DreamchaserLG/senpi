@@ -1,3 +1,21 @@
+## 2026-10-20 - `sendUserMessage` can queue ahead of earlier input (senpi#3785)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the `sendUserMessage` options (`ExtensionAPI`, `ReplacedSessionContext`, `SendUserMessageHandler`) gain `ahead?: boolean`, which queues the message before the input already waiting.
+
+### Why
+
+An answer the agent asked for (an asynchronous ask-user answer) must reach the model before messages the user queued meanwhile.
+
+### Why an extension could not handle it
+
+The option is the public surface the ask-user builtin delivers its answer through.
+
+### Expected merge conflict zones
+
+- LOW: three `sendUserMessage` option literals in `types.ts`.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

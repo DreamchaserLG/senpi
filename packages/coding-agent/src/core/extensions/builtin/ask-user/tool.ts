@@ -70,8 +70,10 @@ export function deliverAnswer(
 	variant: "codex" | "claude",
 ): void {
 	if (response.status === "cancelled") return;
+	// The agent asked for this answer: it goes ahead of anything the user queued meanwhile (senpi#3785).
 	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions, request.required === true), {
 		deliverAs: ctx.isIdle() ? "followUp" : "steer",
+		ahead: true,
 	});
 	void emitAskUserNotification(pi, ctx, request, response, variant);
 }

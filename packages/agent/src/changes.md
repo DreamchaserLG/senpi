@@ -1,3 +1,21 @@
+## 2026-10-20 - An answer the agent asked for can queue ahead of earlier input (senpi#3785)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `Agent.steer` and `Agent.followUp` take `{ ahead?: boolean }`; `ahead` prepends the message to its queue instead of appending it.
+
+### Why
+
+An asynchronous ask-user answer was appended behind messages the user queued before it, so the model received those messages first.
+
+### Why an extension could not handle it
+
+The steering and follow-up queues are private to `Agent`; only it can place a message ahead of the queued ones.
+
+### Expected merge conflict zones
+
+- LOW: the `steer` / `followUp` method bodies in `agent.ts`.
+
 ## 2026-10-17 - Queued input's consumption is committed before a provider sees it (senpi#3549)
 
 ### What changed

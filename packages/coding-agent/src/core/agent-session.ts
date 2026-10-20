@@ -1044,6 +1044,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	source?: InputSource;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
+	/** Queue ahead of the input already waiting, as an answer the agent asked for is (senpi#3785). */
+	ahead?: boolean;
 }
 
 export interface PromptOptions extends ClientMessageIdentity {
@@ -1057,6 +1059,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	textBlocks?: readonly string[];
 	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
 	streamingBehavior?: "steer" | "followUp";
+	/** If the message ends up queued, it goes ahead of the input already waiting (senpi#3785). */
+	ahead?: boolean;
 	/** Session-only thinking level applied before starting this prompt. */
 	thinkingLevel?: ThinkingLevel;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
@@ -6048,7 +6052,8 @@ export class AgentSession {
 			Omit<PreparedClientInput, "enqueueOrder"> &
 			Pick<PromptOptions, "textBlocks"> & { readonly queuedId?: string },
 	): void {
-		const enqueueOrder = input.enqueueOrder ?? this.reserveQueuedInputOrder();
+		const ahead = input.ahead === true;
+		const enqueueOrder = input.enqueueOrder ?? (ahead ? this._orderAheadOfQueued() : this.reserveQueuedInputOrder());
 		const prepared = {
 			...clientMessageIdentity(input),
 			text: input.text,
@@ -6058,7 +6063,8 @@ export class AgentSession {
 		};
 		input.onQueuedInput?.(prepared);
 		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
-		queue.push(input.text);
+		if (ahead) queue.unshift(input.text);
+		else queue.push(input.text);
 		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared, undefined, input.queuedId);
 		this._sessionLogger.debug("queue_enqueue", {
 			mode: input.mode,
@@ -6080,11 +6086,12 @@ export class AgentSession {
 				input.mode === "steer"
 					? this._postCompactionDeferredSteeringMessages
 					: this._postCompactionDeferredFollowUpMessages;
-			deferred.push(message);
+			if (ahead) deferred.unshift(message);
+			else deferred.push(message);
 		} else if (input.mode === "steer") {
-			this.agent.steer(message);
+			this.agent.steer(message, { ahead });
 		} else {
-			this.agent.followUp(message);
+			this.agent.followUp(message, { ahead });
 		}
 		// Announce the input only once it is queued everywhere, so a listener can already change it by queuedId.
 		this._emitQueueUpdate();
@@ -6388,12 +6395,14 @@ export class AgentSession {
 	 * @param content User message content (string or content array)
 	 * @param options.deliverAs Delivery mode when streaming: "steer" or "followUp"
 	 * @param options.expandPromptTemplates Whether to dispatch extension commands and expand skill commands and prompt templates. Default: false.
+	 * @param options.ahead If the message is queued, it goes ahead of the input already waiting (senpi#3785).
 	 */
 	async sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
 		options?: {
 			deliverAs?: "steer" | "followUp";
 			expandPromptTemplates?: boolean;
+			ahead?: boolean;
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
@@ -6445,6 +6454,7 @@ export class AgentSession {
 			await this.prompt(text, {
 				expandPromptTemplates: options?.expandPromptTemplates ?? false,
 				streamingBehavior: options?.deliverAs,
+				...(options?.ahead ? { ahead: true } : {}),
 				images,
 				textBlocks,
 				source: "extension",
@@ -6465,10 +6475,11 @@ export class AgentSession {
 			// Extension bindings invoke this method fire-and-forget, so a rejection
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
+				const retained = { textBlocks, ...(options?.ahead ? { ahead: true } : {}) };
 				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images, { textBlocks });
+					await this._queueSteer(text, images, retained);
 				} else {
-					await this._queueFollowUp(text, images, { textBlocks });
+					await this._queueFollowUp(text, images, retained);
 				}
 			}
 			throw error;
@@ -6479,6 +6490,12 @@ export class AgentSession {
 			resolveBindingPromptReadiness?.();
 			finishSessionWork?.();
 		}
+	}
+
+	/** An order that sorts before every input still queued, for input that goes ahead of it. */
+	private _orderAheadOfQueued(): number {
+		if (this._queuedInputOrder.length === 0) return this.reserveQueuedInputOrder();
+		return Math.min(...this._queuedInputOrder.map((input) => input.enqueueOrder)) - 1;
 	}
 
 	/** Reserve a global order for input temporarily owned outside the native queues. */

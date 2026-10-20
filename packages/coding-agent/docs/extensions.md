@@ -2038,6 +2038,9 @@ pi.sendUserMessage([
 pi.sendUserMessage("Focus on error handling", { deliverAs: "steer" });
 pi.sendUserMessage("And then summarize", { deliverAs: "followUp" });
 
+// Queue ahead of the input already waiting (an answer the agent asked for)
+pi.sendUserMessage(answerText, { deliverAs: "steer", ahead: true });
+
 // Opt in to extension command dispatch and skill/prompt template expansion
 pi.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
 ```

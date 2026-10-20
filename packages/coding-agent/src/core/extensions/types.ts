@@ -794,7 +794,7 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
 
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean; ahead?: boolean },
 	): Promise<void>;
 }
 
@@ -2562,10 +2562,11 @@ export interface ExtensionAPI {
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
 	 * Set expandPromptTemplates to dispatch extension commands and expand skill commands and prompt templates.
 	 * From a command handler, send before the handler returns: text sent after it returned is not held behind the user's input.
+	 * Set ahead to queue the message before the input already waiting (an answer the agent asked for, senpi#3785).
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean; ahead?: boolean },
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
@@ -2994,7 +2995,7 @@ export type SendMessageHandler = <T = unknown>(
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
-	options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+	options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean; ahead?: boolean },
 ) => void;
 
 export interface AppendEntryOptions {

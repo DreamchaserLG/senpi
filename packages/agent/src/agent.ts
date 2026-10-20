@@ -418,14 +418,19 @@ export class Agent {
 		return this.followUpQueue.mode;
 	}
 
-	/** Queue a message to be injected after the current assistant turn finishes. */
-	steer(message: AgentMessage): void {
-		this.steeringQueue.enqueue(message);
+	/**
+	 * Queue a message to be injected after the current assistant turn finishes. `ahead` puts it before
+	 * the messages already queued (an answer the agent asked for, senpi#3785).
+	 */
+	steer(message: AgentMessage, options?: { readonly ahead?: boolean }): void {
+		if (options?.ahead) this.steeringQueue.prepend([message]);
+		else this.steeringQueue.enqueue(message);
 	}
 
-	/** Queue a message to run only after the agent would otherwise stop. */
-	followUp(message: AgentMessage): void {
-		this.followUpQueue.enqueue(message);
+	/** Queue a message to run only after the agent would otherwise stop; `ahead` as for `steer`. */
+	followUp(message: AgentMessage, options?: { readonly ahead?: boolean }): void {
+		if (options?.ahead) this.followUpQueue.prepend([message]);
+		else this.followUpQueue.enqueue(message);
 	}
 
 	/** Remove one queued steering or follow-up message by identity; false once it was drained into a turn. */
