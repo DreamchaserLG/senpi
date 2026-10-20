@@ -4646,7 +4646,7 @@ Emitted when an extension throws an error.
 
 Logins are fire-command-then-subscribe: the command answers as soon as the flow has started, and the URL plus the terminal result arrive as events.
 
-- `login_start` `{provider}`: responds immediately with `success: true` (flow started). A second `login_start` for the same provider aborts the earlier attempt.
+- `login_start` `{provider, accountName?}`: responds immediately with `success: true` (flow started). A second `login_start` for the same provider aborts the earlier attempt. With `accountName`, the login re-authenticates that saved account in place (its credential is replaced and its block no longer applies); without it a new account is added. An `accountName` that is not a valid account name (letters, digits, `-`, `_`, starting with a letter or digit, at most 64) is refused with an error response.
 - `auth_login_url` `{provider, url}`: the URL (or device-code verification URL) the user must open.
 - `auth_login_end` `{provider, success, error?}`: exactly one per login; `error` is a non-secret message.
 - `login_cancel` `{provider}`: aborts the in-flight login; the client then sees `auth_login_end` with `success: false`.

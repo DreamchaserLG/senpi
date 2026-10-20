@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- RPC `login_start` takes an optional `accountName`: a login for a saved account re-authenticates that account in place (new tokens, block cleared) for every OAuth provider instead of saving a new `login-N` ([#3841](https://github.com/code-yeongyu/senpi/issues/3841)).
+
 ### Removed
 
 ## [2026.10.20-1] - 2026-10-20

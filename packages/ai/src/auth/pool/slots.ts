@@ -31,6 +31,10 @@ export type PooledCredential = Credential & {
 
 const SLOT_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 
+export function isValidSlotName(name: string): boolean {
+	return SLOT_NAME_PATTERN.test(name);
+}
+
 export function assertValidSlotName(name: string): void {
 	if (!SLOT_NAME_PATTERN.test(name)) {
 		throw new Error(
@@ -368,8 +372,12 @@ export function appendLoginSlot(
 	current: PooledCredential | undefined,
 	flat: Credential,
 	onAllocated?: (name: string, origin: "generated" | "provider") => void,
+	targetName?: string,
 ): Credential {
 	const provided = providedSlots(flat);
+	// senpi#3841: a login started FOR a saved account ("Reconnect office") refreshes that slot in place for every
+	// provider, not only the ones that ask "Name for this account". A provider-owned pool already names its slots.
+	if (targetName !== undefined && !provided) return writeTargetSlot(current, flat, targetName, onAllocated);
 	if (provided) {
 		// Provider-owned envelopes identify an addition by immutable ID, never by
 		// token equality or array position. Ambiguous envelopes have no receipt.
@@ -395,6 +403,33 @@ export function appendLoginSlot(
 	const next = upsertSlot(current, slotFromFlatCredentialNamed(flat, name));
 	onAllocated?.(name, "generated");
 	return next;
+}
+
+/**
+ * Writes a login's material into the named slot, REPLACING that slot whole (fresh tokens, no stale fields), or
+ * adds it under that name when the pool has no such slot. Account blocks live in the pool state keyed by the slot's
+ * credential revision, so new material makes the old block inapplicable: the account is usable again.
+ */
+function writeTargetSlot(
+	current: PooledCredential | undefined,
+	flat: Credential,
+	targetName: string,
+	onAllocated?: (name: string, origin: "generated" | "provider") => void,
+): Credential {
+	assertValidSlotName(targetName);
+	const slot = slotFromFlatCredentialNamed(flat, targetName);
+	if (!current) {
+		onAllocated?.(targetName, "generated");
+		return upsertSlot(undefined, slot);
+	}
+	const existing = listSlots(current);
+	const replaced = existing.find((candidate) => candidate.name === targetName);
+	const accounts = replaced
+		? existing.map((candidate) => (candidate.name === targetName ? slot : candidate))
+		: [...existing, slot];
+	const reprojected = replaced && slotMirrorsFlat(current, replaced) ? projectFlatFields(current, slot) : current;
+	onAllocated?.(targetName, "generated");
+	return { ...reprojected, accounts };
 }
 
 /**

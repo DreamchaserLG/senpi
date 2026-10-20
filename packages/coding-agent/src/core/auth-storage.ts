@@ -19,6 +19,7 @@ import type {
 import { findEnvKeys, getEnvApiKey, readByProviderId } from "@earendil-works/pi-ai";
 import {
 	appendLoginSlot,
+	assertValidSlotName,
 	type CredentialSlot,
 	listSlots,
 	type PooledCredential,
@@ -625,10 +626,11 @@ export class AuthStorage implements CredentialStore {
 		return credential?.type === "api_key" && credential.env ? { ...credential.env } : undefined;
 	}
 
-	set(provider: string, credential: Credential): void {
+	/** `accountName` (senpi#3841): write this login into that saved account, replacing its material, not a new `login-N`. */
+	set(provider: string, credential: Credential, accountName?: string): void {
 		this.storage.withLock((content) => {
 			const currentData = this.parseStorageData(content);
-			const next = appendLoginSlot(currentData[provider], credential);
+			const next = appendLoginSlot(currentData[provider], credential, undefined, accountName);
 			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
@@ -868,7 +870,12 @@ export class AuthStorage implements CredentialStore {
 		return [...dynamic, ...builtin];
 	}
 
-	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
+	async login(
+		providerId: string,
+		callbacks: OAuthLoginCallbacks,
+		options?: { readonly accountName?: string },
+	): Promise<void> {
+		if (options?.accountName !== undefined) assertValidSlotName(options.accountName);
 		const oauth =
 			this.extensionOAuthProviders.get(providerId) ??
 			builtinProviders().find((provider) => provider.id === providerId)?.auth.oauth;
@@ -880,7 +887,7 @@ export class AuthStorage implements CredentialStore {
 			notify: (event) => this.handleLegacyEvent(event, callbacks),
 		};
 		const credential = await oauth.login(interaction);
-		this.set(providerId, credential);
+		this.set(providerId, credential, options?.accountName);
 	}
 
 	logout(provider: string): void {

@@ -1,3 +1,23 @@
+## 2026-10-20 - login_start accepts accountName (senpi#3841)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `login_start` gains an optional `accountName`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `login_start` rejects an `accountName` that is not a valid slot name (error response) and passes a valid one to `AuthStorage.login`, so that saved account is re-authenticated in place.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: clients (the OmO desktop's Reconnect) named the account only by answering a provider-specific "Name for this account" prompt, which most OAuth providers never show; a structured parameter works for every provider (senpi#3841).
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the wire type for that parameter.
+
+### Why an extension could not handle it
+
+- `login_start` is an RPC host command, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-handler.ts` `startLogin` and the `login_start` case; `packages/coding-agent/src/modes/rpc/rpc-types.ts` the `login_start` variant.
+
 ## 2026-10-19 - Removing a dead generation also ends its unproven session claims, behind the write fence (senpi#3658)
 
 ### What changed

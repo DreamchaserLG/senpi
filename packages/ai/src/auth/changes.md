@@ -1,3 +1,21 @@
+## 2026-10-20 - A login for a saved account refreshes that account in place (senpi#3841)
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot(current, flat, onAllocated?, targetName?)`. With `targetName` and no provider-owned pool, the new `writeTargetSlot` writes the login into the slot named `targetName`, REPLACING it whole, or appends it under that name when the pool has none; the flat projection follows when the replaced slot was the one it mirrored. Without `targetName` nothing changes (a new `login-N`). New `isValidSlotName`.
+
+### Why
+
+- `packages/ai/src/auth/pool/slots.ts`: re-authenticating a saved account ("Reconnect office") for a provider that does not ask "Name for this account" (OpenAI subscription and every other non-Anthropic, non-Cursor OAuth provider) always added a new `login-N` and left the blocked account behind (sisyphuslabs/omo-desktop-app report, senpi#3841). Account blocks are kept per credential revision, so new material makes the old block inapplicable.
+
+### Why an extension could not handle it
+
+- Slot writes are the credential pool's own storage path; no extension hook sees them.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/auth/pool/slots.ts` `appendLoginSlot` head and the new `writeTargetSlot` before `managedSentinelMaterial`.
+
 ## 2026-10-09 - Restore auth-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed

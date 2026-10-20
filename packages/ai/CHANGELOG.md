@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `appendLoginSlot` takes an optional target account name and refreshes that slot in place; `isValidSlotName` is exported ([#3841](https://github.com/code-yeongyu/senpi/issues/3841)).
+
 ### Removed
 
 ## [2026.10.20-1] - 2026-10-20

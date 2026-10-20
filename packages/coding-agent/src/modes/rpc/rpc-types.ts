@@ -289,7 +289,8 @@ type RpcSessionCommand =
 	// completion is delivered via auth_login_url / auth_login_end EVENTS, because
 	// an interactive OAuth round-trip cannot fit the 30s request timeout.
 	| { id?: string; type: "get_auth_providers" }
-	| { id?: string; type: "login_start"; provider: string }
+	// accountName (senpi#3841): re-authenticate this saved account in place instead of adding a new one.
+	| { id?: string; type: "login_start"; provider: string; accountName?: string }
 	| { id?: string; type: "login_cancel"; provider: string }
 	| { id?: string; type: "login_api_key"; provider: string; key: string }
 	| { id?: string; type: "logout"; provider: string }

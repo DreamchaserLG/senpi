@@ -1,3 +1,21 @@
+## 2026-10-20 - AuthStorage.login takes the account to re-authenticate (senpi#3841)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `login(providerId, callbacks, options?: { accountName })` validates the name before the login runs and `set(provider, credential, accountName?)` writes into that account through `appendLoginSlot`'s target path.
+
+### Why
+
+- `packages/coding-agent/src/core/auth-storage.ts`: the RPC login (desktop Reconnect) had no way to say which saved account it repairs, so every non-Anthropic/Cursor provider saved a duplicate `login-N` (senpi#3841).
+
+### Why an extension could not handle it
+
+- The RPC login path calls `AuthStorage.login` directly; extensions cannot change where its result is written.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/auth-storage.ts` `set` and `login` signatures.
+
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 
 ### What changed

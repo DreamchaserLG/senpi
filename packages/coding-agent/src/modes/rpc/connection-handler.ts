@@ -1,3 +1,4 @@
+import { isValidSlotName } from "@earendil-works/pi-ai/auth/pool/slots";
 import {
 	isHostOwnedToolRuntimeCapability,
 	type ToolRuntimeKind,
@@ -919,7 +920,7 @@ export function createRpcConnectionHandler(
 	 * text/option labels, and a success flag (plus a non-secret error message)
 	 * cross the wire; a client's answer is consumed in-process.
 	 */
-	const startLogin = async (provider: string): Promise<void> => {
+	const startLogin = async (provider: string, accountName?: string): Promise<void> => {
 		// A second login_start for the same provider aborts the prior attempt.
 		activeLogins.get(provider)?.abort();
 		const controller = new AbortController();
@@ -938,7 +939,7 @@ export function createRpcConnectionHandler(
 				...createRpcLoginPromptCallbacks(createExtensionUIContext(), loginSignal),
 				onProgress: () => {},
 				signal: controller.signal,
-			});
+			}, accountName === undefined ? undefined : { accountName });
 			session.modelRegistry.refresh();
 			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
 			outputEvent({ type: "auth_login_end", provider, success: true });
@@ -1775,7 +1776,13 @@ export function createRpcConnectionHandler(
 				// URL and terminal result are delivered via auth_login_url /
 				// auth_login_end events, because an interactive OAuth round-trip
 				// cannot fit within the request timeout.
-				void startLogin(command.provider);
+				// senpi#3841: a login FOR a saved account refreshes that account in place (any OAuth provider).
+				if (command.accountName !== undefined) {
+					if (typeof command.accountName !== "string" || !isValidSlotName(command.accountName)) {
+						return error(id, "login_start", `Invalid accountName: ${String(command.accountName).slice(0, 80)}`);
+					}
+				}
+				void startLogin(command.provider, command.accountName);
 				return success(id, "login_start");
 			}
 
