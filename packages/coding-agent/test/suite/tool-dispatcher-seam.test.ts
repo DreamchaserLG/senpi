@@ -236,13 +236,22 @@ describe("ToolDispatcher seam (senpi#3566 todo 2)", () => {
 		}
 	});
 
-	it("stub: executeBash without an override fails closed under the child runtime", async () => {
+	// Since #3566 todo 9 a child session's user bash runs on its tool child (test/suite/user-bash-tool-child.test.ts);
+	// fail-closed remains the contract only for a child dispatcher that has no tool child wired.
+	it("child bash operations without a tool child fail closed with tool_runtime_unavailable", async () => {
+		const operations = createToolDispatcher({ runtime: "child" }).bashOperations();
+		await expect(operations.exec("echo nope", tmpdir(), { onData: () => {} })).rejects.toThrow(
+			/tool_runtime_unavailable/,
+		);
+	});
+
+	it("executeBash under the child runtime uses an explicit operations override as given", async () => {
 		const harness = await createHarness({ toolRuntime: "child" });
 		try {
-			await expect(harness.session.executeBash("echo nope")).rejects.toThrow(/tool_runtime_unavailable/);
 			const operations = fakeBashOperations("still-pinned-ran\n");
 			const pinned = await harness.session.executeBash("sentinel", undefined, { operations });
 			expect(pinned.output).toBe("still-pinned-ran\n");
+			expect(operations.commands).toEqual(["sentinel"]);
 		} finally {
 			harness.cleanup();
 		}
