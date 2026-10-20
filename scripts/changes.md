@@ -1,3 +1,21 @@
+## 2026-10-19 - The bundle ships the RPC host supervisor as its own program (senpi#3743)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: a third esbuild pass emits `packages/coding-agent/dist/modes/rpc/host-supervisor-entry.js` self-contained (splitting off) as `dist/bundle/host-supervisor.js` beside `cli.js`; its metafile joins the external-import check, the runtime manifest hash and the size summary.
+
+### Why
+
+- `scripts/build-coding-agent-bundle.mjs`: a bundled supervisor started through `cli.js` kept the whole CLI graph resident (69-71 MB per supervisor against 8.5 MB for its own graph), and the desktop runs one per thread host (omo-desktop-app#3359).
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs`: the bundle layout is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs`: the input check list and the end of `buildBundle`.
+
 ## 2026-10-19 - Release commands that read large output no longer fail with ENOBUFS
 
 ### What changed

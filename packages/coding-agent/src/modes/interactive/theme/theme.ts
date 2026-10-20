@@ -1093,7 +1093,32 @@ export function getLanguageFromPath(filePath: string): string | undefined {
 	return extToLang[ext];
 }
 
+/**
+ * One markdown theme per active `Theme`. A new object per message cost about 640 bytes for each mounted message
+ * (#2537). It is rebuilt when the theme switches, because Markdown's render cache keys on the theme object's
+ * identity: reusing one object across a switch would serve lines colored for the old theme.
+ */
+let sharedMarkdownThemeEntry: { readonly for: Theme; readonly markdown: MarkdownTheme } | undefined;
+
+/** A new markdown theme object, as before: extensions may customize their copy. */
 export function getMarkdownTheme(): MarkdownTheme {
+	return createMarkdownTheme();
+}
+
+/**
+ * The markdown theme the built-in message components share: one frozen object per active `Theme`, so a mounted
+ * message does not hold its own copy. Not exported from the package; extensions call `getMarkdownTheme()`.
+ */
+export function sharedMarkdownTheme(): MarkdownTheme {
+	const active = (globalThis as Record<symbol, Theme>)[THEME_KEY];
+	if (active === undefined) return createMarkdownTheme();
+	if (sharedMarkdownThemeEntry?.for !== active) {
+		sharedMarkdownThemeEntry = { for: active, markdown: Object.freeze(createMarkdownTheme()) };
+	}
+	return sharedMarkdownThemeEntry.markdown;
+}
+
+function createMarkdownTheme(): MarkdownTheme {
 	return {
 		heading: (text: string) => theme.fg("mdHeading", text),
 		link: (text: string) => theme.fg("mdLink", text),

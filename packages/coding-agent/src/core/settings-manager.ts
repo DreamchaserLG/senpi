@@ -72,6 +72,7 @@ import {
 	ASK_USER_MAX_TIMEOUT_MINUTES,
 	ASK_USER_MIN_TIMEOUT_MINUTES,
 	type AskUserSettings,
+	type HandoffHintSettings,
 	type ImageSettings,
 	type LookAtSettings,
 	type MarkdownSettings,
@@ -239,6 +240,7 @@ export interface Settings {
 	maxSkillExpansionsPerPrompt?: number; // default: 5 - distinct skills one prompt may expand
 	terminal?: TerminalSettings;
 	promptCache?: PromptCacheSettings;
+	handoffHint?: HandoffHintSettings;
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;

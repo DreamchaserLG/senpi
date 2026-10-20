@@ -8,7 +8,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { TOOL_CHILD_CHANNEL_ENV, TOOL_CHILD_ROLE_ENV, TOOL_CHILD_SECRET_ENV } from "./channel.ts";
 import { ToolChildClient } from "./client.ts";
 import { TOOL_CHILD_GENERATION_ENV } from "./entry.ts";
-import { TOOL_CHILD_INTERNAL_ENV, TOOL_CHILD_LEDGER_ENV, TOOL_CHILD_REENTRY_ENV } from "./launch-env-names.ts";
+import {
+	TOOL_CHILD_INTERNAL_ENV,
+	TOOL_CHILD_LEDGER_ENV,
+	TOOL_CHILD_REENTRY_ENV,
+	TOOL_CHILD_REFS_ROOT_ENV,
+} from "./launch-env-names.ts";
 import { TOOL_CHILD_MODULE_ROOTS_ENV } from "./module-job.ts";
 
 const resolver = pathToFileURL(resolve(import.meta.dirname, "../../../experimental/source-resolver.ts")).href;
@@ -28,6 +33,7 @@ describe("tool-child internal environment", () => {
 				TOOL_CHILD_GENERATION_ENV,
 				TOOL_CHILD_LEDGER_ENV,
 				TOOL_CHILD_MODULE_ROOTS_ENV,
+				TOOL_CHILD_REFS_ROOT_ENV,
 				// senpi#3590 review MEDIUM 2: launch.ts sets it, so the child scrubs it too.
 				TOOL_CHILD_REENTRY_ENV,
 			].sort(),

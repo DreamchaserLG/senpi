@@ -52,6 +52,7 @@ describe("multi-session RPC protocol info", () => {
 					"permission_preset_accept_edits",
 					"permission_preset_auto",
 					"tool_runtime:in-process",
+					"offload_api",
 				],
 				mode: "multi",
 				// Host identity (`protocol-identity.ts`): the instance is this process, the

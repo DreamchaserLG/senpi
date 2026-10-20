@@ -47,7 +47,30 @@ const V41_FLASH_MODEL_IDS: ReadonlyArray<readonly [id: string, provider: string]
 	["deepseek/deepseek-v4.1-flash-1017", "openrouter"],
 	["deepseek/deepseek-v4.1-flash-1017", "vercel-ai-gateway"],
 	["deepseek/deepseek-v4.1-flash-1017", "kilo"],
-	["deepseek-ai/DeepSeek-V4.1-Flash-1017", "huggingface"],
+	["deepseek-ai/DeepSeek-V4.1-Flash-1017", "baseten"],
+];
+
+// Every shipped catalog row of the 1017 snapshot, read from the catalogs themselves (id or display name),
+// so a row added later is checked without editing this file.
+const SNAPSHOT_1017 = /v4[.p -]?1[- ]flash[- (]+1017/i;
+const SHIPPED_1017_ROWS: ReadonlyArray<readonly [provider: string, id: string, model: Model<Api>]> =
+	getProviders().flatMap((provider) =>
+		(getModels(provider) as Model<Api>[])
+			.filter((model) => SNAPSHOT_1017.test(`${model.id} ${model.name}`))
+			.map((model) => [provider, model.id, model] as const),
+	);
+
+// Rows known to ship on 2026-10-20; removing one from its catalog must fail the suite.
+const KNOWN_1017_ROWS: ReadonlyArray<readonly [provider: string, id: string]> = [
+	["baseten", "deepseek-ai/DeepSeek-V4.1-Flash-1017"],
+	["baseten", "deepseek-ai/DeepSeek-V4.1-Flash-1017-Fast"],
+	["fireworks", "accounts/fireworks/models/deepseek-v4p1-flash-1017"],
+	["opengateway", "deepseek/deepseek-flash"],
+	["openrouter", "deepseek/deepseek-v4.1-flash-1017"],
+	["qwen-token-plan-cn", "deepseek-v4.1-flash-1017"],
+	["venice", "deepseek-v4-1-flash-1017"],
+	["vercel-ai-gateway", "deepseek/deepseek-v4.1-flash-1017"],
+	["vercel-ai-gateway", "deepseek/deepseek-v4.1-flash-1017-fast"],
 ];
 
 // The official API retired V4 Flash on 2026-09-10 and serves these names with V4.1 Flash.
@@ -162,20 +185,17 @@ describe("DeepSeek V4.1 Flash prompt preset", () => {
 		expect(misses).toEqual([]);
 	});
 
-	it.each(["openrouter", "vercel-ai-gateway"] as const)(
-		"ships the 1017 snapshot row on %s on the V4.1 preset",
-		(provider) => {
-			// given
-			const model = (getModels(provider) as Model<Api>[]).find(
-				(candidate) => candidate.id === "deepseek/deepseek-v4.1-flash-1017",
-			);
+	it.each(SHIPPED_1017_ROWS)("ships the 1017 snapshot row on %s (%s) on the V4.1 preset", (_provider, _id, model) => {
+		// then
+		expect(model.reasoning).toBe(true);
+		expect(model.input).toContain("image");
+		expect(resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
+	});
 
-			// then
-			expect(model?.reasoning).toBe(true);
-			expect(model?.input).toContain("image");
-			expect(model && resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
-		},
-	);
+	it.each(KNOWN_1017_ROWS)("still ships the 1017 snapshot row on %s (%s)", (provider, id) => {
+		// then
+		expect(SHIPPED_1017_ROWS.some(([p, i]) => p === provider && i === id)).toBe(true);
+	});
 });
 
 describe("DeepSeek V4.1 Flash prompt content", () => {

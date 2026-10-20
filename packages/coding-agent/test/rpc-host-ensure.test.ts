@@ -747,11 +747,25 @@ describe("defaultHostLaunch", () => {
 		// standalone program the unbundled tree ships: run directly it returns without ever
 		// listening, so ensure reported "exited with code 0 before answering
 		// get_protocol_info" with an empty stderr log. An undefined sibling is that layout.
-		const launch = defaultHostLaunch(["--socket", "/tmp/qa.sock", "--provider", "mock"], false, null);
+		const launch = defaultHostLaunch(["--socket", "/tmp/qa.sock", "--provider", "mock"], false, null, null);
 		expect(launch.command).toBe(process.execPath);
 		expect(launch.args).toContain("--internal-rpc-host-supervisor");
 		expect(launch.args.some((arg) => arg.endsWith("host-lifecycle.js"))).toBe(false);
 		expect(launch.args.slice(-4)).toEqual(["--socket", "/tmp/qa.sock", "--provider", "mock"]);
+	});
+
+	it("starts the bundle's own supervisor program instead of the whole CLI when it exists (senpi#3743)", () => {
+		const supervisor = "/opt/senpi/dist/bundle/host-supervisor.js";
+		const launch = defaultHostLaunch(["--socket", "/tmp/qa.sock", "--provider", "mock"], false, null, supervisor);
+		expect(launch.command).toBe(process.execPath);
+		expect(launch.args.slice(process.execArgv.length)).toEqual([
+			supervisor,
+			"--internal-rpc-host-supervisor",
+			"--socket",
+			"/tmp/qa.sock",
+			"--provider",
+			"mock",
+		]);
 	});
 
 	it("re-enters through the host-lifecycle script outside compiled binaries", () => {

@@ -476,6 +476,27 @@ A foreground `bash` command still running at the budget is handed to a live back
 instead of being killed; its explicit `timeout` remains the kill deadline. See
 `terminal.timeoutAction` to switch that hand-off back to a kill.
 
+### Handoff Hint
+
+When a large session sits idle past its model's prompt-cache lifetime, the next reply has to resend the whole
+context at the cache-write price. The handoff hint shows one line above the editor with that price and the price of
+a fresh session's first reply, plus two choices: **Start fresh with a handoff** (`/handoff`) opens a new session,
+linked to this one, whose first entry is a short brief built from the session's state (goal, open todos, last request
+and answer, touched files, the old session's path); **Keep going** (`/handoff keep`) hides it for the rest of the
+session. A reopened session (a resume or `--continue`) counts its cache age from its last reply, so reopening a large
+session after its cache expired shows the hint before the first reply. The hint never interrupts a turn and never
+switches on its own; if another extension cancels the switch, the hint stays. `/handoff` with any other argument
+only explains the two choices. Prices come from the model's cost card; on a
+subscription they are API-price equivalents. No hint is shown for models without a cache lifetime or a price, for task
+children, in print/JSON mode, for turns an extension started, while a goal is active, or once compaction is about to
+run.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `handoffHint.enabled` | boolean | `true` | Offer the hint at all |
+| `handoffHint.minContextTokens` | number | `200000` | No hint below this context size |
+| `handoffHint.minSavingUsd` | number | `1` | No hint unless a fresh session saves at least this much on the next reply |
+
 ### Shell
 
 | Setting | Type | Default | Description |

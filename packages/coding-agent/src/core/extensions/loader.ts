@@ -36,6 +36,7 @@ import { redactForUpload, type UploadRedactionOptions } from "../share/upload-re
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
 import { time } from "../timings.ts";
+import { validateChildModuleRegistration } from "../tool-dispatch/offload.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
@@ -54,6 +55,7 @@ import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AppendEntryOptions,
 	BeforeAgentStartHandlerOptions,
+	ChildModuleRegistration,
 	ContextHandlerOptions,
 	EntryRenderer,
 	EntryRendererOptions,
@@ -71,6 +73,7 @@ import type {
 	MessageRenderer,
 	PendingProviderRegistration,
 	ProviderConfig,
+	RegisteredChildModule,
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
 	SessionContext,
@@ -486,6 +489,14 @@ function createExtensionAPI(
 			}
 			hints.set(name, hint);
 			runtime.registerRemovedToolHint(name, hint);
+		},
+
+		registerChildModule(registration: ChildModuleRegistration): void {
+			runtime.assertActive();
+			validateChildModuleRegistration(registration);
+			const modules = extension.childModules ?? new Map<string, RegisteredChildModule>();
+			modules.set(registration.id, { registration: { ...registration }, sourceInfo: extension.sourceInfo });
+			extension.childModules = modules;
 		},
 
 		registerFilesystemPolicy(policy: FilesystemPolicy): void {

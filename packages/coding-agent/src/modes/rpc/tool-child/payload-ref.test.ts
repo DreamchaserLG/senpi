@@ -228,12 +228,20 @@ describe("payloads above the reference threshold, in both directions", () => {
 		const childWriter = new PayloadRefWriter({ root, generation: 5 });
 		const { reader: serverReader, sent, delivered } = link(childWriter);
 		const args = { path: "big.txt", content: "a".repeat(17 * MIB) };
-		const inlineAttempt = () => encodeFrame({ type: "host_call", callId: "c1", jobId: "j1", tool: "write", args });
+		const inlineAttempt = () =>
+			encodeFrame({ type: "host_call", callId: "c1", jobId: "j1", kind: "tool", name: "write", args });
 		expect(inlineAttempt).toThrow(ToolChildCodecError);
 		const packed = await packPayload(args, childWriter);
 		if (packed.inline) throw new Error("17 MiB args must move by reference");
 		const frame = received(
-			encodeFrame({ type: "host_call", callId: "c1", jobId: "j1", tool: "write", argsRef: packed.ref }),
+			encodeFrame({
+				type: "host_call",
+				callId: "c1",
+				jobId: "j1",
+				kind: "tool",
+				name: "write",
+				argsRef: packed.ref,
+			}),
 		);
 		if (frame.type !== "host_call" || frame.argsRef === undefined) throw new Error("expected host_call with argsRef");
 		expect(await unpackPayload(frame.argsRef, serverReader)).toEqual(args);

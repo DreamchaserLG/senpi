@@ -1,4 +1,5 @@
 import {
+	HOST_CALL_KINDS,
 	LAUNCH_APIS,
 	LAUNCH_CONTAINMENTS,
 	LAUNCH_LIFETIMES,
@@ -18,6 +19,7 @@ type FieldKind =
 	| "entries"
 	| "detail"
 	| "number|null"
+	| "strings"
 	| readonly string[];
 
 interface FieldRule {
@@ -44,10 +46,12 @@ const SHAPES = {
 	wake_ack: { wakeId: req("string") },
 	slot_query: { launchId: req("string") },
 	ping: { seq: req("number") },
+	update_ack: { jobId: req("string"), seq: req("number") },
 	shutdown: {},
-	hello: { generation: req("number"), pid: req("number"), protocol: req("number") },
+	hello: { generation: req("number"), pid: req("number"), protocol: req("number"), jobKinds: req("strings") },
 	heartbeat: { seq: req("number") },
 	pong: { seq: req("number") },
+	cancel_ack: { jobId: req("string") },
 	result: { jobId: req("string"), value: req("json") },
 	result_ref: { jobId: req("string"), ref: req("ref") },
 	job_error: { jobId: req("string"), code: req("string"), message: req("string") },
@@ -55,7 +59,8 @@ const SHAPES = {
 	host_call: {
 		callId: req("string"),
 		jobId: req("string"),
-		tool: req("string"),
+		kind: req(HOST_CALL_KINDS),
+		name: opt("string"),
 		args: opt("json"),
 		argsRef: opt("ref"),
 	},
@@ -84,8 +89,9 @@ const SHAPES = {
 		invokeTick: req("number|null"),
 		invocations: req("number"),
 	},
-	wake: { wakeId: req("string"), source: req("string"), bytes: req("number") },
+	wake: { wakeId: req("string"), source: req("string"), bytes: req("number"), value: opt("json") },
 	batch: { jobId: req("string"), entries: req("entries"), done: req("boolean") },
+	update: { jobId: req("string"), seq: req("number"), value: opt("json"), valueRef: opt("ref") },
 	trace: { atMs: req("number"), event: req("string"), detail: opt("detail") },
 	ref_ack: { refId: req("string") },
 	ref_nack: { refId: req("string"), reason: req(REF_NACK_REASONS) },
@@ -153,6 +159,8 @@ function matches(kind: FieldKind, value: unknown): boolean {
 			return isTraceDetail(value);
 		case "number|null":
 			return value === null || (typeof value === "number" && Number.isFinite(value));
+		case "strings":
+			return Array.isArray(value) && value.every((item) => typeof item === "string");
 	}
 }
 

@@ -16,6 +16,7 @@ import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
 import gptAccountExtension from "./gpt-account.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
+import handoffHintExtension from "./handoff-hint/index.ts";
 import helpExtension from "./help/index.ts";
 import herdrExtension from "./herdr/index.ts";
 import historySearchExtension from "./history-search/index.ts";
@@ -115,6 +116,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Durable counterpart of `loop`: writes job files a separate `senpi schedule run` fires later.
 	{ id: "schedule", factory: scheduleExtension },
 	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
+	// After cache-keepalive: its warm pings move the cache expiry the hint waits for.
+	{ id: "handoff-hint", factory: handoffHintExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
 	// HTML page rendering for standalone senpi (TUI/local); the desktop thread reaches the

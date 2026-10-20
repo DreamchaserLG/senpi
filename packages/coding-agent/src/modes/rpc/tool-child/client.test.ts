@@ -45,6 +45,17 @@ describe("ToolChildClient", () => {
 		expect(await instance.ping()).toBe(1);
 	}, 30_000);
 
+	it("keeps the child's hello manifest and refuses a job of a kind it does not run before sending it", async () => {
+		const { instance } = await client();
+		await instance.start();
+		expect(instance.jobKinds).toContain("echo");
+		await expect(instance.run("not-a-kind", {})).rejects.toMatchObject({
+			code: "tool_child_unknown_kind",
+			message: expect.stringContaining("the child runs [") as unknown as string,
+		});
+		expect(await instance.run("echo", "still here")).toBe("still here");
+	}, 30_000);
+
 	it("keeps the protocol valid when a job writes raw bytes to stdout", async () => {
 		const { instance } = await client();
 		await instance.start();

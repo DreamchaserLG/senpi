@@ -12,10 +12,9 @@ import { removeMonitorStateDir, terminalStateDir } from "./monitor-state-dir.ts"
 import type { MonitorStatusTicker } from "./monitor-status-ticker.ts";
 import type { TerminalNotifier } from "./notify.ts";
 import type { PersistenceState } from "./restore-session.ts";
-import type { TerminalRuntimeSession } from "./runtime-session.ts";
 import { type TerminalEventSinks, TerminalSessionBundle } from "./session-bundle.ts";
 import type { ResolvedTerminalSettings } from "./settings.ts";
-import type { TerminalToolContext } from "./tools/context.ts";
+import type { TerminalExitView, TerminalToolContext } from "./tools/context.ts";
 
 export interface TerminalExtensionState extends PersistenceState {
 	settings: ResolvedTerminalSettings;
@@ -166,7 +165,7 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 		onBackgroundStart: (id: string, description: string, startedAtMs: number) => {
 			state.bundle?.notifyBackgroundStart(id, description, startedAtMs);
 		},
-		onBackgroundExit: (id: string, runtime: TerminalRuntimeSession) => {
+		onBackgroundExit: (id: string, runtime: TerminalExitView) => {
 			state.bundle?.notifyBackgroundExit(id, runtime);
 		},
 		onMonitorRearmed: (id: string) => state.monitorNotifier?.rearm(id),

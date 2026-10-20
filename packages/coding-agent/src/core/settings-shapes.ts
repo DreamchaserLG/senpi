@@ -12,6 +12,12 @@ export interface PromptCacheSettings {
 	keepAlive?: PromptCacheKeepAliveSettings;
 }
 
+export interface HandoffHintSettings {
+	enabled?: boolean; // default: true (offer "start fresh with a handoff" when a large session's cache has expired)
+	minContextTokens?: number; // default: 200000 (no hint below this context size)
+	minSavingUsd?: number; // default: 1 (no hint unless a fresh session saves at least this much on the next reply)
+}
+
 export type TodoFirstTurnPlan = "force" | "remind" | "off";
 
 export interface TodoSettings {

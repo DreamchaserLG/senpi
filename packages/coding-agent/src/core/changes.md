@@ -16,6 +16,80 @@ The fallback decision and the failure that caused it live inside the session's r
 
 The `retry_fallback_applied` member of the session event union, and the `RetryFallbackController` construction in the `AgentSession` constructor.
 
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-shapes.ts`: new `HandoffHintSettings` (`enabled`, `minContextTokens`, `minSavingUsd`).
+- `packages/coding-agent/src/core/settings-manager.ts`: `Settings.handoffHint`.
+
+### Why
+
+The handoff hint's switch and thresholds are user settings (defaults: on, 200k tokens, $1 saving).
+
+### Why an extension could not handle it
+
+`Settings` is the typed settings contract the extension reads through `pi.getSettings()`.
+
+### Expected merge conflict zones
+
+- LOW: one field in `Settings`, one import line, one interface in `settings-shapes.ts`.
+
+## 2026-10-19 - The session hands its tool child's wakes and exits to the jobs that run there (senpi#3740)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the tool child's `onWake` hands each wake to the registered tool whose `childJob.kind` is its source (`ToolChildJob.wake`), and an `exited` record tells every `childJob.childExited`; the tool dispatcher also gets the child's `kindRunner`, and user bash (`executeBash`) uses the dispatcher's `bashOperations`, so under `--tool-runtime child` it runs on the child.
+
+### Why
+
+A terminal background session on the tool child outlives the job that started it; its exit must still reach the session as the completion notice, and an exited child takes its sessions with it.
+
+### Why an extension could not handle it
+
+Only the session owns its tool child and the registered tools' definitions together.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `SessionToolChild` options (`onRecord`, `onWake`), the `createToolDispatcher` options, and `_childJobs` beside `_callableToolNames`.
+
+## 2026-10-18 - ctx.offload runs registered child modules through the session's dispatcher (senpi#3566 todo 8)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the extension context actions gain `offload(id, args, options)`, which resolves the id among the runner's registered child modules and hands the `module` job to the session's tool dispatcher (`tool-dispatch/offload.ts`); the tool child's module roots now include registered child-module files as well as child-placed tools' modules. On `dispose()` (close or replacement) the session closes its in-process offload jobs with the tool child: a run still loading its module never starts its body (it is registered before the import, and the import wait is abandoned), and any later `offload` fails `offload_session_closed`; each running module is cancelled, every further host call is refused `host_call_session_closed`, and its locks are released when its body settles (at once if it is stuck, else after the grace, with a notice that the module is still running and its locks were released); `whenToolChildClosed()` - which replacement awaits - settles only then. The session builds its host-call handler once and gives it to both the tool child (`onHostCall`) and `createToolDispatcher` (`hostCalls`), so an in-process module's host calls are answered exactly like the child's reverse bridge.
+- `packages/coding-agent/src/core/tool-dispatch/offload.ts`, `tool-dispatcher.ts`: the in-process path runs the export with `(args, host)` - the same `createModuleHost` object the child's worker builds (`modes/rpc/tool-child/module-host.ts`), its calls sent to that handler - and fails `tool_child_deadline` when `deadlineMs` passes - the module is cancelled and refused new host calls, but its job, and every file lock it still holds, ends only when its body settles, so no second writer interleaves with a write still running; its calls go through the child's per-job `HostCallAdmission`, the cancel reaches every call but the lock calls, and calls still running are signalled when the job ends; in-process modules get the child's deadline (the caller's, at most `OFFLOAD_MAX_MS`), and one still running a grace (`stuckGraceMs`, 10 s) past it is reported stuck: its locks stay held, every waiter on them fails `file_locked_by_stuck_module`, and the session emits `offload_module_stuck` naming the module and the files; `offload` rejects a `deadlineMs` that is not a finite number above 0 with `offload_bad_options` (senpi#3622 review).
+
+### Why
+
+Extensions need to run their own CPU-bound or blocking work off the host's event loop without a third execution path; the dispatcher already chooses the child (`--tool-runtime child`) or this process (`in-process`).
+
+### Why an extension could not handle it
+
+The context actions and the tool child's module roots are built inside the session; an extension cannot reach the dispatcher or grant its module to the child.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `offload` entry beside `getModel` in the context actions, the `moduleRoots` provider of the tool child, the shared `hostCalls` handler and `onModuleStuck` before `this._toolChild`, the `offload_module_stuck` event in `AgentSessionEvent`, and the dispatcher close beside the tool child's in `dispose()`.
+
+## 2026-10-18 - A session answers its tool child's host calls (senpi#3566 todo 7)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: under `--tool-runtime child` the session hands its tool child a host-call handler (`createSessionHostCallHandler`, `tool-child-host-calls.ts`). A child-run body's `tool` call runs through `_executeNestedToolCall` (hooks once, as `ctx.executeTool`), `list_tools` names the callable tools, `completion`/`reserved` reach targets registered with `registerToolChildHostTarget`, `authorize` asks the same composed filesystem policy the built-in file tools enforce, on a path the server resolves against the session cwd and canonicalizes like those tools (a child-sent canonical path is never trusted), `lock_file` keys on the same session-cwd path, and a call of an ended job is refused (kept in `_filesystemPolicy` when the tools are rebuilt), and `lock_file`/`unlock_file` hold a file's slot in the shared mutation queue. On the default in-process path none of this is constructed.
+
+### Why
+
+Tool bodies placed in the child still need the session's tools, model, policy and file serialization; those stay on the server (the plan's Must NOT: no policy or model calls in the child), so the child asks over the reverse bridge.
+
+### Why an extension could not handle it
+
+The tool pipeline, the composed filesystem policy and the tool child's construction are session internals; no extension hook reaches them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the tool-child construction in the runtime setup (its `onHostCall` deps), the `_filesystemPolicy` assignment beside `composeFilesystemPolicies`, and the fields beside `_toolChildHostTargets`.
+
 ## 2026-10-19 - dispose() says whether the process exits (senpi#3711)
 
 ### What changed

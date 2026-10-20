@@ -23,7 +23,9 @@
  * (test/supervisor-import-graph.test.ts).
  */
 import { randomUUID } from "node:crypto";
+import { type FSWatcher, watch } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
+import { basename, dirname } from "node:path";
 import type { HostStopSender } from "./host-crash-record.ts";
 import { HOST_DAEMON_DIR_ENV, type HostGenerationPaths, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { generationPaths } from "./host-generation-paths.ts";
@@ -138,8 +140,13 @@ function isSenderKind(kind: string): kind is HostStopSender["kind"] {
 	return SENDER_KINDS.has(kind);
 }
 
-/** How often a generation looks for a drain request: the cadence of the supersession watch. */
+/** How often a generation looks for a drain request when it cannot watch the directory: the supersession cadence. */
 export const DRAIN_REQUEST_POLL_MS = 1_000;
+/**
+ * The backup poll while the directory watch is armed (senpi#3747): the watch delivers a request as it lands,
+ * so an idle generation no longer reads the file every second; the poll only covers an event the watch missed.
+ */
+export const DRAIN_REQUEST_WATCHED_POLL_MS = 5_000;
 
 export interface HostDrainRequest {
 	readonly sender: HostStopSender;
@@ -160,7 +167,10 @@ export async function writeDrainRequest(
 
 /**
  * Calls `onRequest` for every distinct request that appears at `file`, including one already there
- * when the watch arms. Unref'd: a drain watch must never be the reason a process stays up.
+ * when the watch arms. The file's directory is watched, so a request is read when it lands; a poll every
+ * `DRAIN_REQUEST_WATCHED_POLL_MS` backs the watch up, and every `DRAIN_REQUEST_POLL_MS` when the directory
+ * cannot be watched. `pollMs` overrides the poll interval. Unref'd: a drain watch must never be the reason a
+ * process stays up.
  */
 export function watchDrainRequest(
 	file: string,
@@ -168,6 +178,8 @@ export function watchDrainRequest(
 	options: { readonly pollMs?: number } = {},
 ): () => void {
 	let stopped = false;
+	let timer: ReturnType<typeof setInterval> | undefined;
+	let watcher: FSWatcher | undefined;
 	let polling = false;
 	let lastNonce: string | undefined;
 	const poll = (): void => {
@@ -183,12 +195,30 @@ export function watchDrainRequest(
 				polling = false;
 			});
 	};
-	const timer = setInterval(poll, options.pollMs ?? DRAIN_REQUEST_POLL_MS);
-	timer.unref?.();
+	const schedule = (intervalMs: number): void => {
+		if (timer !== undefined) clearInterval(timer);
+		timer = setInterval(poll, options.pollMs ?? intervalMs);
+		timer.unref?.();
+	};
+	const name = basename(file);
+	try {
+		watcher = watch(dirname(file), { persistent: false }, (_event, changed) => {
+			if (changed === null || changed === name) poll();
+		});
+		watcher.on("error", () => {
+			watcher?.close();
+			watcher = undefined;
+			if (!stopped) schedule(DRAIN_REQUEST_POLL_MS);
+		});
+	} catch {
+		watcher = undefined;
+	}
+	schedule(watcher === undefined ? DRAIN_REQUEST_POLL_MS : DRAIN_REQUEST_WATCHED_POLL_MS);
 	poll();
 	return () => {
 		stopped = true;
-		clearInterval(timer);
+		if (timer !== undefined) clearInterval(timer);
+		watcher?.close();
 	};
 }
 

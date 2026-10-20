@@ -156,10 +156,22 @@ export interface ExtensionUIDialogOptions {
 /** Placement for extension widgets. */
 export type WidgetPlacement = "aboveEditor" | "belowEditor";
 
+/**
+ * A choice offered next to a string-array widget. `command` is ordinary slash-command text: the TUI shows it
+ * next to the label for the user to type, and an RPC client that renders a button sends it as a normal prompt,
+ * so every host runs the same command handler.
+ */
+export interface ExtensionWidgetAction {
+	label: string;
+	command: string;
+}
+
 /** Options for extension widgets. */
 export interface ExtensionWidgetOptions {
 	/** Where the widget is rendered. Defaults to "aboveEditor". */
 	placement?: WidgetPlacement;
+	/** Choices shown with a string-array widget (ignored for component factories). */
+	actions?: readonly ExtensionWidgetAction[];
 }
 
 /** Raw terminal input listener for extensions. */
@@ -480,6 +492,13 @@ export type FilesystemPolicyChecker = (request: Readonly<FilesystemPolicyRequest
 export type ExtensionMode = "tui" | "rpc" | "json" | "print";
 
 export interface ExtensionContext {
+	/**
+	 * Runs the child module registered as `id` with `args` and resolves its export's return value: on the session's
+	 * tool child under `--tool-runtime child` (spawned on demand, never falling back in-process), in this process under
+	 * `in-process`. A module that cannot be loaded fails `offload_module_unavailable` in both. Optional for
+	 * compatibility with contexts built outside a session runner; every runner-built context has it.
+	 */
+	readonly offload?: (id: string, args: unknown, options?: OffloadOptions) => Promise<unknown>;
 	/** UI methods for user interaction */
 	ui: ExtensionUIContext;
 	/** Current run mode. Use "tui" to guard terminal-only UI such as custom components. */
@@ -922,9 +941,57 @@ export type ToolPlacement = "server" | "child";
  * Tool definition for registerTool().
  */
 /** A tool body loaded from a file on the session's tool child (senpi#3566). */
+export interface ToolChildJob {
+	readonly kind: string;
+	args(params: unknown, toolCallId: string, ctx: ExtensionToolContext): unknown;
+	/**
+	 * Sees the job's result with the child generation it ran on, and may replace it: state that lives on the child (a
+	 * PTY session) is gone once that generation exits, which only the server can tell apart from "never existed".
+	 */
+	result?(params: unknown, value: AgentToolResult<unknown>, generation: number): AgentToolResult<unknown>;
+	/**
+	 * Where one call runs. State the server owns (a monitor's session) is reached on the server, the child's own on the
+	 * child; `both` runs the server's body, then the child's job, and joins their content. Unset: always the child.
+	 */
+	placement?(params: unknown): "server" | "child" | "both";
+	/** Receives what a job of this kind reported later from the child (`wake`), with the generation it came from. */
+	wake?(value: unknown, generation: number): void;
+	/** Told when a child generation exited: state that lived on it is gone. */
+	childExited?(generation: number): void;
+}
+
 export interface ToolChildModule {
 	readonly path: string;
 	readonly export: string;
+}
+
+/**
+ * A module the session may run on its tool child (`ctx.offload(id, ...)`), registered with `pi.registerChildModule`.
+ * File-backed only: `module` is a path (relative to the registering extension's file, or absolute) whose `export`
+ * receives `(args, host)` - the same host object (`signal`, `call`, `complete`, `reserved`, `listTools`, `authorize`,
+ * `withFileLock`) on both runtimes. Under `--tool-runtime child` it runs on the session's child; under `in-process` the
+ * server imports the same module and runs it directly, its host calls answered by the session in the same way. `idempotent` lets a job lost to a child exit run once more.
+ */
+export interface ChildModuleRegistration {
+	readonly id: string;
+	readonly module: string;
+	readonly export: string;
+	readonly idempotent?: boolean;
+}
+
+export interface RegisteredChildModule {
+	readonly registration: ChildModuleRegistration;
+	/** The registering extension's source, which a relative `module` path resolves against. */
+	readonly sourceInfo: SourceInfo;
+}
+
+export interface OffloadOptions {
+	readonly signal?: AbortSignal;
+	/**
+	 * Fails the job `tool_child_deadline` after this long, on either runtime; the default is the module job's own
+	 * deadline. Must be a finite number above 0, else `offload` rejects with `offload_bad_options`.
+	 */
+	readonly deadlineMs?: number;
 }
 
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
@@ -1032,6 +1099,11 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * child-placed tool reports `tool_runtime_unavailable` under `--tool-runtime child`; `execute` still runs in-process.
 	 */
 	childModule?: ToolChildModule;
+	/**
+	 * A child-placed tool whose body is a tool-child job kind (built-in tools that keep state on the child, such as the
+	 * terminal's PTY sessions) instead of a `childModule`: `args` builds the job's arguments on the server from the call.
+	 */
+	childJob?: ToolChildJob;
 	/** Set by built-in tool factories that capture injected operations or a policy override; such a definition always executes on the session's server process, even when {@link ToolDefinition.placement} is `"child"`, and the dispatcher logs one notice per tool when it pins one. */
 	serverPinned?: boolean;
 
@@ -2390,6 +2462,9 @@ export interface ExtensionAPI {
 	 */
 	registerFilesystemPolicy(policy: FilesystemPolicy): void;
 
+	/** Registers a file-backed module `ctx.offload(id, ...)` can run (see {@link ChildModuleRegistration}). */
+	registerChildModule(registration: ChildModuleRegistration): void;
+
 	/** Register an MCP server that the agent can use. Factory-time only. */
 	registerMcpServer(name: string, config: McpServerDeclaration): void;
 
@@ -3116,6 +3191,8 @@ export interface ExtensionActions {
  * Required by all modes.
  */
 export interface ExtensionContextActions {
+	/** Runs a registered child module through the session's tool dispatcher; absent where no session backs the runner. */
+	offload?: (id: string, args: unknown, options?: OffloadOptions) => Promise<unknown>;
 	getModel: () => Model<any> | undefined;
 	getServiceTier: () => ServiceTier | undefined;
 	/** Effective request tier (fast mode included). Defaults to `getServiceTier` when omitted. */
@@ -3237,6 +3314,8 @@ export interface Extension {
 	/** `context`/`context_with_system` handlers registered with `{ mutatesMessages: false }`. */
 	nonMutatingContextHandlers?: WeakSet<HandlerFn>;
 	tools: Map<string, RegisteredTool>;
+	/** Optional for compatibility with extension records created before child modules. */
+	childModules?: Map<string, RegisteredChildModule>;
 	/** Optional for compatibility with extension records created before this additive registry. */
 	removedToolHints?: Map<string, string>;
 	lazyToolActivators?: LazyToolActivator[];

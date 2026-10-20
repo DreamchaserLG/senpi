@@ -1,3 +1,62 @@
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionWidgetOptions` gains `actions?: readonly ExtensionWidgetAction[]` (`{ label, command }`), choices offered with a string-array widget. `command` is ordinary slash-command text.
+
+### Why
+
+The handoff hint offers two choices on one line. The TUI and every RPC client must reach the same command handler, so the choice is carried as the command text itself rather than a host-specific callback (one implementation, no RPC-only path).
+
+### Why an extension could not handle it
+
+The widget options type is the public extension contract; an extension cannot add a field the hosts read.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `ExtensionWidgetOptions`, next to `WidgetPlacement`.
+
+## 2026-10-19 - A tool's job on the tool child: per-call placement, wakes and child exits (senpi#3740)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolDefinition.childJob` (`ToolChildJob`: the built-in job `kind`, its `args`, an optional `result` rewrite with the generation it ran on, `placement(params)` - `server`, `child` or `both` per call - `wake(value, generation)` for what the child reports later, and `childExited(generation)`).
+
+### Why
+
+The terminal tools run on the session's tool child, but a call naming a server-owned session (a monitor) must stay on the server, and the child's background sessions report their exit after the job that started them ended.
+
+### Why an extension could not handle it
+
+Placement and the tool child's channel are owned by the session's dispatcher; a tool can only declare them on its definition.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolChildJob` before `ToolChildModule`, and `childJob` on `ToolDefinition`.
+
+## 2026-10-18 - registerChildModule and ctx.offload (senpi#3566 todo 8)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ChildModuleRegistration`, `RegisteredChildModule`, `OffloadOptions`; `ExtensionAPI.registerChildModule`; optional `ExtensionContext.offload` (optional only so contexts built outside a runner still type-check; every runner-built context has it); `Extension.childModules`; `ExtensionContextActions.offload`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `registerChildModule` validates a file-backed registration (an inline function or empty field throws `offload_bad_registration`) and records it with the registering extension's source.
+- `packages/coding-agent/src/core/extensions/types.ts` docs: a module's export receives `(args, host)` on both runtimes; `OffloadOptions.deadlineMs` must be finite and above 0 (senpi#3622 review).
+- `packages/coding-agent/src/core/extensions/runner.ts`: `getAllChildModules()` (a later id wins, and a replacement from another extension file is logged once) and the context's `offload`, which delegates to the session's action and fails `offload_unavailable` where no session backs the runner.
+
+### Why
+
+The plan's offload API: an extension names a module file once and runs it where the session's runtime places work, on the tool child or in-process.
+
+### Why an extension could not handle it
+
+Registration and the context are the extension API itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the new interfaces before `ToolDefinition`, the `ExtensionContext` head, `registerChildModule` beside `registerFilesystemPolicy`, `Extension.childModules`, and `ExtensionContextActions`'s head.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `registerChildModule` beside `registerFilesystemPolicy` and the types import.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `getAllChildModules` beside `getAllRegisteredTools`, the `offload` member of `createContext`, and `offloadFn`.
+
 ## 2026-10-19 - Quit budget start, stated precisely (senpi#3711 follow-up)
 
 ### What changed

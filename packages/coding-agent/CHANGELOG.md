@@ -7,18 +7,37 @@
 ### Added
 - When a usage limit makes the session fall back to another model, `retry_fallback_applied` carries `resetsAt` (ISO) if the limit's reset is known, and the interactive fallback notice says when it resets. The OmO desktop app shows the same reset on its fallback row ([omo-desktop-app#3353](https://github.com/sisyphuslabs/omo-desktop-app/issues/3353)).
 
+- When a session of 200k tokens or more has sat idle past its model's prompt-cache lifetime and a fresh session would save at least $1 on the next reply, one line above the editor says what the next reply would cost and what a fresh session would cost, with two choices: `/handoff` starts a new session linked to this one and seeded with a short brief built from the session's state (goal, open todos, last request and answer, touched files), and `/handoff keep` hides the line for the rest of the session. It never interrupts a turn or switches on its own, and never shows for task children, print/JSON runs, turns an extension started, or while a goal is active. Settings: `handoffHint.enabled`, `handoffHint.minContextTokens`, `handoffHint.minSavingUsd`. Extension widgets can carry choices (`setWidget(..., { actions })`), forwarded over RPC as `widgetActions` ([#3230](https://github.com/code-yeongyu/senpi/issues/3230)).
+
+### Changed
+
+### Fixed
+
+- Each mounted message no longer keeps its own copy of the markdown theme, and a tool card above the kept history no longer keeps a second copy of its result in its renderer: about 640 bytes per message and 2 KB per tool card for the rest of the session ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
+- A bundled install's RPC host supervisor now starts from its own small program instead of the whole CLI, so each supervisor stays near the size of its own code. The desktop runs one per open thread ([#3743](https://github.com/code-yeongyu/senpi/issues/3743)).
+
+### Removed
+
+## [2026.10.19-2] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
 ### Changed
 
 - The shipped Claude fallback chains no longer step down to `claude-opus-4-8` or `claude-opus-4-6`: Fable falls back to Opus 5.5, then Opus 5; Opus 5.5 falls back to Opus 5 ([#3727](https://github.com/code-yeongyu/senpi/issues/3727)).
 
 ### Fixed
 
+- An idle RPC host no longer checks for exited children, a pending trim or a drain request every second: the reaper looks every 5 s while the host has no children, the trim runs only after a session count change, and a drain request (host and supervisor) is read when it lands ([#3747](https://github.com/code-yeongyu/senpi/issues/3747)).
 - Socket clients advertising `event_resync` recover from an event-queue overflow or stall on the same connection: buffered events are shed, current message snapshots are sent, and only a missed liveness heartbeat closes the peer. Recovery preserves still-open extension dialogs after replacing a session. Clients without the capability retain the existing disconnect behavior ([#3728](https://github.com/code-yeongyu/senpi/issues/3728)).
 - An `invalid_request_error` 400 from Anthropic itself (not a gateway) caused by the request's own shape (for example an unpaired `web_search` server block) no longer switches the session to another model. It retries once on the same model without web search replay data, notes that in the transcript, and otherwise ends with one error saying what to do. Set `SENPI_DEBUG_REQUEST_SHAPE=<file>` to log each Anthropic request's block skeleton without content, including requests the API rejects ([#3727](https://github.com/code-yeongyu/senpi/issues/3727)).
 - Quitting no longer takes up to 10 s when an extension is slow to shut down. A quit that exits senpi now waits at most `sessionShutdownQuitBudgetMs` (default 2000) on all `session_shutdown` handlers together, counted from when senpi starts running them, then exits and logs which extension overran it and for how long; set it to `0` to keep only the per-handler limits. The config watcher no longer holds quit while its watch thread finishes stopping ([#3711](https://github.com/code-yeongyu/senpi/issues/3711)).
 - Under `--tool-runtime child`, starting a session's tool child no longer removes anything through a short socket directory in `/tmp` before it is proven to be this user's private directory, and its secret is created as a new file that never follows or overwrites anything already at that name. On every failure the secret written there is destroyed, and it is unlinked only through a directory proven ours again, so a directory swapped in the meantime never leads the cleanup to another file; another local user holding that directory's name no longer blocks the start ([#3694](https://github.com/code-yeongyu/senpi/issues/3694)).
 - A finished tool card no longer keeps its rendered output once it is invalidated (it scrolled above the kept main-screen history, or the theme or terminal capabilities changed); it is rebuilt from the card when it is painted again, and cards share one set of built-in tool definitions. A renderer that asks for a rerender (`context.invalidate()`) still gets its own component back as `lastComponent`, and an edit card keeps the diff its renderer stores in `context.state`. In a 10-minute notice-stream soak that output was about 5 KB per tool-using turn ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - `senpi -p "prompt"` no longer hangs before startup when stdin is a pipe or socket that is never written or closed, as ssh, CI runners and agent harnesses provide. With a prompt argument, such a stdin is skipped when no data arrives within 2 seconds; a pipe that sends data in time (`cat file | senpi -p "summarize"`), a regular file, and stdin as the only prompt source are still read to EOF. When stdin is skipped, one stderr line says so and that `-` reads it. A bare `-` argument forces the read ([#3715](https://github.com/code-yeongyu/senpi/issues/3715)).
+- The RPC host no longer fails to start with a bare `listen EINVAL` when the temp directory is long (a nested per-user or per-job `TMPDIR`). Its private internal socket now goes under `/tmp` whenever the path under `TMPDIR` would exceed the 103-byte Unix socket limit, still in its own 0700 directory, and leftover internal directories there are cleaned up the same way ([#3487](https://github.com/code-yeongyu/senpi/issues/3487)).
 
 ### Removed
 

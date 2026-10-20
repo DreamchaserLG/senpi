@@ -14,12 +14,18 @@ if (mode === "hang") {
 	process.exit(3);
 } else if (mode === "bad-generation") {
 	const channel = await connectChannel(process.env);
-	channel.send({ type: "hello", generation: 999, pid: process.pid, protocol: 1 });
+	channel.send({ type: "hello", generation: 999, pid: process.pid, protocol: 2, jobKinds: [] });
 	setInterval(() => {}, 1_000);
 } else {
 	await runToolChild({
 		handlers: {
 			echo: async (args) => args,
+			stream: async (args, { update }) => {
+				const { count, bigBytes } = args as { count: number; bigBytes: number };
+				for (let index = 1; index <= count; index++) await update({ index });
+				if (bigBytes > 0) await update({ big: "u".repeat(bigBytes) });
+				return { sent: count + (bigBytes > 0 ? 1 : 0) };
+			},
 			print: async () => {
 				process.stdout.write("\u0000\u0000\u0000\u0005{not a frame}\n");
 				return "printed";

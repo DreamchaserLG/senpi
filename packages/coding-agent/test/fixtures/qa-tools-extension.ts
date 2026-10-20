@@ -42,8 +42,9 @@ export interface SegvDeps {
 }
 
 const WINDOWS_ACCESS_VIOLATION = 0xc0000005;
-/** Tools with a body in `qa-tools/child-bodies.ts`; `qa_hostcall` needs the reverse bridge (todo 7) first. */
+/** Tools with a body in `qa-tools/child-bodies.ts` (all child-placed ones). */
 const CHILD_BODIES: ReadonlySet<QaToolName> = new Set([
+	"qa_hostcall",
 	"qa_sleep",
 	"qa_blob",
 	"qa_sink",
@@ -59,6 +60,16 @@ export function blobText(bytes: number): string {
 
 export function sinkDigest(payload: string): string {
 	return createHash("sha256").update(payload, "utf8").digest("hex");
+}
+
+/** `args` with `fill.field` set to `fill.bytes` of text, built where the call is made (not carried by the model). */
+export function hostcallArgs(params: {
+	readonly args: unknown;
+	readonly fill?: { readonly field: string; readonly bytes: number };
+}): unknown {
+	if (params.fill === undefined) return params.args;
+	const base = typeof params.args === "object" && params.args !== null ? params.args : {};
+	return { ...base, [params.fill.field]: "s".repeat(params.fill.bytes) };
 }
 
 export async function runHostcalls(
@@ -143,9 +154,14 @@ export function createQaTools(segv: SegvDeps = PROCESS_SEGV): ToolDefinition[] {
 		}),
 		tool(
 			"qa_hostcall",
-			Type.Object({ tool: Type.String(), args: Type.Unknown(), count: Type.Integer({ minimum: 1 }) }),
+			Type.Object({
+				tool: Type.String(),
+				args: Type.Unknown(),
+				count: Type.Integer({ minimum: 1 }),
+				fill: Type.Optional(Type.Object({ field: Type.String(), bytes: Type.Integer({ minimum: 0 }) })),
+			}),
 			async (params, ctx) => {
-				const outcomes = await runHostcalls(params, async (name, args) => {
+				const outcomes = await runHostcalls({ ...params, args: hostcallArgs(params) }, async (name, args) => {
 					const outcome = await ctx.executeTool(name, args);
 					return { isError: outcome.isError, text: textOf(outcome.result) };
 				});

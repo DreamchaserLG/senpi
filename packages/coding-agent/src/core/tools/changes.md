@@ -1,5 +1,63 @@
 # core/tools changes
 
+## 2026-10-19 - A stuck lock holder fails its waiters fast (senpi#3622)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: `acquireFileMutationLock` resolves with a `FileMutationLock` - the release, plus `markStuck(holder)`. A stuck mark keeps the slot held and fails every waiter on that file (queued or later, through `acquireFileMutationLock` or `withFileMutationQueue`) with `FileLockedByStuckModuleError` (`file_locked_by_stuck_module`), passing each refused waiter's queued slot on as an abort does; the release clears the mark. Both entry points now share one registration and one wait.
+
+### Why
+
+An in-process `ctx.offload` module that outlives its deadline cannot be stopped, so its lock must stay held (a release could interleave a second writer with its write); without the mark, the session's own edit and write tools would wait on that file forever.
+
+### Why an extension could not handle it
+
+The queue and its waiters are module-private to this file; only it can refuse a waiter that is already queued.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: the bodies of `acquireFileMutationLock` and `withFileMutationQueue`, now over the shared `registerSlot` / `waitTurn`.
+
+## 2026-10-18 - The file mutation queue can be held across a call (senpi#3566 todo 7)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: `acquireFileMutationLock(filePath, signal?)` takes the same per-file slot as `withFileMutationQueue` (same map, same `getMutationQueueKey` identity, same registration order) and resolves with its release once every earlier mutation of the file has finished. A waiter whose signal aborts rejects without ever holding the slot, and the slot it queued passes on as soon as its predecessor finishes. `withFileMutationQueue` is unchanged.
+
+### Why
+
+A tool body running in the session's tool child must serialize its writes with the session's own file tools; the server holds the slot for it between `lock_file` and `unlock_file`, which a callback-scoped queue cannot express.
+
+### Why an extension could not handle it
+
+The queue map is module-private to this file; a second queue elsewhere would not serialize against the built-in edit and write tools.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: the new export between `getMutationQueueKey` and `withFileMutationQueue`.
+
+## 2026-10-19 - Tool-dispatcher review fixes: every call through the dispatcher, exact server pins (senpi#3574)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: with a dispatcher, every call goes through `dispatcher.run`, including the context-less one (the dispatcher's in-process path runs it unchanged); the wrapped tool's details type admits `ToolUnavailableDetails`.
+- `packages/coding-agent/src/core/tools/bash.ts`: `createShellToolDefinition` also pins the tool to the server when the caller injected a `spawnHook`.
+- `packages/coding-agent/src/core/tools/powershell.ts`: drops the pin its own default local operations would set and pins only for caller-injected `operations` or `spawnHook`.
+
+### Why
+
+The #3574 review: a call that skipped the dispatcher was never observed or placed, a `spawnHook` is caller code that must run where the caller is, and PowerShell's default operations are not caller-injected, so they must not pin it.
+
+### Why an extension could not handle it
+
+Tool wrapping and the built-in tool factories are core; an extension cannot route a built-in tool's calls or set its placement.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: the `execute` body of `wrapToolDefinition`.
+- `packages/coding-agent/src/core/tools/bash.ts`: the `serverPinned` spread at the head of `createShellToolDefinition`'s returned definition.
+- `packages/coding-agent/src/core/tools/powershell.ts`: `createPowerShellToolDefinition`'s body.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed

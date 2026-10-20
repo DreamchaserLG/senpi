@@ -366,7 +366,12 @@ The child's state is visible two ways:
 A multi-session host and a single-session `--mode rpc` process each advertise their choice as one
 `tool_runtime:in-process` or `tool_runtime:child` entry in `get_protocol_info.capabilities`. Under `child` they also
 advertise one `placement:<name>` entry for each part of the tool child that has landed (`placement:launch-barrier`:
-every command a child-run tool starts passes the execution barrier). A job worker cannot start worker threads of its
+every command a child-run tool starts passes the execution barrier; `placement:job-policy`: per-kind deadlines,
+liveness and the cancel ladder; `placement:hostcall`: a child-run tool body reaches the session over the reverse
+bridge - `tool`, `completion`, `reserved`, `list_tools`, `authorize` and drain-before-release `lock_file`/`unlock_file`,
+with large arguments and replies carried by acknowledged references). Both runtimes also advertise `offload_api`: an extension's
+`ctx.offload` / `pi.registerChildModule` are available, running on the tool child under `child`
+(`placement:offload`) and in the host process under `in-process`. A job worker cannot start worker threads of its
 own (`tool_child_nested_worker_refused`), so no launch escapes the barrier that way.
 
 ### Host identity (`get_protocol_info`)
@@ -4840,6 +4845,8 @@ Set or clear a widget (block of text lines) displayed above or below the editor.
 ```
 
 Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Only string-array widgets are sent; a component factory needs a terminal to render into and produces no record.
+
+A widget may carry `widgetActions`, a list of `{ "label", "command" }` choices (for example the handoff hint's `{ "label": "Start fresh with a handoff", "command": "/handoff" }`). A client that renders a choice as a button sends its `command` text as an ordinary `prompt` when the user picks it, so the choice runs the same command handler the terminal user types. The field is omitted when the widget has no choices and on a clear.
 
 #### setTitle
 

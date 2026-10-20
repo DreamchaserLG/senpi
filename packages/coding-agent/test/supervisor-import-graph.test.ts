@@ -76,6 +76,38 @@ describe("RPC host supervisor import graph", () => {
 		expect(modules.length).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
 	});
 
+	// senpi#3743: a bundled install starts its supervisor through `dist/bundle/host-supervisor.js`. Before it
+	// existed the supervisor booted through `cli.js`, whose main() graph cost ~60 MB in every supervisor.
+	it("gives the bundled supervisor its own program that loads no other bundle file", () => {
+		const entry = `${repoRoot}/packages/coding-agent/dist/bundle/host-supervisor.js`;
+		const modules = loadedModules(probeImportGraph(repoRoot, entry).entries);
+		expect(modules).toEqual(["packages/coding-agent/dist/bundle/host-supervisor.js"]);
+	});
+
+	it("keeps the supervisor program's own graph to the supervisor plus its preamble", () => {
+		const modules = loadedModules(
+			probeImportGraph(repoRoot, `${repoRoot}/packages/coding-agent/dist/modes/rpc/host-supervisor-entry.js`)
+				.entries,
+		);
+		const lifecycle = new Set(
+			loadedModules(
+				probeImportGraph(repoRoot, `${repoRoot}/packages/coding-agent/dist/modes/rpc/host-lifecycle.js`).entries,
+			),
+		);
+		// The runtime-snapshot modules are the claim `cli.js` used to make for the supervisor (senpi#3743 review):
+		// node builtins only, no provider, CLI or TUI module.
+		expect(modules.filter((url) => !lifecycle.has(url)).sort()).toEqual([
+			"packages/coding-agent/dist/modes/rpc/host-supervisor-entry.js",
+			"packages/coding-agent/dist/runtime-snapshot/dependency-files.js",
+			"packages/coding-agent/dist/runtime-snapshot/file-copier.js",
+			"packages/coding-agent/dist/runtime-snapshot/layout.js",
+			"packages/coding-agent/dist/runtime-snapshot/package-files.js",
+			"packages/coding-agent/dist/runtime-snapshot/registry.js",
+			"packages/coding-agent/dist/runtime-snapshot/tree.js",
+			"packages/coding-agent/dist/valid-cwd.js",
+		]);
+	});
+
 	it("keeps the CLI argument parser and the provider catalog out of the supervisor", () => {
 		const result = probeImportGraph(repoRoot, `${repoRoot}/packages/coding-agent/dist/modes/rpc/host-lifecycle.js`);
 

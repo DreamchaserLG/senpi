@@ -85,11 +85,13 @@ import type {
 	MessageRenderer,
 	ModelSelectEvent,
 	ModelSelectEventResult,
+	OffloadOptions,
 	ProjectTrustContext,
 	ProjectTrustEvent,
 	ProjectTrustEventResult,
 	ProviderConfig,
 	ProviderRequestPreparation,
+	RegisteredChildModule,
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
 	RegisteredTool,
@@ -571,6 +573,7 @@ export class ExtensionRunner {
 	private onUserActivityFn: ExtensionContextActions["onUserActivity"];
 	private getAgentDirFn: () => string = () => getAgentDir();
 	private executeToolFn: ExtensionContextActions["executeTool"];
+	private offloadFn: ExtensionContextActions["offload"];
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
@@ -654,6 +657,7 @@ export class ExtensionRunner {
 		if (actions.sessionControl) this.runtime.sessionControl = actions.sessionControl;
 		this.runtime.createContext = () => this.createContext();
 
+		this.offloadFn = contextActions.offload;
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
 		this.getServiceTier = contextActions.getServiceTier;
@@ -885,6 +889,33 @@ export class ExtensionRunner {
 
 	getExtensionIdentities(): Array<{ path: string; resolvedPath: string }> {
 		return this.extensions.map(({ path, resolvedPath }) => ({ path, resolvedPath }));
+	}
+
+	readonly #reportedChildModuleReplacements = new Set<string>();
+
+	/**
+	 * Every registered child module by id. Unlike tools, the last extension to register an id wins, in load order; the
+	 * replacement is logged once, so a module that shadows another (a builtin's included) is never silent.
+	 */
+	getAllChildModules(): Map<string, RegisteredChildModule> {
+		const modules = new Map<string, RegisteredChildModule>();
+		for (const ext of this.extensions)
+			for (const [id, entry] of ext.childModules ?? []) {
+				const earlier = modules.get(id);
+				const replacement = `${id}\0${earlier?.sourceInfo.path}\0${entry.sourceInfo.path}`;
+				if (
+					earlier !== undefined &&
+					earlier.sourceInfo.path !== entry.sourceInfo.path &&
+					!this.#reportedChildModuleReplacements.has(replacement)
+				) {
+					this.#reportedChildModuleReplacements.add(replacement);
+					console.warn(
+						`Child module "${id}" from ${entry.sourceInfo.path} replaces the one from ${earlier.sourceInfo.path}`,
+					);
+				}
+				modules.set(id, entry);
+			}
+		return modules;
 	}
 
 	/**
@@ -1371,6 +1402,12 @@ export class ExtensionRunner {
 		const getScopedModels = this.getScopedModels;
 		let compactionSignal: AbortSignal | undefined;
 		return {
+			offload: (id: string, args: unknown, options?: OffloadOptions) => {
+				runner.assertActive();
+				if (runner.offloadFn === undefined)
+					return Promise.reject(new Error(`offload_unavailable: no session backs this context (offload ${id})`));
+				return runner.offloadFn(id, args, options);
+			},
 			get ui() {
 				runner.assertActive();
 				return runner.uiContext;

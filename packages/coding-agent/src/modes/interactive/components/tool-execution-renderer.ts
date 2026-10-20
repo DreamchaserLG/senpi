@@ -36,6 +36,18 @@ function builtInDefinitionsFor(cwd: string): Record<ToolName, ToolRenderers> {
 }
 type RendererSlot = "call" | "result";
 
+/** What a released renderer keeps instead of its last render state; `update` sets the real one before any paint. */
+const RELEASED_STATE: ToolExecutionRenderState = {
+	args: undefined,
+	executionStarted: false,
+	argsComplete: false,
+	isPartial: false,
+	expanded: false,
+	showImages: false,
+	spinnerFrame: 0,
+	result: undefined,
+};
+
 export class ToolExecutionRenderer extends Container {
 	private readonly identity: ToolExecutionIdentity;
 	private readonly builtInDefinition: ToolRenderers | undefined;
@@ -129,6 +141,9 @@ export class ToolExecutionRenderer extends Container {
 		this.contentText.setText("");
 		this.callRendererComponent = undefined;
 		this.resultRendererComponent = undefined;
+		// The last render state held its own filtered copy of the result (about 2 KB per card); the card keeps the
+		// original and passes a fresh state to `update` when it is painted again (#2537).
+		this.state = RELEASED_STATE;
 	}
 
 	private getCallRenderer(): ToolRenderers["renderCall"] {

@@ -8,9 +8,11 @@
  */
 import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
+import type { Worker } from "node:worker_threads";
 import type { ToolChildJobContext } from "./entry.ts";
 import { ToolChildJobError } from "./entry.ts";
 import { siblingWorkerUrl, startGatedWorker } from "./gated-worker.ts";
+import { HOST_CALL_KINDS, type HostCallKind } from "./protocol.ts";
 
 export const MODULE_JOB_KIND = "module";
 export const TOOL_CHILD_MODULE_ROOTS_ENV = "SENPI_TOOL_CHILD_MODULE_ROOTS";
@@ -91,6 +93,7 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = { ...process.env
 		// worker. Either way the job fails tool_child_cancelled and the owned groups it still runs are ended.
 		let cancelled = false;
 		let graceTimer: ReturnType<typeof setTimeout> | undefined;
+		const locks = new JobFileLocks(context);
 		const abort = () => {
 			cancelled = true;
 			worker.postMessage({ kind: "cancel" });
@@ -102,6 +105,10 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = { ...process.env
 				worker.on("message", (message: unknown) => {
 					if (typeof message !== "object" || message === null) return;
 					const kind = Reflect.get(message, "kind");
+					if (kind === "host_call") {
+						forwardHostCall(worker, context, locks, message);
+						return;
+					}
 					if (kind === "module_result") resolve(Reflect.get(message, "value"));
 					else if (kind === "module_error")
 						reject(
@@ -129,8 +136,91 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = { ...process.env
 		} finally {
 			context.signal.removeEventListener("abort", abort);
 			clearTimeout(graceTimer);
-			void worker.terminate();
+			// The worker is stopped before its locks are released: no write it started can still be running (drain first).
+			await worker.terminate();
 			if (cancelled) context.gate.endJobGroups(context.jobId);
+			await locks.releaseAll();
 		}
 	};
+}
+
+/**
+ * The file locks one module job holds on the server. Lock and unlock calls outlive the job's cancel (the server cancels
+ * a still-waiting lock when the job ends); a lock granted after the job closed is released at once, so none is held
+ * by a job that can no longer release it.
+ */
+class JobFileLocks {
+	readonly #context: ToolChildJobContext;
+	readonly #held = new Set<string>();
+	#closed = false;
+
+	constructor(context: ToolChildJobContext) {
+		this.#context = context;
+	}
+
+	/** Records a granted lock; false when the job has closed and the lock was released instead. */
+	granted(lockId: string): boolean {
+		if (!this.#closed) {
+			this.#held.add(lockId);
+			return true;
+		}
+		void this.#unlock(lockId);
+		return false;
+	}
+
+	released(lockId: string): void {
+		this.#held.delete(lockId);
+	}
+
+	/** After the worker has stopped: releases every lock it still holds. */
+	async releaseAll(): Promise<void> {
+		this.#closed = true;
+		const held = [...this.#held];
+		this.#held.clear();
+		// A release the server cannot take (the channel closed) is covered by its release on the child's exit.
+		await Promise.allSettled(held.map((lockId) => this.#unlock(lockId)));
+	}
+
+	#unlock(lockId: string): Promise<unknown> {
+		return this.#context.hostCall({ kind: "unlock_file", args: { lockId } }, { survivesCancel: true });
+	}
+}
+
+/** A host call from the module's worker, forwarded over the reverse bridge; the reply goes back to that worker. */
+function forwardHostCall(worker: Worker, context: ToolChildJobContext, locks: JobFileLocks, message: object): void {
+	const callId = Reflect.get(message, "callId");
+	const kind = Reflect.get(message, "hostKind");
+	const name = Reflect.get(message, "name");
+	if (typeof callId !== "string" || !isHostCallKind(kind)) return;
+	const args: unknown = Reflect.get(message, "args");
+	const lockCall = kind === "lock_file" || kind === "unlock_file";
+	context
+		.hostCall(
+			{ kind, ...(typeof name === "string" ? { name } : {}), ...(args === undefined ? {} : { args }) },
+			{ survivesCancel: lockCall },
+		)
+		.then(
+			(value) => {
+				const lockId: unknown =
+					typeof value === "object" && value !== null ? Reflect.get(value, "lockId") : undefined;
+				if (kind === "lock_file" && typeof lockId === "string" && !locks.granted(lockId)) return;
+				if (kind === "unlock_file") {
+					const released: unknown =
+						typeof args === "object" && args !== null ? Reflect.get(args, "lockId") : undefined;
+					if (typeof released === "string") locks.released(released);
+				}
+				worker.postMessage({ kind: "host_reply", callId, value });
+			},
+			(error: unknown) =>
+				worker.postMessage({
+					kind: "host_reply",
+					callId,
+					error: error instanceof Error ? error.message : String(error),
+					code: error instanceof ToolChildJobError ? error.code : "host_call_failed",
+				}),
+		);
+}
+
+function isHostCallKind(value: unknown): value is HostCallKind {
+	return typeof value === "string" && HOST_CALL_KINDS.some((kind) => kind === value);
 }

@@ -7,11 +7,14 @@
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { RegisteredTool } from "../../../core/extensions/types.ts";
 import type {
+	ToolChildKindRunner,
 	ToolChildModuleJob,
 	ToolChildRunner,
 	ToolChildRunResult,
 } from "../../../core/tool-dispatch/tool-dispatcher.ts";
-import { ToolChildClient, type ToolChildStatus } from "./client.ts";
+import { ToolChildClient, ToolChildError, type ToolChildStatus, type ToolChildWake } from "./client.ts";
+import type { HostCallHandler } from "./host-calls-server.ts";
+import { CrashLoop, fixtureDeadline } from "./job-policy.ts";
 import type { ToolChildCommand } from "./launch.ts";
 import { MODULE_JOB_KIND, TOOL_CHILD_MODULE_ROOTS_ENV } from "./module-job.ts";
 
@@ -35,6 +38,12 @@ export interface SessionToolChildOptions {
 	readonly onRecord: (record: SessionToolChildRecord) => void;
 	readonly env?: NodeJS.ProcessEnv;
 	readonly command?: ToolChildCommand;
+	/** Serves the child's reverse-bridge calls; the request's `context.toolCallId` names the calling tool call. */
+	readonly onHostCall?: HostCallHandler;
+	/** Receives the child's wakes (`ToolChildWake`); the session hands each to the job definition of its kind. */
+	readonly onWake?: (wake: ToolChildWake) => void;
+	/** The crash loop's clock; tests inject a fake one. */
+	readonly now?: () => number;
 }
 
 /** The directories of the extensions whose tools declare a `childModule`: the only places a `module` job may load from. */
@@ -62,9 +71,11 @@ export class SessionToolChild {
 	#starting: Promise<void> | undefined;
 	#last: { readonly generation: number; readonly pid: number } | undefined;
 	#closed = false;
+	readonly #crashLoop: CrashLoop;
 
 	constructor(options: SessionToolChildOptions) {
 		this.#options = options;
+		this.#crashLoop = new CrashLoop(options.now ?? Date.now);
 		this.#client = new ToolChildClient({
 			dir: options.dir,
 			cwd: options.cwd,
@@ -74,16 +85,52 @@ export class SessionToolChild {
 			}),
 			...(options.command === undefined ? {} : { command: options.command }),
 			onStatus: (status) => this.#onStatus(status),
+			...(options.onHostCall === undefined ? {} : { onHostCall: options.onHostCall }),
+			...(options.onWake === undefined ? {} : { onWake: options.onWake }),
 		});
 	}
 
+	/**
+	 * Runs a module job on this session's child. A job lost to the child's exit is retried exactly once, on a fresh
+	 * generation, and only when it is idempotent; a non-idempotent job reports the error and is never re-run.
+	 */
 	readonly runner: ToolChildRunner = async (job: ToolChildModuleJob, signal: AbortSignal | undefined) => {
+		try {
+			return await this.#runOnce(job, signal);
+		} catch (error) {
+			const lostToExit = error instanceof ToolChildError && error.code === "tool_child_exited";
+			if (!lostToExit || job.idempotent !== true || signal?.aborted === true) throw error;
+			return this.#runOnce(job, signal);
+		}
+	};
+
+	/**
+	 * Runs a job of a built-in kind (`ToolDefinition.childJob`, e.g. `terminal.bash`) on this session's child, streaming
+	 * its updates to `onUpdate`. Never retried: such a job's state (a PTY session) does not survive a child exit.
+	 */
+	readonly kindRunner: ToolChildKindRunner = async (kind, args, call) => {
 		await this.#ensureLive();
 		const generation = this.#client.generation;
 		const pid = this.#client.pid ?? -1;
-		const value = await this.#client.run(MODULE_JOB_KIND, job, signal);
-		return { value, pid, generation } satisfies ToolChildRunResult;
+		const value = await this.#client.run(kind, args, call.signal, {
+			hostContext: { toolCallId: call.toolCallId },
+			...(call.onUpdate === undefined ? {} : { onUpdate: call.onUpdate }),
+		});
+		return { value, pid, generation };
 	};
+
+	async #runOnce(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<ToolChildRunResult> {
+		await this.#ensureLive();
+		const generation = this.#client.generation;
+		const pid = this.#client.pid ?? -1;
+		const deadlineMs = job.deadlineMs ?? fixtureDeadline(job.export, this.#options.env ?? process.env);
+		const value = await this.#client.run(MODULE_JOB_KIND, job, signal, {
+			idempotent: job.idempotent === true,
+			hostContext: { toolCallId: callingToolCallId(job.args) },
+			...(deadlineMs === undefined ? {} : { deadlineMs }),
+		});
+		return { value, pid, generation };
+	}
 
 	row(): SessionToolChildRow {
 		const state = this.#client.state;
@@ -100,11 +147,20 @@ export class SessionToolChild {
 	}
 
 	async #ensureLive(): Promise<void> {
-		if (this.#closed) throw new Error("tool_child_unavailable: the session is closed");
+		if (this.#closed) throw new ToolChildError("tool_child_unavailable", "the session is closed");
 		if (this.#client.state === "live") return;
-		this.#starting ??= this.#client.start().finally(() => {
-			this.#starting = undefined;
-		});
+		if (this.#crashLoop.unavailable())
+			throw new ToolChildError("tool_child_unavailable", "the tool child keeps exiting; it is paused for a minute");
+		this.#starting ??= this.#client
+			.start()
+			.catch((error: unknown) => {
+				// A child that dies before ready is an exit too: it counts toward the crash loop.
+				this.#crashLoop.recordExit();
+				throw error;
+			})
+			.finally(() => {
+				this.#starting = undefined;
+			});
 		await this.#starting;
 	}
 
@@ -119,6 +175,14 @@ export class SessionToolChild {
 			});
 			return;
 		}
+		this.#crashLoop.recordExit();
 		this.#options.onRecord({ state: "exited", generation: status.generation, pid: status.pid });
 	}
+}
+
+/** The tool call a module job runs for (the dispatcher puts it in the job's arguments); undefined for other jobs. */
+function callingToolCallId(args: unknown): string | undefined {
+	if (typeof args !== "object" || args === null) return undefined;
+	const toolCallId: unknown = Reflect.get(args, "toolCallId");
+	return typeof toolCallId === "string" ? toolCallId : undefined;
 }

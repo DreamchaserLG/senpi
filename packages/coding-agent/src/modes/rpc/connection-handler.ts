@@ -599,6 +599,9 @@ export function createRpcConnectionHandler(
 					widgetKey: key,
 					widgetLines: content as string[] | undefined,
 					widgetPlacement: options?.placement,
+					...(content !== undefined && options?.actions !== undefined && options.actions.length > 0
+						? { widgetActions: options.actions.map(({ label, command }) => ({ label, command })) }
+						: {}),
 				} as RpcExtensionUIRequest);
 			}
 		},

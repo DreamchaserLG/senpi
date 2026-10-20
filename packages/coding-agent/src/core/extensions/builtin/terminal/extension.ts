@@ -28,6 +28,7 @@ import { createPtyBashTool } from "./tools/bash.ts";
 import { createBashInputTool } from "./tools/bash-input.ts";
 import { createBashOutputTool } from "./tools/bash-output.ts";
 import { createBashResizeTool } from "./tools/bash-resize.ts";
+import { TERMINAL_CHILD_JOB_KINDS, terminalChildJob } from "./tools/child-placement.ts";
 import { createKillBashTool } from "./tools/kill-bash.ts";
 import { bindTerminalManifestWriter, createMonitorTool } from "./tools/monitor.ts";
 
@@ -93,11 +94,16 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	};
 	const toolCtx = buildToolContext(pi, state);
 
-	pi.registerTool(createPtyBashTool(toolCtx));
-	pi.registerTool(createBashOutputTool(toolCtx));
-	pi.registerTool(createBashInputTool(toolCtx));
-	pi.registerTool(createBashResizeTool(toolCtx));
-	pi.registerTool(createKillBashTool(toolCtx));
+	const onChild = <T extends object>(tool: T, kind: Parameters<typeof terminalChildJob>[1]) => ({
+		...tool,
+		placement: "child" as const,
+		childJob: terminalChildJob(toolCtx, kind),
+	});
+	pi.registerTool(onChild(createPtyBashTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.bash));
+	pi.registerTool(onChild(createBashOutputTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.output));
+	pi.registerTool(onChild(createBashInputTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.input));
+	pi.registerTool(onChild(createBashResizeTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.resize));
+	pi.registerTool(onChild(createKillBashTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.kill));
 	pi.registerTool(createMonitorTool(toolCtx));
 	registerRestoreDigestRenderer(pi);
 

@@ -313,6 +313,9 @@ describe("RPC Unix-socket multi-connection host", () => {
 			`export default function (pi) {
 			pi.on("session_start", (_event, ctx) => {
 				ctx.ui.setWidget("array-widget", ["array widget"]);
+				ctx.ui.setWidget("action-widget", ["choose"], { actions: [{ label: "Go", command: "/go" }] });
+				ctx.ui.setWidget("action-widget", undefined, { actions: [{ label: "Go", command: "/go" }] });
+				ctx.ui.setWidget("empty-actions-widget", ["plain"], { actions: [] });
 				ctx.ui.setWidget("factory-widget", () => ({ render: () => ["factory"] }));
 				ctx.ui.setHeader(() => ({ render: () => ["header"] }));
 				ctx.ui.setFooter((_tui, _theme, footerData) => ({ render: () => [footerData.getGitBranch() ?? "footer"] }));
@@ -355,6 +358,19 @@ describe("RPC Unix-socket multi-connection host", () => {
 						widgetLines: ["array widget"],
 					}),
 				]),
+			);
+			const actionRecords = peer.peer.messages.filter(
+				(value) =>
+					value.type === "extension_ui_request" &&
+					["action-widget", "empty-actions-widget"].includes(String(value.widgetKey)),
+			);
+			expect(actionRecords.map((value) => [value.widgetKey, value.widgetLines, value.widgetActions])).toEqual([
+				["action-widget", ["choose"], [{ label: "Go", command: "/go" }]],
+				["action-widget", undefined, undefined],
+				["empty-actions-widget", ["plain"], undefined],
+			]);
+			expect(actionRecords.every((value) => !("widgetActions" in value) || value.widgetLines !== undefined)).toBe(
+				true,
 			);
 		} finally {
 			peer.peer.close();

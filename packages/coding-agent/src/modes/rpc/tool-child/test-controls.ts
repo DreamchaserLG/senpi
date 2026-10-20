@@ -17,7 +17,13 @@ export type TestSwitch =
 	| "HOLD_LAUNCH_PROOF"
 	| "STOP_AFTER_SPAWN"
 	| "DROP_CONTROL_BEFORE_ACK"
-	| "SKIP_ACK_WAIT";
+	| "SKIP_ACK_WAIT"
+	| "IGNORE_CANCEL"
+	| "STOP_SELF"
+	| "EXIT_MID_JOB"
+	| "EXIT_ON_START"
+	| "HANG_BEFORE_READY"
+	| "BLOCK_READER";
 
 export interface TestControls {
 	readonly enabled: (name: TestSwitch) => boolean;

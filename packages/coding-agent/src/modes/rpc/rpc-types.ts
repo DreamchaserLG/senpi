@@ -1474,6 +1474,8 @@ export type RpcExtensionUIRequest =
 			widgetKey: string;
 			widgetLines: string[] | undefined;
 			widgetPlacement?: "aboveEditor" | "belowEditor";
+			/** Choices offered with the widget; a client sends `command` as a normal prompt when one is picked. */
+			widgetActions?: { label: string; command: string }[];
 	  }
 	| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
 	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string }

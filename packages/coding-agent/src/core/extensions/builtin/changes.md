@@ -1,3 +1,23 @@
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/` (new): after a human-started turn settles, arms a timer for the prompt cache's expiry (last request, warm pings included, plus the model's TTL). When it fires on an idle session at or above `handoffHint.minContextTokens`, below the compaction trigger, with no active goal, and a fresh session would save at least `handoffHint.minSavingUsd` on the next reply (priced from the model's cost card), it sets one `handoff-hint` widget line with two choices: `/handoff` (opens a linked new session whose first entry is a deterministic brief: goal, open todos, last request and answer, touched files, old session path; no model call, no turn) and `/handoff keep` (hides it for the session, persisted as a `handoff-hint` custom entry). Once per threshold crossing; never for `worker` sessions, print/JSON mode, or extension-started turns. Emits `handoff_hint` on the event bus for shown, accepted and dismissed.
+- `handoff-hint/` (review follow-up): a session opened with history arms from its last assistant reply's timestamp, so a resumed session whose cache already expired gets the hint before its first reply; `accepted` is emitted only after `newSession` returns not cancelled (a cancelled switch keeps the hint); `/handoff <other>` notifies instead of starting a session; the brief lists at most 20 open todos, each capped at 200 characters.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers `handoff-hint` after `cache-keepalive`.
+
+### Why
+
+Measured over 7 days of real sessions, the first reply after the cache expired cost a median $2.33 at 400k-600k tokens against $0.46 for a fresh session, and 82% of returns after a 5-60 minute break were cold. Nothing told the user (senpi#3230).
+
+### Why an extension could not handle it
+
+It is an extension; this records the new builtin.
+
+### Expected merge conflict zones
+
+- LOW: `builtin/index.ts` import block and the `builtinExtensions` entry after `cache-keepalive`.
+
 ## 2026-10-17 - /files lists the whole active path after a reopen (senpi#3519)
 
 ### What changed

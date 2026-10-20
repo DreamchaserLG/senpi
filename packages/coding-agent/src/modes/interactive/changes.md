@@ -16,6 +16,42 @@ The notice is rendered by the interactive mode's own event switch.
 
 The `retry_fallback_applied` case's `why` line.
 
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `setExtensionWidget` renders a string-array widget's `actions` on its last line as muted `label: command` pairs.
+
+### Why
+
+The terminal cannot click, so each choice names the command that runs it (the handoff hint's `/handoff` and `/handoff keep`).
+
+### Why an extension could not handle it
+
+The widget renderer is host code; the extension only passes the choices.
+
+### Expected merge conflict zones
+
+- LOW: `setExtensionWidget`, the string-array branch.
+
+## 2026-10-19 - A stuck offload module is shown as a warning (senpi#3622)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `offload_module_stuck` session event is shown with `showWarning`, its notice naming the module, the files whose locks it holds, and the `--tool-runtime child` alternative.
+
+### Why
+
+A module stuck in this process holds its locks until it finishes or the session closes, and writes to those files fail meanwhile; the user must be told why and what to do.
+
+### Why an extension could not handle it
+
+The event switch of the interactive mode is core; an extension sees session events but cannot add a warning line to the interactive transcript for a core event.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the new `case` before `transcript_write_failed` in the session event switch.
+
 ## 2026-10-19 - Interactive quit marks its dispose as a process exit (senpi#3711)
 
 ### What changed
@@ -3007,3 +3043,30 @@ The tool card's content lifecycle is an interactive-mode internal; extensions do
 ### Expected merge conflict zones
 
 - LOW: `invalidate()`, `render()`, `updateDisplay()` and the field list of `ToolExecutionComponent`; the constructor of `ToolExecutionRenderer`.
+
+## 2026-10-20 - Message components keep less per-message state (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/theme/theme.ts`: new internal `sharedMarkdownTheme()` returns one frozen object per active `Theme`, and the built-in message components use it instead of building their own; it is rebuilt when the theme switches, because Markdown's render cache keys on the theme object's identity. The public `getMarkdownTheme()` still returns a new object per call, so an extension can customize its copy.
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/custom-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/remote-delivery-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/user-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution-renderer.ts`: `releaseContent()` also drops the renderer's last render state (it held a filtered copy of the result); `update()` sets a fresh one before the card is painted again.
+- `packages/coding-agent/test/suite/regressions/2537-message-component-state.test.ts` (new).
+
+### Why
+
+Heap snapshots of the tool-turn soak in [#2537](https://github.com/code-yeongyu/senpi/issues/2537) attribute 11.5 KB per turn to mounted transcript components. Two parts of that were per-message duplicates: every message component (assistant, user, custom, skill, summaries) built its own markdown theme object (about 640 bytes each), and every released tool card's renderer kept a second, filtered copy of its result (about 2.1 KB each).
+
+### Why an extension could not handle it
+
+The shared markdown theme and the tool card's renderer are interactive-mode internals; the public `getMarkdownTheme()` is unchanged.
+
+### Expected merge conflict zones
+
+- LOW: `sharedMarkdownTheme()` in `theme.ts`; the theme imports and default arguments of the seven message components; `releaseContent()` in `tool-execution-renderer.ts`.

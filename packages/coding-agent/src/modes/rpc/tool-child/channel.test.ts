@@ -37,8 +37,14 @@ describe("tool-child channel", () => {
 		const child = await connectChannel(listener.env);
 		const server = await listener.accepted;
 		const atServer = nextMessage(server);
-		child.send({ type: "hello", generation: 3, pid: process.pid, protocol: 1 });
-		expect(await atServer).toEqual({ type: "hello", generation: 3, pid: process.pid, protocol: 1 });
+		child.send({ type: "hello", generation: 3, pid: process.pid, protocol: 2, jobKinds: ["module"] });
+		expect(await atServer).toEqual({
+			type: "hello",
+			generation: 3,
+			pid: process.pid,
+			protocol: 2,
+			jobKinds: ["module"],
+		});
 		const big = "x".repeat(3 * 1024 * 1024);
 		const atChild = nextMessage(child);
 		server.send({ type: "host_reply", callId: "c1", value: big });
@@ -95,7 +101,7 @@ describe("tool-child channel", () => {
 	it("delivers frames that arrive before the server subscribes", async () => {
 		const listener = await openChannelListener({ dir: await scratch(), generation: 5 });
 		const child = await connectChannel(listener.env);
-		child.send({ type: "hello", generation: 5, pid: 1, protocol: 1 });
+		child.send({ type: "hello", generation: 5, pid: 1, protocol: 2, jobKinds: [] });
 		child.send({ type: "pong", seq: 9 });
 		const server = await listener.accepted;
 		await new Promise((resolve) => setImmediate(resolve));

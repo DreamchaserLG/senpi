@@ -21,6 +21,9 @@ const FORBIDDEN = [
 // Worker entries are started with `new URL("./x.ts", import.meta.url)`, so they are part of the child's graph too.
 const SPECIFIER =
 	/(?:new\s+URL|siblingWorkerUrl)\(\s*["'](\.{1,2}\/[^"']+)["']\s*,\s*import\.meta\.url|(?:import|export)\s[^'"]*?from\s*["'](\.{1,2}\/[^"']+)["']|import\s*\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)|import\s+["'](\.{1,2}\/[^"']+)["']/g;
+// `import type` is erased at runtime, so it pulls nothing into the child's module graph (senpi#3566 todo 9: the
+// terminal job bodies import their tool schemas, whose type imports reach the extension types barrel).
+const TYPE_SPECIFIER = /import\s+type\s[^'"]*?from\s*["'](\.{1,2}\/[^"']+)["']/g;
 
 function reachable(roots: readonly string[]): Set<string> {
 	const seen = new Set<string>();
@@ -30,9 +33,15 @@ function reachable(roots: readonly string[]): Set<string> {
 		if (file === undefined || seen.has(file)) continue;
 		seen.add(file);
 		const source = readFileSync(file, "utf8");
+		const typeImports = new Set<string>();
+		for (const match of source.matchAll(TYPE_SPECIFIER)) typeImports.add(resolve(dirname(file), match[1]));
 		for (const match of source.matchAll(SPECIFIER)) {
 			const specifier = match[1] ?? match[2] ?? match[3] ?? match[4];
-			if (specifier?.endsWith(".ts")) queue.push(resolve(dirname(file), specifier));
+			if (specifier?.endsWith(".ts")) {
+				const target = resolve(dirname(file), specifier);
+				if (typeImports.has(target)) continue;
+				queue.push(target);
+			}
 		}
 	}
 	return new Set([...seen].map((file) => relative(packageRoot, file)));

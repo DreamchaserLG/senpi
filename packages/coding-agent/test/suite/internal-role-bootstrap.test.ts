@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { openChannelListener } from "../../src/modes/rpc/tool-child/channel.ts";
 import type { ToolChildMessage } from "../../src/modes/rpc/tool-child/protocol.ts";
+import { TOOL_CHILD_JOB_HANDLERS } from "../../src/modes/rpc/tool-child/role.ts";
 
 const resolver = pathToFileURL(resolve(import.meta.dirname, "../../src/experimental/source-resolver.ts")).href;
 const ENTRIES = ["src/cli.ts", "src/cli-main.ts", "src/rpc-entry.ts", "src/tool-child-main.ts"] as const;
@@ -59,7 +60,13 @@ describe.each(ENTRIES)("%s with the tool-child role", (entry) => {
 		);
 		const channel = await listener.accepted;
 		const hello = await new Promise<ToolChildMessage>((done) => channel.onMessage(done));
-		expect(hello).toEqual({ type: "hello", generation: 7, pid: child.pid, protocol: 1 });
+		expect(hello).toEqual({
+			type: "hello",
+			generation: 7,
+			pid: child.pid,
+			protocol: 2,
+			jobKinds: Object.keys(TOOL_CHILD_JOB_HANDLERS).sort(),
+		});
 		channel.close();
 		const result = await exited;
 		expect(result.code).toBe(0);

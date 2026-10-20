@@ -96,4 +96,15 @@ describe("generation drain request (senpi#3653)", () => {
 		await new Promise((resolve) => setTimeout(resolve, 150));
 		expect(seen).toHaveLength(0);
 	});
+
+	it("delivers a request when it lands, without waiting for the poll (senpi#3747)", async () => {
+		const file = await requestFile();
+		const seen: HostDrainRequest[] = [];
+		const stop = watchDrainRequest(file, (request) => seen.push(request), { pollMs: 600_000 });
+		cleanups.push(stop);
+
+		await writeDrainRequest(file, { sender: { pid: process.pid, kind: "stop" }, reason: "watched" });
+		await until(() => seen.length === 1);
+		expect(seen[0]?.reason).toBe("watched");
+	});
 });

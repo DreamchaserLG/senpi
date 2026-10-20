@@ -1,3 +1,6 @@
+/** Where both sides write payload references (`<root>/<generation>/`); the server owns and tears it down. */
+export const TOOL_CHILD_REFS_ROOT_ENV = "SENPI_TOOL_CHILD_REFS_ROOT";
+
 /** This generation's ledger path; the child reads it to sweep owned groups when its host disappears. */
 export const TOOL_CHILD_LEDGER_ENV = "SENPI_TOOL_CHILD_LEDGER";
 /** How to re-enter this engine (set by the server when it starts the tool child); the launch shim is started the same way. */
@@ -17,6 +20,7 @@ export const TOOL_CHILD_INTERNAL_ENV = [
 	"SENPI_TOOL_CHILD_GENERATION",
 	TOOL_CHILD_LEDGER_ENV,
 	"SENPI_TOOL_CHILD_MODULE_ROOTS",
+	TOOL_CHILD_REFS_ROOT_ENV,
 	TOOL_CHILD_REENTRY_ENV,
 ] as const;
 
