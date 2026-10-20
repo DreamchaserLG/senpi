@@ -58,7 +58,7 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", () => reset());
 
 	pi.on("input", (event) => {
-		if (event.source !== "extension") reset();
+		if (event.source !== "extension" && event.source !== "session_control") reset();
 	});
 
 	pi.on("tool_execution_start", (event) => {

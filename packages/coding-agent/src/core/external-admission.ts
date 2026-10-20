@@ -199,6 +199,22 @@ export class ExternalAdmission {
 		if (this.fileTakesWrites) this.failed.clear();
 	}
 
+	/** Whether a queued (not started) delivery is still held: neither written, handled, nor cleared. */
+	holdsQueued(deliveryId: string): boolean {
+		const lane = this.pending.get(deliveryId);
+		return lane !== undefined && lane !== "start";
+	}
+
+	/**
+	 * An `input` handler took a queued delivery (it answered a waiting question, senpi#3786): it will never get
+	 * its own transcript entry, so it is settled as emitted now and its sender learns it was delivered.
+	 */
+	observeHandled(deliveryId: string): void {
+		if (!this.pending.delete(deliveryId)) return;
+		this.emitted.add(deliveryId);
+		for (const listener of this.emittedListeners) listener(deliveryId);
+	}
+
 	/** The runtime's queues were cleared: queued deliveries are no longer held. */
 	dropQueued(): void {
 		for (const [id, lane] of this.pending) {

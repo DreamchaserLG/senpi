@@ -1799,8 +1799,12 @@ export interface UserBashEvent {
 // Input Events
 // ============================================================================
 
-/** Source of user input */
-export type InputSource = "interactive" | "rpc" | "extension";
+/**
+ * Source of user input. `session_control` is a message another sender delivered through external admission
+ * (a messenger gateway or another session) while a run was active; it reaches `input` handlers only for
+ * interception (`handled`), and a `transform` result is ignored for it (senpi#3786).
+ */
+export type InputSource = "interactive" | "rpc" | "extension" | "session_control";
 
 /** Fired when user input is received, before agent processing */
 export interface InputEvent {

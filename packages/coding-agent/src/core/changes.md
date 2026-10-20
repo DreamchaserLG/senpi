@@ -1,3 +1,21 @@
+## 2026-10-20 - A messenger delivery reaches input interception, so it answers a waiting blocking question (senpi#3786)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the external-admission port's `enqueue` offers a delivery admitted into a busy run to the `input` handlers with source `session_control` (`_offerDeliveryAsInput`). The delivery leaves the agent queue while the handlers decide; a handled one is settled through `ExternalAdmission.observeHandled`, and any other one goes back to its lane, or starts a turn when the run ended meanwhile.
+
+### Why
+
+A message sent through a messenger gateway while a blocking ask-user question waited was queued behind the blocking tool and got no response until the question timed out. The owner's rule (senpi#3774) is that such a message is the question's answer on every surface.
+
+### Why an extension could not handle it
+
+External admission enqueues straight into the agent's native queues without any extension event, so no extension could see the delivery before it was stuck behind the blocking tool.
+
+### Expected merge conflict zones
+
+- LOW: the `externalAdmission` port object in `AgentSession` and the private delivery helpers placed before `_flushPostCompactionDeferredMessages`.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

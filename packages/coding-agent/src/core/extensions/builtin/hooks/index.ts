@@ -169,7 +169,7 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("input", async (event, ctx) => {
-		if (event.source === "extension") return undefined;
+		if (event.source === "extension" || event.source === "session_control") return undefined;
 		stopLifecycle.resetTurn();
 		pendingPromptContexts.splice(0);
 		const state = refreshState(ctx);

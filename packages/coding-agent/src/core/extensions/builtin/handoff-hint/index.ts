@@ -265,6 +265,7 @@ export function createHandoffHintExtension(
 			arm();
 		});
 		pi.on("input", (event) => {
+			if (event.source === "session_control") return;
 			humanStartedTurn = event.source !== "extension";
 			disarm();
 			hide(ctx);

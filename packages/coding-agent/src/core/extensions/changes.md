@@ -2,6 +2,7 @@
 
 ### What changed
 
+- `packages/coding-agent/src/core/extensions/types.ts`: `InputSource` gains `"session_control"`, a messenger or cross-session delivery admitted into an active run (senpi#3786); only `handled` is honoured for it.
 - `packages/coding-agent/src/core/extensions/types.ts`: `QuestionResponse.resolvedBy` gains `"typed_message"`, the surface for a regular message the user submitted while a blocking question waited; the ask-user builtin settles that question with the message as its `comment-submitted` answer.
 
 ### Why
@@ -14,7 +15,7 @@ The behaviour itself lives in the ask-user builtin (an `input` handler); only th
 
 ### Expected merge conflict zones
 
-- LOW: `types.ts` `QuestionResponse.resolvedBy` union.
+- LOW: `types.ts` `QuestionResponse.resolvedBy` union and the `InputSource` union.
 
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 

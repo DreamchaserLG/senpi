@@ -11,6 +11,7 @@
 ### Changed
 
 - While the agent waits on a blocking question (`ask_user_question` / `request_user_input` with `waitForAnswer`), a regular message you send is now the answer, in the terminal, the desktop and every RPC client: the question settles at once with your message as its answer instead of waiting up to 30 minutes with the message queued as a steer. The question card shows "answered with your message", and `question_resolved` and the tool result carry `resolvedBy: "typed_message"`. Images on the message travel with the answer; slash commands, `!` input and asynchronous questions are unchanged ([#3774](https://github.com/code-yeongyu/senpi/issues/3774)).
+- A message a messenger gateway delivers while the agent waits on a blocking question now answers it the same way, instead of getting no response until the question timed out; with a non-blocking question open, the message is delivered right after as before. Extensions see such a delivery as an `input` event with `source: "session_control"` while a run is active ([#3786](https://github.com/code-yeongyu/senpi/issues/3786)).
 
 ### Fixed
 

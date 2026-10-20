@@ -1179,7 +1179,8 @@ Fired when user input is received, after extension commands are checked but befo
 pi.on("input", async (event, ctx) => {
   // event.text - raw input (before skill/template expansion)
   // event.images - attached images, if any
-  // event.source - "interactive" (typed), "rpc" (API), or "extension" (via sendUserMessage)
+  // event.source - "interactive" (typed), "rpc" (API), "extension" (via sendUserMessage), or
+  //   "session_control" (a messenger or cross-session delivery admitted into an active run; only "handled" applies)
   // event.streamingBehavior - "steer" | "followUp" | undefined
   //   undefined when idle, "steer" for mid-stream interrupts,
   //   "followUp" for messages queued until the agent finishes

@@ -44,7 +44,7 @@ export class GoalDirectInputLifecycle {
 	}
 
 	async onInput(event: InputEvent, ctx: ExtensionContext): Promise<void> {
-		if (event.source === "extension") return;
+		if (event.source === "extension" || event.source === "session_control") return;
 
 		this.#dependencies.monitor.holdDirectInput(event.inputId);
 		this.#candidates.set(event.inputId, { goalId: null });

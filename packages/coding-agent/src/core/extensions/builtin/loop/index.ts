@@ -795,7 +795,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			// A user turn is never an attributed loop iteration, so keepalive must not see it.
 			// A tick dispatched by this extension arrives with source "extension" and MUST keep
 			// its attribution, or no dynamic iteration would ever be judged.
-			if (event.source === "extension") return;
+			if (event.source === "extension" || event.source === "session_control") return;
 			attributedLoopId = undefined;
 			attributedDeliveryId = undefined;
 			attributionResolved = false;

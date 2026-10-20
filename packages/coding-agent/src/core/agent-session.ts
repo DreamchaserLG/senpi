@@ -258,6 +258,7 @@ import {
 } from "./extensions/index.ts";
 import { projectKernelPrelude } from "./extensions/kernel-prelude.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import type { ExternalDeliverAs } from "./extensions/session-control-types.ts";
 import type {
 	ApplyCompactionOptions,
 	ApplyCompactionResult,
@@ -269,7 +270,7 @@ import type {
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
-import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
+import { deliveryIdOf, ExternalAdmission, type SessionControlDeliveryMessage } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
 import {
@@ -1254,13 +1255,11 @@ export class AgentSession {
 	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
 	readonly externalAdmission = new ExternalAdmission({
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
-		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
-		start: (message) =>
-			this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
-				this._sessionLogger.warn("external_delivery_start_failed", {
-					error: error instanceof Error ? error.message : String(error),
-				});
-			}),
+		enqueue: (message, lane) => {
+			this._enqueueDelivery(message, lane);
+			void this._offerDeliveryAsInput(message, lane);
+		},
+		start: (message) => this._startDelivery(message),
 	});
 	private _controlEndpointHost: ControlEndpointHost | undefined;
 	// Queues held while the first post-compaction response is classified. Agent
@@ -6088,6 +6087,49 @@ export class AgentSession {
 		}
 		// Announce the input only once it is queued everywhere, so a listener can already change it by queuedId.
 		this._emitQueueUpdate();
+	}
+
+	private _enqueueDelivery(message: SessionControlDeliveryMessage, lane: ExternalDeliverAs): void {
+		if (lane === "steer") this.agent.steer(message);
+		else this.agent.followUp(message);
+	}
+
+	private _startDelivery(message: SessionControlDeliveryMessage): Promise<void> {
+		return this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
+			this._sessionLogger.warn("external_delivery_start_failed", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		});
+	}
+
+	/**
+	 * A delivery admitted into a busy run reaches the same `input` interception as typed input (senpi#3786):
+	 * while a blocking question waits, it is that question's answer instead of a steer stuck behind the tool.
+	 * The delivery leaves the queue while handlers decide, so it can never be both an answer and a steer; one
+	 * nobody handled goes back to its lane, or starts a turn if the run ended meanwhile, so it is never dropped.
+	 */
+	private async _offerDeliveryAsInput(message: SessionControlDeliveryMessage, lane: ExternalDeliverAs): Promise<void> {
+		const deliveryId = message.details?.delivery_id;
+		if (deliveryId === undefined || typeof message.content !== "string") return;
+		if (!this._extensionRunner.hasHandlers("input") || !this.agent.removeQueuedMessage(message)) return;
+		let handled = false;
+		try {
+			const inputId = `${this.sessionManager.getSessionId()}:${++this._nextInputId}`;
+			const result = await this._extensionRunner.emitInput(
+				message.content,
+				undefined,
+				"session_control",
+				lane,
+				inputId,
+			);
+			handled = result.action === "handled";
+		} finally {
+			if (handled) this.externalAdmission.observeHandled(deliveryId);
+			else if (this.externalAdmission.holdsQueued(deliveryId)) {
+				if (this._isAgentRunActive || this._promptStartPending) this._enqueueDelivery(message, lane);
+				else void this._startDelivery(message);
+			}
+		}
 	}
 
 	private _flushPostCompactionDeferredMessages(): void {

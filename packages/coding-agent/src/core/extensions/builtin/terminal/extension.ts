@@ -176,7 +176,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("input", (event) => {
-		if (event.source === "extension") return;
+		if (event.source === "extension" || event.source === "session_control") return;
 		state.monitorNotifier?.noteActivity();
 		flushRestoreDigest(pi, state);
 		const resumed = state.bundle?.monitors.resume() ?? [];
