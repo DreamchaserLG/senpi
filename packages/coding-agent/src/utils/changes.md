@@ -5,10 +5,11 @@
 ### What changed
 
 - `packages/coding-agent/src/utils/paths.ts`: exports `absoluteHostArgs(hostArgs, cwd)`, moved from `modes/rpc/protocol-identity.ts`: each `--extension`/`-e`/`--skill`/`--prompt-template`/`--theme`/`--session-dir` value through `resolveCliPaths` against `cwd`.
+- `packages/coding-agent/src/utils/paths.ts`: exports `absoluteExecArgv(execArgv, cwd)`: each `--import`/`--loader`/`--experimental-loader`/`--require`/`-r` value (separate or `=` form) that Node would resolve against the cwd becomes absolute: a relative path against `cwd`, a bare package through `createRequire(<cwd>/)` (kept verbatim when it does not resolve); ESM flags get a `file:` URL, `--require` a path; absolute paths and `file:`/`data:`/`node:` URLs stay verbatim.
 
 ### Why
 
-The RPC host lifecycle supervisor must apply it before it moves into its agent dir, and this module is already in the supervisor's import graph while `protocol-identity.ts` (which imports the CLI parser) must stay out of it.
+The RPC host lifecycle supervisor must apply it before it moves into its agent dir, and this module is already in the supervisor's import graph while `protocol-identity.ts` (which imports the CLI parser) must stay out of it. The supervisor applies `absoluteExecArgv` to the runtime exec argv for the same reason.
 
 ### Why an extension could not handle it
 

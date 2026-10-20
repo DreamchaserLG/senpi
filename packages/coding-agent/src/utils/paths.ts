@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve as nodeResolvePath, parse, relative, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnProcessSync } from "./child-process.ts";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -260,6 +261,60 @@ export function absoluteHostArgs(hostArgs: readonly string[], cwd: string): stri
 			? (resolveCliPaths(cwd, [arg])?.[0] ?? arg)
 			: arg,
 	);
+}
+
+/** Node exec-argv flags whose value is a module specifier, and whether Node loads it as ESM (`--import`/loaders). */
+const EXEC_ARGV_MODULE_FLAGS = new Map([
+	["--import", true],
+	["--loader", true],
+	["--experimental-loader", true],
+	["--require", false],
+	["-r", false],
+]);
+
+function absoluteModuleSpecifier(specifier: string, cwd: string, esm: boolean): string {
+	if (isAbsolute(specifier) || /^(?:file|data|node):/.test(specifier)) return specifier;
+	let path: string;
+	if (/^\.\.?(?:[\\/]|$)/.test(specifier)) {
+		path = nodeResolvePath(cwd, specifier);
+	} else {
+		try {
+			path = createRequire(join(cwd, "noop.js")).resolve(specifier);
+		} catch {
+			// no-excuse-ok: catch - an unresolvable package stays as written, so Node reports it exactly as before.
+			return specifier;
+		}
+	}
+	return esm ? pathToFileURL(path).href : path;
+}
+
+/**
+ * Exec argv (`runtimeExecArgv()`) read against `cwd`, the directory the process was started from (senpi#3783): each
+ * `--import`/`--loader`/`--experimental-loader`/`--require`/`-r` value, in either `--flag value` or `--flag=value` form,
+ * that Node would resolve against the cwd - a relative path, or a bare package resolved from `cwd` - becomes absolute (a
+ * `file:` URL for the ESM flags, a path for `--require`). Absolute paths and `file:`/`data:`/`node:` URLs stay verbatim,
+ * and so does a package `cwd` cannot resolve. The RPC host supervisor applies it before it moves into its agent dir, so
+ * a host child it spawns from there still loads what its launcher meant.
+ */
+export function absoluteExecArgv(execArgv: readonly string[], cwd: string): string[] {
+	const result: string[] = [];
+	for (let index = 0; index < execArgv.length; index++) {
+		const arg = execArgv[index] ?? "";
+		const equals = arg.startsWith("--") ? arg.indexOf("=") : -1;
+		const inlineEsm = equals > 0 ? EXEC_ARGV_MODULE_FLAGS.get(arg.slice(0, equals)) : undefined;
+		if (inlineEsm !== undefined) {
+			result.push(`${arg.slice(0, equals)}=${absoluteModuleSpecifier(arg.slice(equals + 1), cwd, inlineEsm)}`);
+			continue;
+		}
+		result.push(arg);
+		const esm = EXEC_ARGV_MODULE_FLAGS.get(arg);
+		const value = execArgv[index + 1];
+		if (esm !== undefined && value !== undefined) {
+			result.push(absoluteModuleSpecifier(value, cwd, esm));
+			index++;
+		}
+	}
+	return result;
 }
 
 export function getCwdRelativePath(filePath: string, cwd: string): string | undefined {

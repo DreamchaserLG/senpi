@@ -2,12 +2,12 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `anchorSupervisorCwd` runs `absoluteHostArgs` (`utils/paths.ts`, the CLI's `resolveCliPaths` rule) over `hostArgs` against the inherited cwd before it `chdir`s into the agent dir. Every supervisor entry reaches it first through `runHostSupervisor`: `host-lifecycle.ts` run as a program, `main()`'s hidden `--internal-rpc-host-supervisor` route (`supervisor-route.ts`), and the bundled `host-supervisor-entry.ts`; ensure/handoff args are already absolute, so they are unchanged.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `anchorSupervisorCwd` runs `absoluteHostArgs` (`utils/paths.ts`, the CLI's `resolveCliPaths` rule) over `hostArgs` against the inherited cwd before it `chdir`s into the agent dir. Every supervisor entry reaches it first through `runHostSupervisor`: `host-lifecycle.ts` run as a program, `main()`'s hidden `--internal-rpc-host-supervisor` route (`supervisor-route.ts`), and the bundled `host-supervisor-entry.ts`; ensure/handoff args are already absolute, so they are unchanged. It also stores `execArgv`: the runtime exec argv the default host child re-enters with (`runtimeExecArgv()`), passed through `absoluteExecArgv` against the same inherited cwd, and `resolveHostChildLaunch` uses it, so `--import tsx` / `-r ./x.cjs` still load from the launcher's directory.
 - `packages/coding-agent/src/modes/rpc/protocol-identity.ts`: `absoluteHostArgs` moved to `utils/paths.ts` and is re-exported here; `withAbsoluteHostArgs` is unchanged.
 
 ### Why
 
-Review round 3 of #3784: round 2 stopped absolutizing in the supervisor on the belief that only ensure/handoff start one, but a direct launch (a wrapper, a manual run of the supervisor program) hands relative `--session-dir sessions` / `-e ./ext.ts` straight through, and the host child resolved them against the agent dir. `utils/paths.ts` is already in the supervisor's import graph (`config.ts` imports `normalizePath` from it), so the rule costs no module and the graph stays at 55.
+Review round 3 of #3784: round 2 stopped absolutizing in the supervisor on the belief that only ensure/handoff start one, but a direct launch (a wrapper, a manual run of the supervisor program) hands relative `--session-dir sessions` / `-e ./ext.ts` straight through, and the host child resolved them against the agent dir. The same cwd move broke cwd-relative runtime exec argv: a supervisor started with `--import tsx` (or any user `--import`/`--require` relative to its cwd) spawned a host child that failed with `Cannot find package 'tsx' imported from <agentDir>/`, which `rpc-socket-ownership.test.ts` (5) and `rpc-host-lifecycle.test.ts` (3) caught. `utils/paths.ts` is already in the supervisor's import graph (`config.ts` imports `normalizePath` from it), so the rule costs no module and the graph stays at 55.
 
 ### Why an extension could not handle it
 
@@ -15,7 +15,7 @@ The supervisor's launch anchoring is core RPC host code that runs before any ext
 
 ### Expected merge conflict zones
 
-- LOW: the `hostArgs` field in `anchorSupervisorCwd`; the `utils/paths.ts` import in `protocol-identity.ts`.
+- LOW: the `hostArgs`/`execArgv` fields in `anchorSupervisorCwd`; the runtime-argv line in `resolveHostChildLaunch`; the `utils/paths.ts` import in `protocol-identity.ts`.
 
 ## 2026-10-20 - Caller and host child agree on the launch profile after the supervisor's cwd move (senpi#3783 review)
 

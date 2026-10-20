@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { absoluteHostArgs, withAbsoluteHostArgs } from "../src/modes/rpc/protocol-identity.ts";
-import { resolveCliPaths } from "../src/utils/paths.ts";
+import { absoluteExecArgv, resolveCliPaths } from "../src/utils/paths.ts";
 
 /**
  * Makes each path-valued host arg absolute against the CALLER's cwd (senpi#3783), with `resolveCliPaths`, the CLI's own
@@ -78,5 +79,74 @@ describe("host arg paths (senpi#3783)", () => {
 		expect(options.hostArgs).toEqual(["--extension", resolve(process.cwd(), "x.js")]);
 		const bare: { readonly socket: string; readonly hostArgs?: readonly string[] } = { socket: "/s" };
 		expect(withAbsoluteHostArgs(bare)).toBe(bare);
+	});
+});
+
+// The exec argv a supervisor's host child re-enters with, read against the directory the supervisor was started from.
+describe("exec argv module specifiers (senpi#3783)", () => {
+	const created: string[] = [];
+	afterEach(() => {
+		for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
+	});
+	function cwdWithPackage(): { cwd: string; entry: string } {
+		const cwd = mkdtempSync(join(tmpdir(), "rpc3783-exec-"));
+		created.push(cwd);
+		const pkg = join(cwd, "node_modules", "fake-loader");
+		mkdirSync(pkg, { recursive: true });
+		writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "fake-loader", exports: "./loader.mjs" }));
+		writeFileSync(join(pkg, "loader.mjs"), "");
+		return { cwd, entry: realpathSync(join(pkg, "loader.mjs")) };
+	}
+
+	it("makes relative paths absolute: a file URL for ESM flags, a path for --require", () => {
+		const { cwd } = cwdWithPackage();
+		expect(absoluteExecArgv(["--import", "./a.mjs", "-r", "../b.cjs", "--loader", "./l.mjs"], cwd)).toEqual([
+			"--import",
+			pathToFileURL(resolve(cwd, "a.mjs")).href,
+			"-r",
+			resolve(cwd, "../b.cjs"),
+			"--loader",
+			pathToFileURL(resolve(cwd, "l.mjs")).href,
+		]);
+	});
+
+	it("resolves a bare package from cwd and keeps an unresolvable one verbatim", () => {
+		const { cwd, entry } = cwdWithPackage();
+		expect(
+			absoluteExecArgv(["--import", "fake-loader", "--require", "fake-loader", "--import", "nope-pkg"], cwd),
+		).toEqual(["--import", pathToFileURL(entry).href, "--require", entry, "--import", "nope-pkg"]);
+	});
+
+	it("rewrites the = forms of every module flag", () => {
+		const { cwd, entry } = cwdWithPackage();
+		expect(
+			absoluteExecArgv(
+				["--import=fake-loader", "--require=./r.cjs", "--experimental-loader=./x.mjs", "--loader=fake-loader"],
+				cwd,
+			),
+		).toEqual([
+			`--import=${pathToFileURL(entry).href}`,
+			`--require=${resolve(cwd, "r.cjs")}`,
+			`--experimental-loader=${pathToFileURL(resolve(cwd, "x.mjs")).href}`,
+			`--loader=${pathToFileURL(entry).href}`,
+		]);
+	});
+
+	it("keeps absolute paths, file:/data:/node: URLs and other flags verbatim", () => {
+		const { cwd } = cwdWithPackage();
+		const argv = [
+			"--import",
+			"/abs/a.mjs",
+			"-r",
+			"/abs/b.cjs",
+			"--import",
+			"file:///abs/c.mjs",
+			"--import=data:text/javascript,1",
+			"--require",
+			"node:fs",
+			"--enable-source-maps",
+			"--conditions=./not-a-module",
+		];
+		expect(absoluteExecArgv(argv, cwd)).toEqual(argv);
 	});
 });
