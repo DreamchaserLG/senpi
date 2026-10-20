@@ -4,10 +4,9 @@
  * supervisor's orchestration; every name stays re-exported there for existing importers.
  */
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { Socket } from "node:net";
-import { homedir } from "node:os";
-import { extname, isAbsolute, join, resolve } from "node:path";
+import { extname, isAbsolute, resolve } from "node:path";
 import { isBunBinary } from "../../config.ts";
 import { runtimeExecArgv } from "../../utils/runtime-exec-argv.ts";
 import { resolveCliMainPath } from "./host-cli-entry.ts";
@@ -274,65 +273,13 @@ export function spawnHostChild(options: {
 	});
 }
 
-// Path-valued host args (senpi#3783): the caller makes them absolute against ITS cwd before they reach a
-// supervisor, and every launch profile reads them with the same syntactic rule, so the caller and the host child
-// (which runs in its agent dir) derive the same profile. Package specs and bare names stay verbatim.
-// Mirrors `isLocalPath` in `utils/paths.ts`, which the supervisor's import budget cannot pull in (its graph
-// reaches `child-process`); `test/rpc-host-arg-paths.test.ts` keeps the two in step.
-export const NON_LOCAL_SPEC_PREFIXES = ["npm:", "git:", "github:", "http:", "https:", "ssh:", "builtin:"] as const;
-
-const isLocalPath = (value: string): boolean =>
-	!NON_LOCAL_SPEC_PREFIXES.some((prefix) => value.trim().startsWith(prefix));
-
-const PATH_VALUED_HOST_FLAGS = new Set([
-	"--extension",
-	"-e",
-	"--skill",
-	"--prompt-template",
-	"--theme",
-	"--session-dir",
-]);
-
-function isSpelledAsPath(value: string): boolean {
-	if (!isLocalPath(value) || value.startsWith("file:")) return false;
-	return isAbsolute(value) || value.startsWith(".") || value.startsWith("~") || /[\\/]/.test(value);
-}
-
-function resolveSpelledPath(value: string, cwd: string): string {
-	if (value === "~") return homedir();
-	if (value.startsWith("~/") || value.startsWith("~\\")) return join(homedir(), value.slice(2));
-	return resolve(cwd, value);
-}
-
-/** How a launch profile names one extension: a path-spelled value against `cwd`, anything else verbatim. */
-export function profileExtensionPath(value: string, cwd: string): string {
-	return isSpelledAsPath(value) ? resolveSpelledPath(value, cwd) : value;
-}
-
-/**
- * Makes each path-valued host arg absolute against `cwd`, the caller's directory. A path-spelled value
- * is resolved whether or not it exists yet; a bare name becomes a path only when `cwd` holds it.
- */
-/** `options` with `hostArgs` made absolute against this process's cwd: the caller-side entry for ensure and handoff. */
-export function withAbsoluteHostArgs<T extends { readonly hostArgs?: readonly string[] }>(options: T): T {
-	return options.hostArgs === undefined
-		? options
-		: { ...options, hostArgs: absoluteHostArgs(options.hostArgs, process.cwd()) };
-}
-
-export function absoluteHostArgs(hostArgs: readonly string[], cwd: string): string[] {
-	return hostArgs.map((arg, index) => {
-		if (index === 0 || !PATH_VALUED_HOST_FLAGS.has(hostArgs[index - 1] ?? "") || isAbsolute(arg)) return arg;
-		if (isSpelledAsPath(arg)) return resolveSpelledPath(arg, cwd);
-		return isLocalPath(arg) && !arg.startsWith("file:") && existsSync(resolve(cwd, arg)) ? resolve(cwd, arg) : arg;
-	});
-}
-
 const absoluteFrom = (from: string, path: string): string => (isAbsolute(path) ? path : resolve(from, path));
 
 /**
  * The supervisor leaves its caller's cwd before anything else (senpi#3783): it outlives the ensure that started it
- * and would pin that checkout. Changes the process cwd to `agentDir` (created if missing); the result names it, so the host child is told it. */
+ * and would pin that checkout. Changes the process cwd to `agentDir` (created if missing); the result names it, so the host child is told it.
+ * `hostArgs` pass through untouched: `ensureHost`/`handoffHost` (`withAbsoluteHostArgs` in `protocol-identity.ts`, the CLI's
+ * `resolveCliPaths` rule, which this module's import budget cannot carry) already made every path-valued one absolute. */
 export function anchorSupervisorCwd(
 	launch: SupervisorLaunch,
 	agentDir: string,
@@ -342,7 +289,6 @@ export function anchorSupervisorCwd(
 	const anchored = {
 		...launch,
 		socket: absoluteFrom(from, launch.socket),
-		hostArgs: absoluteHostArgs(launch.hostArgs, from),
 		agentDir: anchoredAgentDir,
 		...(launch.bindSocket !== undefined ? { bindSocket: absoluteFrom(from, launch.bindSocket) } : {}),
 	};

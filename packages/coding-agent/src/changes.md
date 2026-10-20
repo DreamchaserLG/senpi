@@ -1,3 +1,21 @@
+## 2026-10-20 - `resolveCliPaths` is imported from `utils/paths.ts` (senpi#3783 review round 2)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: the local `resolveCliPaths` is removed and imported from `utils/paths.ts` (unchanged behavior), so the RPC host entry points reuse the same function.
+
+### Why
+
+One rule for path-valued CLI flags: the CLI and the RPC host's caller-side normalization (`modes/rpc/protocol-identity.ts` `absoluteHostArgs`) must not drift.
+
+### Why an extension could not handle it
+
+Both callers are core startup / RPC host code.
+
+### Expected merge conflict zones
+
+- LOW: the `utils/paths.ts` import line and the former `resolveCliPaths` definition after `buildSessionOptions`.
+
 ## 2026-10-19 - Print mode stops waiting for a silent stdin pipe (senpi#3715)
 
 ### What changed

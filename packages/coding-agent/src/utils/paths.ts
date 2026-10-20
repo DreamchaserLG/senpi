@@ -234,6 +234,11 @@ export function resolvePath(input: string, baseDir: string = process.cwd(), opti
 	return isAbsolute(normalized) ? nodeResolvePath(normalized) : nodeResolvePath(normalizedBaseDir, normalized);
 }
 
+/** How the CLI reads a path-valued flag (`--extension`, `--skill`, ...): every local value against `cwd`, package specs verbatim. */
+export function resolveCliPaths(cwd: string, paths: readonly string[] | undefined): string[] | undefined {
+	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
+}
+
 export function getCwdRelativePath(filePath: string, cwd: string): string | undefined {
 	const resolvedCwd = resolvePath(cwd);
 	const resolvedPath = resolvePath(filePath, resolvedCwd);

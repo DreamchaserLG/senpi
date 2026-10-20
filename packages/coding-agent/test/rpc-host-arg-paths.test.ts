@@ -2,13 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	absoluteHostArgs,
-	NON_LOCAL_SPEC_PREFIXES,
-	withAbsoluteHostArgs,
-} from "../src/modes/rpc/host-lifecycle-launch.ts";
-import { isLocalPath } from "../src/utils/paths.ts";
+import { absoluteHostArgs, withAbsoluteHostArgs } from "../src/modes/rpc/protocol-identity.ts";
+import { resolveCliPaths } from "../src/utils/paths.ts";
 
+// senpi#3783: path-valued host args follow `resolveCliPaths`, the CLI's own rule, against the caller's cwd.
 describe("host arg paths (senpi#3783)", () => {
 	const created: string[] = [];
 	afterEach(() => {
@@ -20,14 +17,7 @@ describe("host arg paths (senpi#3783)", () => {
 		return dir;
 	};
 
-	it("classifies package specs exactly as isLocalPath does", () => {
-		for (const prefix of NON_LOCAL_SPEC_PREFIXES) expect(isLocalPath(`${prefix}x`)).toBe(false);
-		for (const spec of ["npm:a", "git:h/p", "github:o/r", "http://h", "https://h", "ssh://h", "builtin:x"]) {
-			expect(NON_LOCAL_SPEC_PREFIXES.some((prefix) => spec.startsWith(prefix))).toBe(true);
-		}
-	});
-
-	it("makes path-valued args absolute against the caller and leaves specs, names and other flags alone", () => {
+	it("resolves every local value against the caller, existing or not, and leaves specs and other flags alone", () => {
 		const cwd = tempCwd();
 		mkdirSync(join(cwd, "local-ext"));
 		expect(
@@ -41,6 +31,10 @@ describe("host arg paths (senpi#3783)", () => {
 					"dark",
 					"--skill",
 					"local-ext",
+					"--session-dir",
+					"sessions",
+					"--prompt-template",
+					"later.md",
 					"--session-runtime",
 					"./not-a-path-flag",
 				],
@@ -52,12 +46,26 @@ describe("host arg paths (senpi#3783)", () => {
 			"-e",
 			"npm:foo@1",
 			"--theme",
-			"dark",
+			resolve(cwd, "dark"),
 			"--skill",
 			resolve(cwd, "local-ext"),
+			"--session-dir",
+			resolve(cwd, "sessions"),
+			"--prompt-template",
+			resolve(cwd, "later.md"),
 			"--session-runtime",
 			"./not-a-path-flag",
 		]);
+	});
+
+	it("is resolveCliPaths for every path-valued flag value", () => {
+		const cwd = tempCwd();
+		const values = ["sessions", "./x.js", "~/y", "file:///abs/z.js", "npm:a", "git:h/p", "builtin:b", "/abs/w"];
+		for (const flag of ["--extension", "-e", "--skill", "--prompt-template", "--theme", "--session-dir"]) {
+			const args = values.flatMap((value) => [flag, value]);
+			const resolved = absoluteHostArgs(args, cwd).filter((_, index) => index % 2 === 1);
+			expect(resolved).toEqual(resolveCliPaths(cwd, values));
+		}
 	});
 
 	it("resolves against this process's cwd at the ensure/handoff entry", () => {

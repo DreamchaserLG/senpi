@@ -35,9 +35,9 @@ import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
 import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
 import { handoffUnregisteredHost, SESSION_COUNT_TIMEOUT_MS } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
-import { withAbsoluteHostArgs } from "./host-lifecycle-launch.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import { SUCCESSOR_START_BUDGET_MS, startSuccessor } from "./host-successor.ts";
+import { withAbsoluteHostArgs } from "./protocol-identity.ts";
 
 const HANDOFF_PROBE_TIMEOUT_MS = 10_000;
 

@@ -1,5 +1,23 @@
 # changes
 
+## 2026-10-20 - `resolveCliPaths` moves into `utils/paths.ts` (senpi#3783 review round 2)
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts`: exports `resolveCliPaths(cwd, paths)`, moved verbatim from `main.ts` (every `isLocalPath` value through `resolvePath` against `cwd`, package specs verbatim), now taking a `readonly` array.
+
+### Why
+
+The RPC host's caller must read path-valued host args with exactly the CLI's rule, not a parallel copy, so a bare not-yet-existing `--session-dir sessions` means `<caller>/sessions` and never `<agentDir>/sessions`.
+
+### Why an extension could not handle it
+
+The rule is shared by core CLI startup and the core RPC host entry points.
+
+### Expected merge conflict zones
+
+- LOW: the lines after `resolvePath` in `paths.ts`.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed

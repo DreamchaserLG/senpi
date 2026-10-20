@@ -36,11 +36,11 @@ import { HANDOFF_LOCK_HOLD_MS, handoffHostLocked } from "./host-handoff.ts";
 import { reapOrphanedInternalHostDirs } from "./host-internal-dir-reaper.ts";
 import { retireIdleLegacyHost } from "./host-legacy.ts";
 import type { HostColdStart, HostLifecyclePolicyInput } from "./host-lifecycle.ts";
-import { withAbsoluteHostArgs } from "./host-lifecycle-launch.ts";
 import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
 import { isHostGenerationProcess } from "./host-process-role.ts";
 import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
+import { withAbsoluteHostArgs } from "./protocol-identity.ts";
 
 export {
 	createHostDaemonPaths,

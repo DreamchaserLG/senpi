@@ -10,7 +10,11 @@ import {
 	REQUIRED_HOST_CAPABILITIES,
 } from "../../../src/modes/rpc/host-decision.ts";
 import { anchorSupervisorCwd, resolveHostChildLaunch } from "../../../src/modes/rpc/host-lifecycle-launch.ts";
-import { hostLaunchProfile, socketHostLaunchProfile } from "../../../src/modes/rpc/protocol-identity.ts";
+import {
+	absoluteHostArgs,
+	hostLaunchProfile,
+	socketHostLaunchProfile,
+} from "../../../src/modes/rpc/protocol-identity.ts";
 import type { RpcLaunchProfile } from "../../../src/modes/rpc/rpc-types.ts";
 
 // senpi#3783 review: the caller derives the launch profile in ITS cwd, the host child in its agent dir.
@@ -37,8 +41,10 @@ describe("launch profile across the supervisor's cwd move", () => {
 		child: RpcLaunchProfile;
 		childArgs: readonly string[];
 	} {
-		const caller = socketHostLaunchProfile(hostArgs, process.cwd());
-		const launch = anchorSupervisorCwd({ socket: join(root, "rpc.sock"), hostArgs }, agentDir);
+		// What ensureHost/handoffHost do: the caller makes the args absolute, then everything downstream uses them.
+		const callerArgs = absoluteHostArgs(hostArgs, process.cwd());
+		const caller = socketHostLaunchProfile(callerArgs, process.cwd());
+		const launch = anchorSupervisorCwd({ socket: join(root, "rpc.sock"), hostArgs: callerArgs }, agentDir);
 		const childArgv = resolveHostChildLaunch(launch, join(root, "internal.sock"), true).args;
 		return { caller, child: hostLaunchProfile(childArgv, process.cwd()), childArgs: launch.hostArgs };
 	}
@@ -61,6 +67,16 @@ describe("launch profile across the supervisor's cwd move", () => {
 		const { childArgs, child } = bothSides(["--extension", "./ext/later.js"]);
 		expect(childArgs).toEqual(["--extension", resolve(callerCwd, "ext/later.js")]);
 		expect(child.core.extensions).toEqual([resolve(callerCwd, "ext/later.js")]);
+	});
+
+	// Review round 2: a bare value is a caller-cwd path even when it does not exist yet, exactly as
+	// `resolveCliPaths` reads it; it never reaches the host child relative, so the agent dir never anchors it.
+	it("resolves a not-yet-existing bare --session-dir and -e under the caller on both sides", () => {
+		const { caller, child, childArgs } = bothSides(["--session-dir", "sessions", "-e", "myext.ts"]);
+		expect(childArgs).toEqual(["--session-dir", join(callerCwd, "sessions"), "-e", join(callerCwd, "myext.ts")]);
+		expect(caller.core.extensions).toEqual([join(callerCwd, "myext.ts")]);
+		expect(child.core.extensions).toEqual(caller.core.extensions);
+		expect(child.profile_id).toBe(caller.profile_id);
 	});
 
 	it("still hands off to a newer build launched the same way (covers() holds)", () => {
