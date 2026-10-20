@@ -236,6 +236,8 @@ export function spawnHostChild(options: {
 	readonly internal: { readonly dir?: string; readonly secretPath: string };
 	readonly internalSecret?: Buffer;
 	readonly daemonDir: string;
+	/** The supervisor's own cwd (its agent dir), never the directory of whoever ensured it (senpi#3783). */
+	readonly cwd: string;
 	readonly instanceId: string;
 	readonly cleanupPaths: readonly string[];
 	readonly publicSocket: string;
@@ -243,6 +245,7 @@ export function spawnHostChild(options: {
 	const { launch, internalSocket, internal, internalSecret, publicSocket } = options;
 	const childLaunch = spawnableChildLaunch(resolveHostChildLaunch(launch, internalSocket));
 	return spawn(childLaunch.command, childLaunch.args, {
+		cwd: options.cwd,
 		env: {
 			...process.env,
 			...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),

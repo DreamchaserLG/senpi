@@ -1,3 +1,24 @@
+## 2026-10-20 - The RPC host supervisor leaves the caller's cwd for its agent dir (senpi#3783)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-supervisor-cwd.ts` (new): `anchorSupervisorCwd` resolves the launch's socket, agent dir, bind socket and path-valued host args (`--extension`, `--skill`, `--prompt-template`, `--theme`, `--session-dir`) against the inherited cwd, `mkdirSync`s the agent dir, and `process.chdir`s into it.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: `runHostSupervisor` calls `anchorSupervisorCwd` as its first action. The agent dir is always passed to `createHostDaemonPaths` and to `spawnHostChild` as `cwd`.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `spawnHostChild` passes `options.cwd` to `spawn`, so the host child starts in the agent dir even if the supervisor's chdir has not happened yet.
+- Tests: `test/suite/regressions/3783-rpc-supervisor-cwd.test.ts` spawns the real supervisor from a temp caller directory and asserts both the supervisor's and the child's cwd are the agent dir. RED on main (`caller-worktree` != `agent`); GREEN.
+
+### Why
+
+A desktop dev launcher ensured a host from a worktree; the shared supervisor inherited that cwd, pinning the worktree and leaking the lane's directory into a process used by every session.
+
+### Why an extension could not handle it
+
+The supervisor and host child spawn are in the core lifecycle module.
+
+### Expected merge conflict zones
+
+- LOW: `host-lifecycle.ts` first lines of `runHostSupervisor`; `host-lifecycle-launch.ts` `spawnHostChild` options.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed
