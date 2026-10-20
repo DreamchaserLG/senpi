@@ -14,10 +14,10 @@
  * in any language can recompute it and compare two hosts without parsing paths.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { resolve } from "node:path";
 import { parseArgs, resolveSessionRuntime } from "../../cli/args.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import { profileExtensionPath } from "./host-lifecycle-launch.ts";
 import type { RpcLaunchProfile, RpcLaunchProfileCore, RpcProtocolIdentity } from "./rpc-types.ts";
 
 export { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV };
@@ -46,7 +46,7 @@ export function hostGeneration(env: Readonly<Record<string, string | undefined>>
 export function hostLaunchProfile(argv: readonly string[], cwd: string): RpcLaunchProfile {
 	const parsed = parseArgs([...argv], { grokNeoEnabled: false });
 	const core: RpcLaunchProfileCore = {
-		extensions: [...new Set((parsed.extensions ?? []).map((path) => resolve(cwd, path)))].sort(),
+		extensions: [...new Set((parsed.extensions ?? []).map((path) => profileExtensionPath(path, cwd)))].sort(),
 		multi_session: parsed.multiSession === true,
 		session_runtime: resolveSessionRuntime(parsed),
 	};

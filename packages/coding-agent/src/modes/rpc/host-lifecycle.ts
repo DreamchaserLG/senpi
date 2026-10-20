@@ -12,6 +12,7 @@ import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
 import {
+	anchorSupervisorCwd,
 	HOST_CHILD_WATCH_FD,
 	parseSupervisorArgs,
 	type SupervisorLaunch,
@@ -35,7 +36,6 @@ import {
 	supervisorSender,
 } from "./host-lifecycle-shutdown.ts";
 import { startSupervisorTicker } from "./host-lifecycle-ticker.ts";
-import { anchorSupervisorCwd } from "./host-supervisor-cwd.ts";
 import { errorMessage, writeStderrLine } from "./host-supervisor-log.ts";
 import { PUBLIC_SOCKET_IDENTITY_FILE, statSocketIdentity, writeSocketIdentityFile } from "./socket-ownership.ts";
 import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";

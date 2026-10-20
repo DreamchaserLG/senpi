@@ -1,8 +1,30 @@
+## 2026-10-20 - Caller and host child agree on the launch profile after the supervisor's cwd move (senpi#3783 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `absoluteHostArgs` makes every `--extension`/`-e`/`--skill`/`--prompt-template`/`--theme`/`--session-dir` value absolute against the caller's cwd, whether or not it exists yet when it is spelled as a path (`./`, `../`, `~`, or a separator), and a bare name only when the caller's cwd holds it. Package specs (`npm:`, `git:`, `github:`, `http(s):`, `ssh:`, `builtin:`) and `file:` URLs stay verbatim. `withAbsoluteHostArgs` applies it to ensure/handoff options. `profileExtensionPath` is the profile's rule: path-spelled values are resolved, anything else is verbatim.
+- `packages/coding-agent/src/modes/rpc/protocol-identity.ts`: `hostLaunchProfile` names extensions through `profileExtensionPath` instead of `resolve(cwd, path)`, so `npm:foo` is no longer `<cwd>/npm:foo`.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `ensureHost` normalizes `hostArgs` first, so the client profile, the registration's `launchProfileId` and the supervisor argv all carry absolute paths.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHost` does the same for a direct handoff.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `anchorSupervisorCwd` uses `absoluteHostArgs` (no existence gate), so a direct supervisor launch resolves a not-yet-existing relative path against the caller, not the agent dir. The rule and the anchor live in this existing supervisor module (no `host-arg-paths.ts` / `host-supervisor-cwd.ts`), so the supervisor import graph stays at its 55-module ceiling.
+
+### Why
+
+Review of #3784: the caller derived the profile in its cwd, the host child in its agent dir, so `<callerCwd>/npm:foo` != `<agentDir>/npm:foo`, `covers()` failed, and an upgrade never handed over. A relative path that did not exist yet silently resolved against the agent dir.
+
+### Why an extension could not handle it
+
+The launch profile and the ensure/handoff entry points are core RPC host code.
+
+### Expected merge conflict zones
+
+- LOW: the first lines of `ensureHost` and `handoffHost`; the `extensions` line of `hostLaunchProfile`.
+
 ## 2026-10-20 - The RPC host supervisor leaves the caller's cwd for its agent dir (senpi#3783)
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/host-supervisor-cwd.ts` (new): `anchorSupervisorCwd` resolves the launch's socket, agent dir, bind socket and path-valued host args (`--extension`, `--skill`, `--prompt-template`, `--theme`, `--session-dir`) against the inherited cwd, `mkdirSync`s the agent dir, and `process.chdir`s into it.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `anchorSupervisorCwd` resolves the launch's socket, agent dir, bind socket and path-valued host args (`--extension`, `--skill`, `--prompt-template`, `--theme`, `--session-dir`) against the inherited cwd, `mkdirSync`s the agent dir, and `process.chdir`s into it.
 - `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: `runHostSupervisor` calls `anchorSupervisorCwd` as its first action. The agent dir is always passed to `createHostDaemonPaths` and to `spawnHostChild` as `cwd`.
 - `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `spawnHostChild` passes `options.cwd` to `spawn`, so the host child starts in the agent dir even if the supervisor's chdir has not happened yet.
 - Tests: `test/suite/regressions/3783-rpc-supervisor-cwd.test.ts` spawns the real supervisor from a temp caller directory and asserts both the supervisor's and the child's cwd are the agent dir. RED on main (`caller-worktree` != `agent`); GREEN.
