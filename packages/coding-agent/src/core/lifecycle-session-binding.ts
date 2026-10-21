@@ -6,6 +6,7 @@ import { goalStoreRef } from "./extensions/builtin/goal/store-ref.ts";
 import { collectTurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness-report.ts";
 import type { Goal } from "./extensions/builtin/goal/types.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
+import { StaleExtensionContextError } from "./extensions/stale-context-error.ts";
 import type { AgentEndEvent } from "./extensions/types.ts";
 import { consumeLifecycleDelivery, messageTicket } from "./lifecycle-delivery.ts";
 import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
@@ -126,7 +127,15 @@ export class LifecycleSessionBinding {
 		const generation = ++this.refreshGeneration;
 		const saved = this.lastEnd ? undefined : this.controller.lastTurnInput;
 		const end = this.lastEnd ?? (saved ? { type: "agent_end" as const, messages: [] } : undefined);
-		const collected = await collectGoalLifecycleFacts(this.session.sessionManager, end, changedGoal);
+		let collected: Awaited<ReturnType<typeof collectGoalLifecycleFacts>>;
+		try {
+			collected = await collectGoalLifecycleFacts(this.session.sessionManager, end, changedGoal);
+		} catch (error) {
+			// A collector registered by an extension generation that a reload or session replacement
+			// retired reads through a stale ctx; the next session_start registers the live one.
+			if (error instanceof StaleExtensionContextError) return;
+			throw error;
+		}
 		const goal = collected
 			? collected.goal
 			: changedGoal === undefined
