@@ -118,7 +118,7 @@ describe("Reconnect re-authenticates the saved account in place (senpi#3841)", (
 
 describe("Reconnect keeps the account's own metadata (senpi#3861 review)", () => {
 	test.each(oauthProviderIds)(
-		"%s: only the credential material changes; display name, source and settings stay",
+		"%s: only the credential material changes and the source becomes login; display name and settings stay",
 		async (id) => {
 			const storage = AuthStorage.inMemory({
 				[id]: {
@@ -148,7 +148,7 @@ describe("Reconnect keeps the account's own metadata (senpi#3861 review)", () =>
 			expect(office).toEqual({
 				name: "office",
 				displayName: "Office laptop",
-				source: "import",
+				source: "login",
 				access: "office-new-access",
 				refresh: "office-new-refresh",
 				expires: 9_000,

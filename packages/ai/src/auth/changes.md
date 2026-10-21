@@ -2,7 +2,7 @@
 
 ### What changed
 
-- Review fold (#3861): the in-place refresh replaces only the credential material (`key`/`access`/`refresh`/`expires`) and keeps the account's `displayName`, `source` and `env` (unless the new login carries `env`). The receipt origin is `refreshed` for an existing account. The RPC handler passes the account name only when one is set, so an unnamed `login_start` keeps the two-argument `login(provider, callbacks)` call.
+- Review fold (#3861): the in-place refresh replaces only the credential material (`key`/`access`/`refresh`/`expires`) and keeps the account's `displayName` and `env` (unless the new login carries `env`), and sets `source` to `login` because the credentials now come from a login. The receipt origin is `refreshed` for an existing account. The RPC handler passes the account name only when one is set, so an unnamed `login_start` keeps the two-argument `login(provider, callbacks)` call.
 - `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot(current, flat, onAllocated?, targetName?)`. With `targetName` and no provider-owned pool, the new `writeTargetSlot` writes the login into the slot named `targetName`, REPLACING it whole, or appends it under that name when the pool has none; the flat projection follows when the replaced slot was the one it mirrored. Without `targetName` nothing changes (a new `login-N`). New `isValidSlotName`.
 
 ### Why
