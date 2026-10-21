@@ -125,7 +125,9 @@ Use `completionId` to deduplicate root completion/failure, not `agent_settled` o
 `agent_idle`: a queued result or background source can still own unfinished work.
 An ordinary reply completing is not itself a request to mark a thread Done.
 
-`request_self_settle` records an agent intent for the current root epoch:
+#### request_self_settle
+
+Records an agent intent for the current root epoch:
 
 ```json
 {"id":"settle","type":"request_self_settle"}
