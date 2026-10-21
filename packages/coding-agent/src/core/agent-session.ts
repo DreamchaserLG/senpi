@@ -1053,15 +1053,11 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	enqueueOrder?: number;
 	/** Input provenance reported to `input` extension handlers; defaults to "interactive". */
 	source?: InputSource;
-	/** An RPC input from a connection that declared `interactive_user`: a human typed it. */
-	humanOrigin?: boolean;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
 }
 
 export interface PromptOptions extends ClientMessageIdentity {
-	/** An RPC input from a connection that declared `interactive_user`: a human typed it. */
-	humanOrigin?: boolean;
 	/** Internal: this input was already reported to `onHumanInputAdmitted` by the caller, so it is not reported again. */
 	humanInputReported?: boolean;
 	/** Where the input sorts among queued inputs if it ends up queued (a replaying client keeps its order). */
@@ -1191,9 +1187,8 @@ type SummarizationRequestAuth = {
 	thinkingLevel: ThinkingLevel;
 };
 
-function isHumanInput(options: { source?: InputSource; humanOrigin?: boolean } | undefined): boolean {
-	const source = options?.source ?? "interactive";
-	return source === "interactive" || (source === "rpc" && options?.humanOrigin === true);
+function isHumanInput(options: { source?: InputSource } | undefined): boolean {
+	return inputOriginOf(options?.source) === "person";
 }
 
 function promptKind(options: PromptOptions | undefined): HumanInputAdmittedEvent["kind"] {

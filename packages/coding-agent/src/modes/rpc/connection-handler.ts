@@ -1028,11 +1028,7 @@ export function createRpcConnectionHandler(
 
 			case "prompt": {
 				turnRequested = true;
-				const admission = handleClientInput(session, command, {
-					output,
-					promptCalls,
-					humanOrigin: interactiveUser === true,
-				});
+				const admission = handleClientInput(session, command, { output, promptCalls });
 				promptCalls.add(admission);
 				void admission.finally(() => promptCalls.delete(admission));
 				return undefined;
@@ -1102,7 +1098,7 @@ export function createRpcConnectionHandler(
 			case "steer":
 			case "follow_up": {
 				turnRequested = true;
-				await handleClientInput(session, command, { output, promptCalls, humanOrigin: interactiveUser === true });
+				await handleClientInput(session, command, { output, promptCalls });
 				return undefined;
 			}
 

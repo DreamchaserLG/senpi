@@ -54,11 +54,11 @@ describe("senpi#3811 human-input seam", () => {
 		expect(seen[0]?.userMessagesAtCall).toBe(0);
 	});
 
-	it("does not report input from a connection without the role, nor extension or automatic deliveries", async () => {
+	it("reports RPC input by its entry point whatever the connection role, and never extension or automatic deliveries", async () => {
 		const { fixture, api, seen } = await seamFixture();
-		const bot = fixture.bind();
+		const roleless = fixture.bind();
 
-		await bot.send({ type: "prompt", message: "scripted" });
+		await roleless.send({ type: "prompt", message: "typed through a plain RPC client" });
 		await fixture.session.waitForIdle();
 		api.sendUserMessage("from an extension");
 		await fixture.session.waitForIdle();
@@ -68,9 +68,8 @@ describe("senpi#3811 human-input seam", () => {
 		);
 		await fixture.session.waitForIdle();
 
-		expect(seen).toEqual([]);
+		expect(seen.map((event) => event.kind)).toEqual(["prompt"]);
 	});
-
 	it("reports TUI input and resume", async () => {
 		const { fixture, seen } = await seamFixture();
 

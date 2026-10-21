@@ -2,11 +2,11 @@
 
 ### What changed
 
-`packages/coding-agent/src/core/agent-session.ts`: `onHumanInputAdmitted(listener)` reports human input synchronously, before it is queued or admitted: TUI input (`source` "interactive"), RPC `prompt`/`steer`/`follow_up` marked `humanOrigin` (sent on an `interactive_user` connection), human question answers (reported from the engine's `questionInput` release, before the answer is sent), and `resumeSession()`. Extension messages, wakes, continuations and input from connections without the role are never reported. `PromptOptions` and `QueuedInputOptions` gain `humanOrigin`.
+`packages/coding-agent/src/core/agent-session.ts`: `onHumanInputAdmitted(listener)` reports a person's input synchronously, before it is queued or admitted: every input whose `inputOrigin` (`input-origin.ts`, classified at the entry point) is `person` (TUI submit, RPC `prompt`/`steer`/`follow_up`), human question answers (reported from the engine's `questionInput` release, before the answer is sent), and `resumeSession()`. Extension sends, wakes and continuations are never reported. It fires exactly once per input: internal re-entries into `prompt` carry `humanInputReported`.
 
 ### Why
 
-Stop/pause (#3811) and the session lifecycle (#3864) both need to know whether an input came from a person; counting every RPC input as human lets automation release a pause.
+Stop/pause (#3811) and the session lifecycle (#3864) both need to know, synchronously and once, when a person's input enters the session.
 
 ### Why an extension could not handle it
 
