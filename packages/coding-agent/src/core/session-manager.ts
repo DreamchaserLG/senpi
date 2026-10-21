@@ -2042,12 +2042,16 @@ export class SessionManager {
 		if (firstKeptIndex < 0 || compactionIndex < firstKeptIndex) return;
 
 		const verbatimStart = this.fileEntries.length - (this.fullEntryCount - this.verbatimFromCount);
-		if (firstKeptIndex >= verbatimStart)
-			this.verbatimFromCount = this.fullEntryCount - (compactionIndex + 1 - firstKeptIndex);
 		const header = this.fileEntries.find((entry) => entry.type === "session");
+		const branchIds = new Set(this.getBranch().map((entry) => entry.id));
+		let firstVerbatimIndex = Math.max(firstKeptIndex, verbatimStart);
+		for (let i = firstVerbatimIndex; i < compactionIndex; i++) {
+			if (!branchIds.has(this.fileEntries[i].id)) firstVerbatimIndex = i + 1;
+		}
+		this.verbatimFromCount = this.fullEntryCount - (compactionIndex + 1 - firstVerbatimIndex);
 		const retained = [
 			...this.fileEntries.slice(0, firstKeptIndex).filter((entry) => entry.type !== "message"),
-			...this.fileEntries.slice(firstKeptIndex, compactionIndex + 1),
+			...this.fileEntries.slice(firstKeptIndex, compactionIndex + 1).filter((entry) => branchIds.has(entry.id)),
 		];
 		let parentId: string | null = null;
 		for (const entry of retained) {

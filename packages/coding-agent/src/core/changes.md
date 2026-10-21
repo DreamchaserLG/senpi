@@ -1,3 +1,21 @@
+## 2026-10-21 - Keep abandoned branches out of the compacted mirror (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/session-manager.ts` limits the retained chronological tail to entries on the active branch before rewriting compacted mirror parent links. Its incremental-history boundary advances past removed off-branch entries so only a genuinely contiguous suffix is reused.
+
+### Why
+
+`packages/coding-agent/src/core/session-manager.ts`: lifecycle bookkeeping can be the first retained entry before an edited prompt. Its chronological file range also contains messages abandoned by that edit. Trimming previously retained and linearized those unrelated messages, resurrecting them in the model context even though compaction selected the correct active-branch cut.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/session-manager.ts`: resident mirror trimming and parent-link rewriting are internal persistence operations shared by every compaction path.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/session-manager.ts`: `_trimMirrorAfterCompaction` retained range construction. The existing tree-edit compaction regression keeps its exact summary-plus-edited-prompt assertion unchanged.
+
 ## 2026-10-21 - Preserve intentionally requeued trigger custody after abort (senpi#3864)
 
 ### What changed
