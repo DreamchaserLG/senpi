@@ -330,6 +330,15 @@ run state, and replace its streaming preview from `message`. A read-only request
 retried. A closed-handle snapshot retires that session, not the connection.
 Another overflow during recovery produces another gap and a newer snapshot.
 
+#### interactive_user
+
+A client that advertises `interactive_user` in `set_client_info` declares that the connection speaks for a
+person: its `prompt`, `steer` and `follow_up` count as human input. Input from any other connection is automatic
+input from a bot, script or task runner. The role is bound at the connection's first declaration; a later
+`set_client_info` that adds or drops it is refused with `connection_role_fixed`, so the heartbeat must repeat the
+same list. A client that dispatches input on its own (for example a queued follow-up it sends later) should use a
+second connection without the role.
+
 #### media_placeholders
 
 A client that advertises `media_placeholders` in `set_client_info` tells the host it does not want
