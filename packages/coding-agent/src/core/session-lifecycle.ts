@@ -247,7 +247,10 @@ export class SessionLifecycleController {
 			role: this.ledger.snapshot.role, terminal: this.ownTask?.terminal,
 			holds: runtime.holds, waits, running, failure,
 		});
-		if (lifecycleTerminal(state) && (!this.idleBoundaryPassed || active.length > 0)) return;
+		// A terminal task record owns a child's outcome, even if its local
+		// producer registry has not drained after the runner stopped it.
+		if (lifecycleTerminal(state) && this.ownTask?.terminal === undefined &&
+			(!this.idleBoundaryPassed || active.length > 0)) return;
 		this.ledger.update({ state, waits, holds: runtime.holds, failure });
 	}
 }
