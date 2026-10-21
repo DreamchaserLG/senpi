@@ -1,4 +1,4 @@
-import type { Credential, OAuthAuth, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
+import type { OAuthAuth, OAuthCredential, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import { listSlots, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { describe, expect, test } from "vitest";
@@ -25,7 +25,9 @@ const pool = (): PooledCredential => ({
 
 const freshLogin = (): OAuthAuth => ({
 	name: "Fake OAuth",
-	login: async (): Promise<Credential> => ({
+	refresh: async (credential) => credential,
+	toAuth: async (credential) => ({ apiKey: credential.access }),
+	login: async (): Promise<OAuthCredential> => ({
 		type: "oauth",
 		access: "office-new-access",
 		refresh: "office-new-refresh",
@@ -100,6 +102,8 @@ describe("Reconnect re-authenticates the saved account in place (senpi#3841)", (
 		const storage = AuthStorage.inMemory({ [id]: pool() });
 		storage.registerOAuthProvider(id, {
 			name: "Fake",
+			refresh: async (credential) => credential,
+			toAuth: async (credential) => ({ apiKey: credential.access }),
 			login: async () => {
 				ran = true;
 				return { type: "oauth", access: "a", refresh: "r", expires: 1 };

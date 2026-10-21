@@ -415,7 +415,7 @@ function writeTargetSlot(
 	flat: Credential,
 	targetName: string,
 	onAllocated?: (name: string, origin: "generated" | "provider") => void,
-): Credential {
+): PooledCredential {
 	assertValidSlotName(targetName);
 	const slot = slotFromFlatCredentialNamed(flat, targetName);
 	if (!current) {
