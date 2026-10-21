@@ -4,6 +4,8 @@
 
 - `packages/ai/src/auth/resolve.ts`: `oauthRefreshModelsError` takes the provider's display name. A permanent (non-transient) refresh failure keeps its `OAuth refresh failed for <id>: <cause>` first line and adds a second one: "The saved sign-in can no longer be renewed: sign in to <name> again." Transient failures are unchanged.
 
+- `packages/ai/src/api/chatgpt-subscription-rejected-token.ts`, `auth/types.ts` (`OAuthAuth.rejectedTokenMessage`), `auth/helpers.ts`, the ChatGPT provider and OAuth objects, and coding-agent `model-runtime.ts` / `credential-pool/rejected-token-retry.ts`: a listed status proves a refused token only when the error text names the token as expired or invalid. Other 401s are surfaced as they are: no refresh-token rotation is burned, and no re-exchange note blocks a pooled slot.
+
 ### Why
 
 When ChatGPT refused a refresh token, the turn ended with the raw token-endpoint text and the desktop showed "the provider rejected the credentials". Nothing said that only a new sign-in could fix it.

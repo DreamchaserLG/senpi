@@ -72,7 +72,7 @@ function completedSSE(): Response {
 	return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-function fakeChatGpt(refresh: () => Response) {
+function fakeChatGpt(refresh: () => Response, refusalBody = EXPIRED_BODY) {
 	return (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 		const url = input instanceof Request ? input.url : String(input);
 		const headers = new Headers(input instanceof Request ? input.headers : init?.headers);
@@ -88,7 +88,7 @@ function fakeChatGpt(refresh: () => Response) {
 		if (url === ENDPOINT) {
 			if (auth === `Bearer ${FRESH}`) return Promise.resolve(completedSSE());
 			return Promise.resolve(
-				new Response(EXPIRED_BODY, { status: 401, headers: { "content-type": "application/json" } }),
+				new Response(refusalBody, { status: 401, headers: { "content-type": "application/json" } }),
 			);
 		}
 		return Promise.resolve(new Response("unexpected", { status: 599 }));
@@ -168,5 +168,62 @@ describe("issue #3407: a ChatGPT token the server says has expired is refreshed 
 		expect(message).toContain("sign in to ChatGPT Subscription (Plus/Pro) again");
 		expect(message).not.toContain("Your authentication token has expired");
 		expect(calls.filter((call) => call.url === TOKEN_URL)).toHaveLength(1);
+	});
+});
+
+// Lead ruling on #3842: only a 401 that names the TOKEN as expired or invalid is refreshed (once);
+// any other 401 is surfaced as it is, with no refresh (no refresh-token rotation burned) and no
+// re-exchange note (the note is what blocks a pooled slot until a new login).
+const body401 = (message: string, code: string | null, type = "invalid_request_error") =>
+	JSON.stringify({ error: { message, type, code, param: null } });
+
+describe("issue #3407 / #3842: a 401 is a refused token only when its body says the token is bad", () => {
+	it.each([
+		[
+			"code token_expired",
+			body401("Your authentication token has expired. Please try refreshing it.", "token_expired"),
+		],
+		["code invalid_token", body401("The access token provided is invalid.", "invalid_token")],
+		["revoked wording", body401("Your access token has been revoked. Please sign in again.", "token_revoked")],
+	])("%s: refreshes once and retries with the new token", async (_name, refusal) => {
+		vi.stubGlobal("fetch", vi.fn(fakeChatGpt(refreshes, refusal)));
+		const { runtime } = await runtimeWith(stored());
+
+		const events = await collect(runtime.stream(getModel("chatgpt-subscription", "gpt-5.5"), context, options));
+
+		expect(events.at(-1)?.type).toBe("done");
+		expect(calls.filter((call) => call.url === TOKEN_URL)).toHaveLength(1);
+		expect(calls.filter((call) => call.url === ENDPOINT)).toHaveLength(2);
+	});
+
+	it.each([
+		[
+			"workspace membership",
+			body401(
+				"You do not have an account because it has been deactivated or you are not a member of this workspace.",
+				"account_deactivated",
+			),
+		],
+		[
+			"plan entitlement",
+			body401("Your plan does not include access to Codex. Upgrade your plan to continue.", "plan_not_entitled"),
+		],
+		[
+			"unsupported region",
+			body401("Country, region, or territory not supported.", "unsupported_country_region_territory"),
+		],
+		["bare unauthorized", body401("Unauthorized", null, "unauthorized")],
+	])("%s: surfaces the real error with no refresh, no retry and no re-login note", async (_name, refusal) => {
+		vi.stubGlobal("fetch", vi.fn(fakeChatGpt(refreshes, refusal)));
+		const { runtime } = await runtimeWith(stored());
+
+		const events = await collect(runtime.stream(getModel("chatgpt-subscription", "gpt-5.5"), context, options));
+
+		const terminal = events.at(-1);
+		expect(terminal?.type).toBe("error");
+		const message = terminal?.type === "error" ? (terminal.error.errorMessage ?? "") : "";
+		expect(message).not.toContain("freshly re-exchanged token");
+		expect(calls.filter((call) => call.url === TOKEN_URL)).toHaveLength(0);
+		expect(calls.filter((call) => call.url === ENDPOINT)).toHaveLength(1);
 	});
 });

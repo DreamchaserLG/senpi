@@ -1,4 +1,7 @@
-import { CHATGPT_SUBSCRIPTION_REJECTED_TOKEN_STATUSES } from "../api/chatgpt-subscription-rejected-token.ts";
+import {
+	CHATGPT_SUBSCRIPTION_REJECTED_TOKEN_MESSAGE,
+	CHATGPT_SUBSCRIPTION_REJECTED_TOKEN_STATUSES,
+} from "../api/chatgpt-subscription-rejected-token.ts";
 import { openAICodexResponsesApi } from "../api/openai-codex-responses.lazy.ts";
 import { lazyOAuth } from "../auth/helpers.ts";
 import { loadChatGptSubscriptionOAuth } from "../auth/oauth/load.ts";
@@ -15,6 +18,7 @@ export function chatgptSubscriptionProvider(): Provider<"openai-codex-responses"
 				name: "ChatGPT Subscription (Plus/Pro)",
 				isSubscription: true,
 				rejectedTokenStatuses: CHATGPT_SUBSCRIPTION_REJECTED_TOKEN_STATUSES,
+				rejectedTokenMessage: CHATGPT_SUBSCRIPTION_REJECTED_TOKEN_MESSAGE,
 				load: loadChatGptSubscriptionOAuth,
 			}),
 		},
