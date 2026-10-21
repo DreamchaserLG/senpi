@@ -4,17 +4,25 @@
 
 `rpc-types.ts` and `rpc-session-state.ts` add `get_state.lifecycle`; `connection-handler.ts` handles `request_self_settle`. Classic and multi-session protocol capabilities advertise `session_lifecycle`. `session-event-fanout.ts` broadcasts lifecycle to observers and retains one latest-only snapshot per session. Question/dialog registries trigger projection refresh on open and close. The open-session router, registry, launch profile and client carry validated `spawnedBy` into the session header.
 
+`packages/coding-agent/src/modes/rpc/extension-ui-response.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, `packages/coding-agent/src/modes/rpc/session-extension-ui-requests.ts`, and `packages/coding-agent/src/modes/rpc/connection-handler.ts` report validated synchronous question/dialog answers from `interactive_user` connections through the shared admission hook before resolving them. Automatic clients, incomplete replies and duplicate replies do not increment the revision; asynchronous question input keeps its existing admission path.
+
 ### Why
 
 Every connection must see the same durable revision, root-work state and completion identity, including after missed events or a reconnect.
+
+`packages/coding-agent/src/modes/rpc/extension-ui-response.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, `packages/coding-agent/src/modes/rpc/session-extension-ui-requests.ts`, and `packages/coding-agent/src/modes/rpc/connection-handler.ts`: an answer that resumes a current turn must invalidate an earlier self-settle request just as a new human prompt does.
 
 ### Why an extension could not handle it
 
 The RPC protocol, connection fanout, live request registries and session creation path are engine-owned.
 
+`packages/coding-agent/src/modes/rpc/extension-ui-response.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, `packages/coding-agent/src/modes/rpc/session-extension-ui-requests.ts`, and `packages/coding-agent/src/modes/rpc/connection-handler.ts`: only these adapters know both the validated pending request and the connection's captured human role.
+
 ### Expected merge conflict zones
 
 Command/response unions and protocol capabilities; `SessionEventFanout` replay/forget paths; open-session profile construction; question/dialog completion callbacks. Preserve #3873's first-declaration connection-role capture.
+
+`packages/coding-agent/src/modes/rpc/extension-ui-response.ts`, `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, `packages/coding-agent/src/modes/rpc/session-extension-ui-requests.ts`, and `packages/coding-agent/src/modes/rpc/connection-handler.ts`: validated response dispatch and request resolution; preserve reply correlation and question status handling.
 
 ## 2026-10-21 - interactive_user connection role (senpi#3811)
 

@@ -6447,6 +6447,16 @@ export class AgentSession {
 		return () => this._humanInputListeners.delete(listener);
 	}
 
+	/** Internal adapter boundary for a validated reply that resumes the current turn. */
+	admitHumanAnswer(): void {
+		const input = this.externalAdmission.beginInput();
+		try {
+			this._humanInputAdmitted("answer");
+		} finally {
+			input.end();
+		}
+	}
+
 	private _humanInputAdmitted(kind: HumanInputAdmittedEvent["kind"]): void {
 		const event = { kind, at: Date.now() };
 		for (const listener of this._humanInputListeners) {

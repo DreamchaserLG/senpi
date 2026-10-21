@@ -27,9 +27,10 @@ export class SessionExtensionUiRequests {
 		return [...this.pending.values()].flatMap((request) => (request.frame ? [request.frame] : []));
 	}
 
-	resolve(response: RpcExtensionUIResponse): boolean {
+	resolve(response: RpcExtensionUIResponse, beforeAnswer?: () => void): boolean {
 		const request = this.pending.get(response.id);
 		if (!request) return false;
+		beforeAnswer?.();
 		this.pending.delete(response.id);
 		this.changed?.();
 		request.resolve(response);

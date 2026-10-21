@@ -100,3 +100,36 @@ it("keeps an idle child non-terminal until its current task record is terminal",
 	controller.idle();
 	expect(controller.snapshot.state).not.toBe("done");
 });
+
+for (const kind of ["session_hold", "inherited_hold", "run_fence", "unattended"] as const) {
+	it(`invalidates self-settle when a ${kind} is added before the seal`, async () => {
+		// Given a standing root intent with no completed seal.
+		const { controller, holds } = await subject();
+		expect(controller.requestSelfSettle().recorded).toBe(true);
+
+		// When a hold intervenes and is later released.
+		holds.push({ kind, since: "2026-10-21T00:00:00.000Z" });
+		controller.recompute();
+		holds.length = 0;
+		controller.recompute();
+		controller.idle();
+
+		// Then releasing it cannot revive the old request.
+		expect(controller.snapshot.state).toBe("done");
+		expect(controller.snapshot.settleDecision).toBeUndefined();
+	});
+}
+
+it("discards a standing self-settle request on a failed seal", async () => {
+	// Given a request recorded before a terminal provider failure.
+	const { controller } = await subject();
+	expect(controller.requestSelfSettle().recorded).toBe(true);
+
+	// When no retry owns the failed turn.
+	controller.goalFacts(null, input({ endedBy: "provider-error" }));
+	controller.idle();
+
+	// Then the failure never authorizes a settle decision.
+	expect(controller.snapshot.state).toBe("failed");
+	expect(controller.snapshot.settleDecision).toBeUndefined();
+});

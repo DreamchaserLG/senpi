@@ -37,6 +37,7 @@ for (const child of [false, true]) {
 		fixtures.push(fixture);
 		await fixture.session.bindExtensions({ mode: "rpc" });
 		const client = fixture.bind();
+		await client.send({ type: "set_client_info", capabilities: ["interactive_user"] });
 		expect(fixture.session.lifecycle).toBeDefined();
 		fixture.harness.setResponses([
 			fauxAssistantMessage([fauxToolCall("review_question", {})], { stopReason: "toolUse" }),
@@ -55,12 +56,18 @@ for (const child of [false, true]) {
 			expect(fixture.session.lifecycle).toMatchObject({
 				state: "waiting_human", waitingOn: { human: [expect.objectContaining({ kind: "question", requestId: "review" })] },
 			});
+			expect(fixture.session.requestSelfSettle().recorded).toBe(true);
 		}
+		const revision = fixture.session.lifecycle.humanInputRevision;
 		await client.handler.handleInputLine(JSON.stringify({
 			type: "extension_ui_response", id: frame.id,
 			...(child ? { cancelled: true } : { answers: { choice: { selected: ["Approve"] } } }),
 		}));
 		await run;
 		await idle;
+		if (!child) {
+			expect(fixture.session.lifecycle.humanInputRevision).toBe(revision + 1);
+			expect(fixture.session.lifecycle.settleDecision).toBeUndefined();
+		}
 	});
 }

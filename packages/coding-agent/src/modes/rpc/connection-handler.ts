@@ -1925,6 +1925,7 @@ export function createRpcConnectionHandler(
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,
+				...(interactiveUser === true ? { beforeAnswer: () => session.admitHumanAnswer() } : {}),
 			});
 			if (reply) output(reply);
 			return;

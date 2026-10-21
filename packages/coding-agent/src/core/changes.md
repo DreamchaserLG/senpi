@@ -8,6 +8,8 @@
 
 `lifecycle-session-binding.ts` refreshes the shared collector when wake sources or continuation timers change, retiring those subscriptions with the runner binding. A turn-end snapshot cannot resurrect a drained source or leave a cancelled timer holding the root open.
 
+`agent-session.ts` exposes an internal `admitHumanAnswer` adapter for validated replies that resume an existing turn. It uses the supplied human-admission hook and the existing input hold, so synchronous UI answers invalidate self-settle without requiring a second turn.
+
 ### Why
 
 Turn settlement alone does not mean that child results, queued wakes, timers or user-input preparation have finished. A root must not publish Done while that work is still owed, and restart cannot safely replay work the model may already have acted on.

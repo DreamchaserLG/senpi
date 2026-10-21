@@ -6,7 +6,7 @@ type Options = Parameters<NonNullable<ExtensionUIContext["question"]>>[1];
 type Pending = {
 	frame: RpcQuestionUiRequest;
 	progress: (draft: RpcExtensionUIProgress) => void;
-	respond: (response: RpcExtensionUIResponse) => boolean;
+	respond: (response: RpcExtensionUIResponse, beforeAnswer?: () => void) => boolean;
 	cancel: () => void;
 };
 export const sessionQuestionBridges = new WeakMap<object, ConnectionQuestionBridge>();
@@ -106,7 +106,7 @@ export class ConnectionQuestionBridge {
 							remainingMs: Math.max(0, frame.deadlineAtMs - Date.now()),
 						});
 				},
-				respond: (response) => {
+				respond: (response, beforeAnswer) => {
 					if ("cancelled" in response) {
 						cancel();
 						return true;
@@ -116,6 +116,8 @@ export class ConnectionQuestionBridge {
 					comment = response.comment;
 					const status = settledQuestionStatus(answers, comment);
 					if (status === undefined) return false;
+					// Async question replies enter through questionInput instead.
+					if (request.waitForAnswer) beforeAnswer?.();
 					finish(status, "rpc_connection");
 					return true;
 				},
@@ -127,9 +129,9 @@ export class ConnectionQuestionBridge {
 			if (opts?.signal?.aborted) cancel();
 		});
 	}
-	respond(response: RpcExtensionUIResponse): boolean | "question_incomplete" | "question_already_resolved" {
+	respond(response: RpcExtensionUIResponse, beforeAnswer?: () => void): boolean | "question_incomplete" | "question_already_resolved" {
 		const pending = this.pending.get(response.id);
-		if (pending) return pending.respond(response) || "question_incomplete";
+		if (pending) return pending.respond(response, beforeAnswer) || "question_incomplete";
 		return this.resolved.has(response.id) ? "question_already_resolved" : false;
 	}
 	progress(draft: RpcExtensionUIProgress): void {

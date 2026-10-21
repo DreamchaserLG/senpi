@@ -3052,3 +3052,20 @@ The shared markdown theme and the tool card's renderer are interactive-mode inte
 ### Expected merge conflict zones
 
 - LOW: `sharedMarkdownTheme()` in `theme.ts`; the theme imports and default arguments of the seven message components; `releaseContent()` in `tool-execution-renderer.ts`.
+## 2026-10-21 - Admit synchronous human replies before resuming work (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: accepted selector, input and editor replies, and synchronous questions explicitly answered by the local UI, report through the existing human-input admission hook before their promises resolve.
+
+### Why
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: an answer may resume the current turn without admitting a new turn, but must still invalidate a standing agent self-settle intent.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the UI adapter owns the accepted local-user callback; automatic timeout/abort paths must not be classified as human.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: extension selector/input/editor callbacks and blocking question completion. Preserve the existing asynchronous question-input admission path.
