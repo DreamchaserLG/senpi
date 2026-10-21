@@ -182,7 +182,6 @@ export class LifecycleSessionBinding {
 	}
 
 	private async recover(): Promise<void> {
-		await this.session.sessionManager.persistHeaderNow();
 		await this.refreshFacts();
 		const entries = this.session.sessionManager.getEntries();
 		const active = this.controller.obligations.active;

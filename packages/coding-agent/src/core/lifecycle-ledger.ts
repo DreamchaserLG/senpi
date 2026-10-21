@@ -211,7 +211,11 @@ export class LifecycleLedger {
 		}
 		if (equivalent(this.current, next)) return;
 		// A brand-new idle session has no completed work epoch to announce.
-		this.write(next, !(terminal && base.epoch === 0));
+		if (terminal && base.epoch === 0) {
+			this.current = next;
+			return;
+		}
+		this.write(next, true);
 	}
 
 	checkpoint(): void {

@@ -96,7 +96,7 @@ export class SessionLifecycleController {
 		this.ledger.releaseRestoreBarrier();
 		this.idleBoundaryPassed = true;
 		this.recompute();
-		this.ledger.checkpoint();
+		if (this.ledger.snapshot.seq > 0) this.ledger.checkpoint();
 	}
 
 	humanInput(at: string): void {
@@ -126,12 +126,13 @@ export class SessionLifecycleController {
 	}
 
 	idle(): void {
+		const seq = this.ledger.snapshot.seq;
 		this.ledger.runActive = false;
 		this.idleBoundaryPassed = true;
 		const runId = this.ledger.runId;
 		if (runId) this.obligations.settleRun(runId);
 		this.recompute();
-		this.ledger.checkpoint();
+		if (seq > 0 && this.ledger.snapshot.seq === seq) this.ledger.checkpoint();
 	}
 
 	goalFacts(goal: Goal | null, input?: TurnEndLivenessInput): void {

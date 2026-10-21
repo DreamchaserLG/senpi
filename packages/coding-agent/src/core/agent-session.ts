@@ -3041,7 +3041,6 @@ export class AgentSession {
 		},
 	): Promise<void> {
 		if (this._extensionBindingPromptReadiness === undefined) await this._lifecycleBinding.restore();
-		else await this.sessionManager.persistHeaderNow();
 		if (this._lifecycleBinding.controller.requiresHumanContinuation)
 			throw new Error("The previous run was interrupted. Human input or Resume is required before another turn.");
 		deferredTurnClaim?.resolve("started");

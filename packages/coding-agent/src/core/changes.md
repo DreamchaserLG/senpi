@@ -1,3 +1,21 @@
+## 2026-10-21 - Avoid lifecycle-only writes before any work (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts` no longer forces a header flush at every prompt admission. Lifecycle recovery leaves a new, quiet session unwritten, and idle sealing avoids a redundant checkpoint after publishing its durable state.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`: forcing the header through prompt preflight bypassed the existing transcript-write failure path; opening an unused session also created a file without work to preserve. Actual lifecycle publications still append durably before emitting, as required by design section 4.4.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`: prompt admission and header persistence are core boundaries.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: the start of `_promptAgent`.
+
 ## 2026-10-21 - Human-input seam: who typed an input (senpi#3811)
 
 ### What changed
