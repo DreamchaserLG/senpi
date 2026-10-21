@@ -6,6 +6,8 @@
 
 ### Added
 
+- `UserMessage.details` accepts optional JSON-serializable metadata for session and RPC consumers ([#3888](https://github.com/code-yeongyu/senpi/issues/3888)).
+
 ### Changed
 
 - The advertised Claude Code fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to Claude Code 2.1.306 ([#3854](https://github.com/code-yeongyu/senpi/issues/3854)).

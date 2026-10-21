@@ -72,6 +72,7 @@ export function deliverAnswer(
 	if (response.status === "cancelled") return;
 	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions, request.required === true), {
 		deliverAs: ctx.isIdle() ? "followUp" : "steer",
+		details: { origin: "ask-user-answer", requestId: request.requestId },
 	});
 	void emitAskUserNotification(pi, ctx, request, response, variant);
 }

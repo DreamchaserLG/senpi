@@ -51,6 +51,7 @@ import type {
 	ToolResultMessage,
 	TranscriptContext,
 	Usage,
+	UserMessage,
 } from "@earendil-works/pi-ai";
 import type {
 	AutocompleteItem,
@@ -794,7 +795,11 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
 
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+		options?: {
+			deliverAs?: "steer" | "followUp";
+			expandPromptTemplates?: boolean;
+			details?: UserMessage["details"];
+		},
 	): Promise<void>;
 }
 
@@ -2565,7 +2570,11 @@ export interface ExtensionAPI {
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+		options?: {
+			deliverAs?: "steer" | "followUp";
+			expandPromptTemplates?: boolean;
+			details?: UserMessage["details"];
+		},
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */

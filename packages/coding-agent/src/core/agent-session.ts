@@ -1035,6 +1035,8 @@ export type ClearedQueue = {
 
 /** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
 export interface QueuedInputOptions extends ClientMessageIdentity {
+	/** Optional metadata persisted with the delivered user message. */
+	details?: UserMessage["details"];
 	/**
 	 * Recovery-ordered enqueue position. A reconnecting client replays its pending
 	 * messages with their original order so the queue is rebuilt as the user typed it.
@@ -1047,6 +1049,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 }
 
 export interface PromptOptions extends ClientMessageIdentity {
+	/** Optional metadata persisted with the delivered user message. */
+	details?: UserMessage["details"];
 	/** Where the input sorts among queued inputs if it ends up queued (a replaying client keeps its order). */
 	enqueueOrder?: number;
 	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
@@ -5585,6 +5589,7 @@ export class AgentSession {
 				content: userContent,
 				timestamp: Date.now(),
 				...clientMessageIdentity(options),
+				...(options?.details === undefined ? {} : { details: options.details }),
 			});
 
 			// Consume next-turn messages transactionally: a final admission rejection
@@ -6064,6 +6069,7 @@ export class AgentSession {
 			content,
 			timestamp: Date.now(),
 			...clientMessageIdentity(input),
+			...(input.details === undefined ? {} : { details: input.details }),
 		};
 		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
@@ -6385,6 +6391,7 @@ export class AgentSession {
 		options?: {
 			deliverAs?: "steer" | "followUp";
 			expandPromptTemplates?: boolean;
+			details?: UserMessage["details"];
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
@@ -6438,6 +6445,7 @@ export class AgentSession {
 				streamingBehavior: options?.deliverAs,
 				images,
 				textBlocks,
+				details: options?.details,
 				source: "extension",
 				promptDisposition: (nextDisposition) => {
 					disposition = nextDisposition;
@@ -6457,9 +6465,9 @@ export class AgentSession {
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
 				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images, { textBlocks });
+					await this._queueSteer(text, images, { textBlocks, details: options?.details });
 				} else {
-					await this._queueFollowUp(text, images, { textBlocks });
+					await this._queueFollowUp(text, images, { textBlocks, details: options?.details });
 				}
 			}
 			throw error;

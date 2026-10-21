@@ -3762,3 +3762,20 @@ Only the session owns account suppression and pending model selection.
 ### Expected merge conflict zones
 
 The compaction context/action declarations in `types.ts` and callback storage, binding, and context construction in `runner.ts`.
+## 2026-10-21 - User-message details in extension delivery (senpi#3888)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: both `sendUserMessage` signatures accept optional `details: UserMessage["details"]`.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: ask-user delivers a user message with a positive origin marker that session and RPC consumers can read.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the public extension contract must expose the metadata option before a builtin can pass it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the `UserMessage` type import and `sendUserMessage` options on the extension API and replacement-session context.

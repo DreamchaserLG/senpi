@@ -6,6 +6,8 @@
 
 ### Added
 
+- Async ask-user answer messages carry `details: { origin: "ask-user-answer", requestId }` in session files and RPC events, so clients can distinguish engine-delivered frames from user-typed text ([#3888](https://github.com/code-yeongyu/senpi/issues/3888)).
+
 ### Changed
 
 - A new engine host no longer re-transpiles extensions whose sources have not changed: the importer keeps its prepared module source under `<agent dir>/cache/extension-modules` and reuses it after re-checking every import, so a host starts faster ([#3716](https://github.com/code-yeongyu/senpi/issues/3716))

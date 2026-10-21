@@ -11158,3 +11158,20 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 - `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
 - `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.
+## 2026-10-21 - Retain extension user-message origin details (senpi#3888)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: prompt, queue and `sendUserMessage` options accept `UserMessage.details`; immediate and queued constructors retain it, including delivery retained after a failed admission.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: ask-user answers need positive origin metadata on the persisted user message and RPC entry, not a heuristic based on answer text. Both idle and running paths must retain the same `details`.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session constructs user messages from extension input and owns queue retention and persistence.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `QueuedInputOptions`, `PromptOptions`, immediate and queued user-message construction, and `sendUserMessage` options/forwarding.
