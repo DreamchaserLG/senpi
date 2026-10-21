@@ -1,6 +1,5 @@
 import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../manual-continue.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
-import { createSessionLogger } from "../../../session-log.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
 import {
 	buildDeadlineStopNotice,
@@ -9,7 +8,7 @@ import {
 	TURN_DEADLINE_ENTRY_TYPE,
 } from "../../../turn-deadline.ts";
 import { noticeEntryRenderer } from "../../notice/index.ts";
-import type { AgentEndEvent, ExtensionAPI, ExtensionContext } from "../../types.ts";
+import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { continueGoalAfterAgentEnd } from "./agent-end-continuation.ts";
 import { GOAL_CACHE_WARMUP_ENTRY_TYPE } from "./cache-warm.ts";
 import { isSameGoalCacheWarmCard, renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
@@ -18,32 +17,18 @@ import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
 import { GoalDirectInputLifecycle } from "./direct-input-lifecycle.ts";
 import { GoalElapsedTicker } from "./elapsed-ticker.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
-import {
-	GOAL_STALE_STOP_NOTICE,
-	isResumeOfStoppedGoal,
-	lastAssistantText,
-	queueGoalContinuation,
-} from "./lifecycle-helpers.ts";
+import { GOAL_STALE_STOP_NOTICE, isResumeOfStoppedGoal, queueGoalContinuation } from "./lifecycle-helpers.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
-import { providerRetryAt } from "./provider-retry.ts";
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
-import { publishGoalContinuationEvent, registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
+import { registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
 import { accountGoalUsage, migrateLegacyGoal, readGoal, updateGoal } from "./store.ts";
 import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
-import { openTodoTaskContents, staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
-import { calledAskUser, endsWithQuestion, TodoOwedBackstop, type TodoOwedOutcome } from "./todo-owed-backstop.ts";
+import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
+import { TodoOwedBackstop } from "./todo-owed-backstop.ts";
 import { registerGoalTools } from "./tool-registration.ts";
-import {
-	classifyTurnEnd,
-	evaluateTurnEndLiveness,
-	type OpenWork,
-	repeatsLastStall,
-	TURN_END_LIVENESS_ENTRY_TYPE,
-	TURN_END_LIVENESS_EVENT,
-	type WakeExpectation,
-} from "./turn-end-liveness.ts";
+import { reportTurnEndLiveness } from "./turn-end-liveness-report.ts";
 import { TurnUsageTracker } from "./turn-usage.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
 import { updateGoalUi } from "./ui.ts";
@@ -323,7 +308,13 @@ export default function goalExtension(pi: ExtensionAPI): void {
 					hasActiveWakeSources: monitorContinuation.hasActiveWakeSources(),
 					wakeSourceNames: monitorContinuation.liveWakeSources(),
 				});
-		reportTurnEndLiveness(ctx, event, goal, todoOutcome, deadlineStop);
+		reportTurnEndLiveness(pi, ctx, event, {
+			goal,
+			todoOutcome,
+			deadlineStop,
+			continuationPending,
+			monitor: monitorContinuation,
+		});
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
@@ -410,62 +401,6 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 		if (continuedGoal === goal) return;
 		syncContinuationGoal(ctx, continuedGoal);
-	}
-
-	function reportTurnEndLiveness(
-		ctx: ExtensionContext,
-		event: AgentEndEvent,
-		goal: Goal | null,
-		todoOutcome: TodoOwedOutcome | undefined,
-		deadlineStop: boolean,
-	): void {
-		const openTodos = openTodoTaskContents(ctx.sessionManager.getBranch()).length;
-		const openWork: OpenWork =
-			goal?.status === "active"
-				? { kind: "active-goal", goalId: goal.id }
-				: openTodos > 0
-					? { kind: "open-todos", count: openTodos }
-					: { kind: "none" };
-		const expectations: WakeExpectation[] = monitorContinuation
-			.liveWakeSources()
-			.map((source) => ({ kind: "wake-source", source }));
-		const timer = monitorContinuation.scheduledContinuation();
-		if (timer !== undefined) expectations.push({ kind: "armed-timer", timer });
-		if (monitorContinuation.hasStagedRecovery()) expectations.push({ kind: "recovery-staged" });
-		if (ctx.hasPendingMessages()) expectations.push({ kind: "pending-messages" });
-		if (calledAskUser(event.messages) || endsWithQuestion(lastAssistantText(event.messages))) {
-			expectations.push({ kind: "question-to-user" });
-		}
-		const verdict = evaluateTurnEndLiveness({
-			isChildSession: ctx.sessionManager.getHeader?.()?.parentSession !== undefined,
-			mode: ctx.mode,
-			endedBy: classifyTurnEnd(event),
-			willRetry: event.willRetry === true,
-			deadlineStop,
-			goalStopped: goal?.status === "paused" || goal?.status === "blocked",
-			openWork,
-			continuationQueued: continuationPending ? "goal" : todoOutcome === "delivered" ? "todo-backstop" : undefined,
-			expectations,
-			budgetSpent:
-				(goal?.status === "active" && goal.continuationStoppedAt !== undefined) ||
-				todoOutcome === "capped" ||
-				todoOutcome === "cap",
-			providerRetryAtMs: providerRetryAt(event.messages, Date.now()),
-		});
-		publishGoalContinuationEvent(pi, TURN_END_LIVENESS_EVENT, {
-			sessionId: ctx.sessionManager.getSessionId(),
-			verdict,
-		});
-		if (verdict.kind !== "stalled" || repeatsLastStall(ctx.sessionManager.getBranch(), verdict)) return;
-		const logger = createSessionLogger(ctx.agentDir);
-		try {
-			pi.appendEntry(TURN_END_LIVENESS_ENTRY_TYPE, { verdict, openWork });
-		} catch (error) {
-			logger.warn("goal_continuation_record_write_failed", {
-				kind: TURN_END_LIVENESS_ENTRY_TYPE,
-				error: error instanceof Error ? error.message : String(error),
-			});
-		}
 	}
 
 	function beginAgentGoalAccounting(goal: Goal): void {
