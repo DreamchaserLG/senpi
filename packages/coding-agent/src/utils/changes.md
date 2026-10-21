@@ -5,7 +5,7 @@
 ### What changed
 
 - `packages/coding-agent/src/utils/paths.ts`: exports `absoluteHostArgs(hostArgs, cwd)`, moved from `modes/rpc/protocol-identity.ts`: each `--extension`/`-e`/`--skill`/`--prompt-template`/`--theme`/`--session-dir` value through `resolveCliPaths` against `cwd`.
-- `packages/coding-agent/src/utils/paths.ts`: exports `absoluteExecArgv(execArgv, cwd)`: each `--import`/`--loader`/`--experimental-loader`/`--require`/`-r` value (separate or `=` form) that Node would resolve against the cwd becomes absolute: a relative path against `cwd`, a bare package through `createRequire(<cwd>/)` (kept verbatim when it does not resolve); ESM flags get a `file:` URL, `--require` a path; absolute paths and `file:`/`data:`/`node:` URLs stay verbatim.
+- `packages/coding-agent/src/utils/paths.ts`: exports `absoluteExecArgv(execArgv, cwd)`: each `--import`/`--loader`/`--experimental-loader`/`--require`/`-r`/`--preload` (Bun) value (separate or `=` form) that the runtime would resolve against the cwd becomes absolute: a relative path against `cwd`, a bare package or `#import` through `createRequire(<cwd>/)` (a plain package is kept verbatim when it does not resolve; a bare value naming a file in `cwd`, or an unresolvable `#import`, throws an `ambiguous exec argv` error instead); an existing target is recorded by its real path for relative and bare values alike (senpi#3784 review); ESM flags get a `file:` URL, the others a path; absolute paths and `file:`/`data:`/`node:` URLs stay verbatim.
 
 ### Why
 

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -148,5 +148,62 @@ describe("exec argv module specifiers (senpi#3783)", () => {
 			"--conditions=./not-a-module",
 		];
 		expect(absoluteExecArgv(argv, cwd)).toEqual(argv);
+	});
+
+	it("makes relative --import and --require absolute in both the separate and = forms", () => {
+		const { cwd } = cwdWithPackage();
+		expect(
+			absoluteExecArgv(
+				["--import", "./x.mjs", "--import=./z.mjs", "--require", "../y.cjs", "--require=./w.cjs"],
+				cwd,
+			),
+		).toEqual([
+			"--import",
+			pathToFileURL(resolve(cwd, "x.mjs")).href,
+			`--import=${pathToFileURL(resolve(cwd, "z.mjs")).href}`,
+			"--require",
+			resolve(cwd, "../y.cjs"),
+			`--require=${resolve(cwd, "w.cjs")}`,
+		]);
+	});
+
+	it("makes Bun's relative --preload absolute in both forms", () => {
+		const { cwd } = cwdWithPackage();
+		expect(absoluteExecArgv(["--preload", "./p.ts", "--preload=../q.ts"], cwd)).toEqual([
+			"--preload",
+			resolve(cwd, "p.ts"),
+			`--preload=${resolve(cwd, "../q.ts")}`,
+		]);
+	});
+
+	it("rejects a bare specifier that names a file in cwd instead of passing it through", () => {
+		const { cwd } = cwdWithPackage();
+		writeFileSync(join(cwd, "setup.mjs"), "");
+		expect(() => absoluteExecArgv(["--import", "setup.mjs"], cwd)).toThrow(
+			/ambiguous.*--import.*setup\.mjs.*\.\/setup\.mjs/,
+		);
+		expect(() => absoluteExecArgv(["--require=setup.mjs"], cwd)).toThrow(/ambiguous.*--require/);
+	});
+
+	it("rejects a package-internal #import that cwd cannot resolve instead of passing it through", () => {
+		const { cwd } = cwdWithPackage();
+		expect(() => absoluteExecArgv(["--import", "#internal"], cwd)).toThrow(/ambiguous.*--import.*#internal/);
+	});
+
+	it("records a relative path and a package by one rule: the real path of an existing file", () => {
+		const { cwd } = cwdWithPackage();
+		const real = realpathSync(cwd);
+		const link = `${cwd}-link`;
+		created.push(link);
+		symlinkSync(real, link);
+		writeFileSync(join(real, "r.cjs"), "");
+		expect(absoluteExecArgv(["-r", "./r.cjs", "-r", "fake-loader", "-r", "./missing.cjs"], link)).toEqual([
+			"-r",
+			join(real, "r.cjs"),
+			"-r",
+			join(real, "node_modules", "fake-loader", "loader.mjs"),
+			"-r",
+			resolve(link, "missing.cjs"),
+		]);
 	});
 });

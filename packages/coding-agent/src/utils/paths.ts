@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve as nodeResolvePath, parse, relative, sep } from "node:path";
@@ -263,16 +263,20 @@ export function absoluteHostArgs(hostArgs: readonly string[], cwd: string): stri
 	);
 }
 
-/** Node exec-argv flags whose value is a module specifier, and whether Node loads it as ESM (`--import`/loaders). */
+/** Runtime exec-argv flags whose value is a module specifier, and whether it is loaded as ESM (`--import`/loaders);
+ * `--preload` is Bun's (`-r`/`--require` are its aliases). */
 const EXEC_ARGV_MODULE_FLAGS = new Map([
 	["--import", true],
 	["--loader", true],
 	["--experimental-loader", true],
 	["--require", false],
 	["-r", false],
+	["--preload", false],
 ]);
 
-function absoluteModuleSpecifier(specifier: string, cwd: string, esm: boolean): string {
+/** One rule for every specifier (senpi#3784): a `./`/`../` path resolves against `cwd`, a bare one (package or `#import`)
+ * through `createRequire(<cwd>/)`, and an existing target is recorded by its real path, as `require.resolve` returns it. */
+function absoluteModuleSpecifier(flag: string, specifier: string, cwd: string): string {
 	if (isAbsolute(specifier) || /^(?:file|data|node):/.test(specifier)) return specifier;
 	let path: string;
 	if (/^\.\.?(?:[\\/]|$)/.test(specifier)) {
@@ -281,19 +285,25 @@ function absoluteModuleSpecifier(specifier: string, cwd: string, esm: boolean): 
 		try {
 			path = createRequire(join(cwd, "noop.js")).resolve(specifier);
 		} catch {
-			// no-excuse-ok: catch - an unresolvable package stays as written, so Node reports it exactly as before.
-			return specifier;
+			// no-excuse-ok: catch - a plain unresolvable package stays as written, so Node reports it exactly as before;
+			// one that is really a cwd file or a cwd-scoped `#import` would silently resolve against the agent dir instead.
+			if (!specifier.startsWith("#") && !existsSync(nodeResolvePath(cwd, specifier))) return specifier;
+			throw new Error(
+				`ambiguous exec argv ${flag} ${specifier}: ${cwd} resolves no such package or #import, and it is not a ./ or ../ path; write ./${specifier} or an absolute path for a file`,
+			);
 		}
 	}
-	return esm ? pathToFileURL(path).href : path;
+	const canonical = existsSync(path) ? realpathSync(path) : path;
+	return EXEC_ARGV_MODULE_FLAGS.get(flag) === true ? pathToFileURL(canonical).href : canonical;
 }
 
 /**
  * Exec argv (`runtimeExecArgv()`) read against `cwd`, the directory the process was started from (senpi#3783): each
- * `--import`/`--loader`/`--experimental-loader`/`--require`/`-r` value, in either `--flag value` or `--flag=value` form,
- * that Node would resolve against the cwd - a relative path, or a bare package resolved from `cwd` - becomes absolute (a
- * `file:` URL for the ESM flags, a path for `--require`). Absolute paths and `file:`/`data:`/`node:` URLs stay verbatim,
- * and so does a package `cwd` cannot resolve. The RPC host supervisor applies it before it moves into its agent dir, so
+ * `--import`/`--loader`/`--experimental-loader`/`--require`/`-r`/`--preload` value, in either `--flag value` or
+ * `--flag=value` form, that the runtime would resolve against the cwd - a relative path, or a bare package or `#import`
+ * resolved from `cwd` - becomes absolute (a `file:` URL for the ESM flags, a path otherwise). Absolute paths and
+ * `file:`/`data:`/`node:` URLs stay verbatim, and so does a package `cwd` cannot resolve; a bare value that names a file
+ * in `cwd`, or an unresolvable `#import`, throws instead of reaching the agent dir unresolved. The RPC host supervisor applies it before it moves into its agent dir, so
  * a host child it spawns from there still loads what its launcher meant.
  */
 export function absoluteExecArgv(execArgv: readonly string[], cwd: string): string[] {
@@ -301,16 +311,15 @@ export function absoluteExecArgv(execArgv: readonly string[], cwd: string): stri
 	for (let index = 0; index < execArgv.length; index++) {
 		const arg = execArgv[index] ?? "";
 		const equals = arg.startsWith("--") ? arg.indexOf("=") : -1;
-		const inlineEsm = equals > 0 ? EXEC_ARGV_MODULE_FLAGS.get(arg.slice(0, equals)) : undefined;
-		if (inlineEsm !== undefined) {
-			result.push(`${arg.slice(0, equals)}=${absoluteModuleSpecifier(arg.slice(equals + 1), cwd, inlineEsm)}`);
+		const inlineFlag = equals > 0 ? arg.slice(0, equals) : "";
+		if (EXEC_ARGV_MODULE_FLAGS.has(inlineFlag)) {
+			result.push(`${inlineFlag}=${absoluteModuleSpecifier(inlineFlag, arg.slice(equals + 1), cwd)}`);
 			continue;
 		}
 		result.push(arg);
-		const esm = EXEC_ARGV_MODULE_FLAGS.get(arg);
 		const value = execArgv[index + 1];
-		if (esm !== undefined && value !== undefined) {
-			result.push(absoluteModuleSpecifier(value, cwd, esm));
+		if (EXEC_ARGV_MODULE_FLAGS.has(arg) && value !== undefined) {
+			result.push(absoluteModuleSpecifier(arg, value, cwd));
 			index++;
 		}
 	}
