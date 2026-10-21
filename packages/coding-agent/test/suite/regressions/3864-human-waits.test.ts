@@ -57,7 +57,7 @@ for (const child of [false, true]) {
 		fixtures.push(fixture);
 		await fixture.session.bindExtensions({ mode: "rpc" });
 		const client = fixture.bind();
-		await client.send({ type: "set_client_info", capabilities: ["interactive_user"] });
+		await client.send({ type: "set_client_info", capabilities: ["interactive_user", "question"] });
 		expect(fixture.session.lifecycle).toBeDefined();
 		fixture.harness.setResponses([
 			fauxAssistantMessage([fauxToolCall("review_question", {})], { stopReason: "toolUse" }),

@@ -40,6 +40,7 @@ for (const testCase of cases) {
 		const seen: HumanInputAdmittedEvent["kind"][] = [];
 		fixture.session.onHumanInputAdmitted((event) => seen.push(event.kind));
 		const client = fixture.bind();
+		await client.send({ type: "set_client_info", capabilities: ["interactive_user", "question"] });
 		const question = fixture.session.extensionRunner.createContext().ui.question;
 		if (!question || context === undefined || api === undefined) throw new Error("The RPC question UI must be bound");
 		const revision = fixture.session.lifecycle.humanInputRevision;
