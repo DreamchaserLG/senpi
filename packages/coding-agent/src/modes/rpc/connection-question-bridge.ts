@@ -15,8 +15,10 @@ export class ConnectionQuestionBridge {
 	private readonly pending = new Map<string, Pending>();
 	private readonly resolved = new Set<string>();
 	private readonly output: (record: object) => void;
-	constructor(output: (record: object) => void, private readonly changed?: () => void) {
+	private readonly changed: (() => void) | undefined;
+	constructor(output: (record: object) => void, changed?: () => void) {
 		this.output = output;
+		this.changed = changed;
 	}
 	pendingQuestions(): RpcQuestionUiRequest[] {
 		return [...this.pending.values()].map(({ frame }) => ({

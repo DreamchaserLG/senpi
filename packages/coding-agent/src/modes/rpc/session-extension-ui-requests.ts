@@ -11,7 +11,10 @@ export const sessionDialogRequests = new WeakMap<object, SessionExtensionUiReque
 /** Per-session extension UI request state; never share this map between bindings. */
 export class SessionExtensionUiRequests {
 	private readonly pending = new Map<string, PendingRequest>();
-	constructor(private readonly changed?: () => void) {}
+	private readonly changed: (() => void) | undefined;
+	constructor(changed?: () => void) {
+		this.changed = changed;
+	}
 
 	set(id: string, request: PendingRequest): void {
 		this.pending.set(id, request);

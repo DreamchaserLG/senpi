@@ -189,6 +189,10 @@ export class SessionLifecycleController {
 				case "pending-messages":
 					continuationQueued ||= runtime.pendingMessages > 0;
 					break;
+				// A person's queued input starts the next turn itself (#3865).
+				case "user-input-queued":
+					continuationQueued = true;
+					break;
 				case "armed-timer":
 					if (expectation.timer === "userGrace") continuationQueued = true;
 					else background.push({

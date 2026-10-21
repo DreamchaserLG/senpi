@@ -199,7 +199,7 @@ export class LifecycleSessionBinding {
 			details: { interrupted: { reason: "host_restart" } },
 			isError: true, timestamp: Date.now(),
 		});
-		if (pending.size > 0) this.session.agent.replaceMessages(this.session.sessionManager.buildSessionContext().messages);
+		if (pending.size > 0) this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
 	}
 
 	private hostAppendInterruption(ticketId: string, runId: string | undefined): void {

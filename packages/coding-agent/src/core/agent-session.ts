@@ -1063,7 +1063,7 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 }
 
 export interface PromptOptions extends ClientMessageIdentity {
-	/** An RPC input from a connection that declared `interactive_user`: a human typed it. */
+	/** A person's input: an RPC input from a connection that declared `interactive_user`, or an answered question through the extension API; see `hasQueuedPersonInput`. */
 	humanOrigin?: boolean;
 	/** Internal: this input was already reported to `onHumanInputAdmitted` by the caller, so it is not reported again. */
 	humanInputReported?: boolean;
@@ -1081,8 +1081,6 @@ export interface PromptOptions extends ClientMessageIdentity {
 	thinkingLevel?: ThinkingLevel;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
-	/** A person's input that arrives through the extension API (an answered question); see `hasQueuedPersonInput`. */
-	humanOrigin?: boolean;
 	/**
 	 * Send command-shaped text that no command handles to the model as plain text. Without it, such
 	 * interactive or RPC input is rejected with `UnknownCommandError`.
