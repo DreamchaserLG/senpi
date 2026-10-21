@@ -1,3 +1,21 @@
+## 2026-10-21 - An RPC question answer is reported once (senpi#3864)
+
+### What changed
+
+`connection-question-bridge.ts` reports a validated answer as human input only for a tool-result question (`waitForAnswer` and `deliver` not `user-message`). An async or resumed answer is left to the question-input release that delivers it.
+
+### Why
+
+ask-user's `deliverAnswer` reports async and resumed answers; the adapter reporting them as well counted one answer twice.
+
+### Why an extension could not handle it
+
+The RPC question bridge is core RPC.
+
+### Expected merge conflict zones
+
+The `respond` closure in `connection-question-bridge.ts`.
+
 ## 2026-10-21 - Share lifecycle state, events and self-settle over RPC (senpi#3864)
 
 ### What changed

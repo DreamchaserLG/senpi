@@ -239,6 +239,11 @@ export interface ExtensionUIContext {
 		request: QuestionRequest,
 		opts?: ExtensionUIDialogOptions & {
 			onProgress?: (draft: { answers?: QuestionResponse["answers"]; comment?: string }) => void;
+			/**
+			 * How the answer reaches the model. A "user-message" answer is reported as a person's input when it
+			 * is delivered, so a UI adapter must not report it again.
+			 */
+			deliver?: "tool-result" | "user-message";
 		},
 	): Promise<QuestionResponse>;
 

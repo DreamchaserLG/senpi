@@ -118,8 +118,9 @@ export class ConnectionQuestionBridge {
 					comment = response.comment;
 					const status = settledQuestionStatus(answers, comment);
 					if (status === undefined) return false;
-					// Async question replies enter through questionInput instead.
-					if (request.waitForAnswer) beforeAnswer?.();
+					// Only a tool-result answer is reported here. An async or resumed answer is delivered as a
+					// user message, whose question-input release reports it; reporting both would count it twice.
+					if (request.waitForAnswer && opts?.deliver !== "user-message") beforeAnswer?.();
 					finish(status, "rpc_connection");
 					return true;
 				},

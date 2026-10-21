@@ -1,3 +1,21 @@
+## 2026-10-21 - Question options say how the answer is delivered (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/types.ts`: `ExtensionUIContext.question` options gain `deliver?: "tool-result" | "user-message"`. ask-user passes `user-message` for an async question and for a question resumed after a restart, `tool-result` otherwise.
+
+### Why
+
+A `user-message` answer is reported as a person's input when ask-user delivers it (the question-input release). The RPC adapter reports a validated answer too, so without this signal an async or resumed answer over `extension_ui_response` counted twice.
+
+### Why an extension could not handle it
+
+The UI adapter that validates the answer is core RPC and only sees the question options.
+
+### Expected merge conflict zones
+
+The `question?` member of `ExtensionUIContext` in `packages/coding-agent/src/core/extensions/types.ts`.
+
 ## 2026-10-21 - Preserve human-answer delivery while releasing holds (senpi#3853)
 
 ### What changed
