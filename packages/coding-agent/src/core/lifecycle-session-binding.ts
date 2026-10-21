@@ -97,6 +97,10 @@ export class LifecycleSessionBinding {
 		this.nextRunOrigin = this.controller.nextRunOrigin;
 	}
 
+	get isRestored(): boolean {
+		return this.restored;
+	}
+
 	startRun(): void {
 		this.lastEnd = undefined;
 		const origin = this.nextRunOrigin;

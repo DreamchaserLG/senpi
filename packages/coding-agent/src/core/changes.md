@@ -1,3 +1,21 @@
+## 2026-10-21 - Keep restored run admission synchronous (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts` only awaits lifecycle restoration when the binding has not completed restoration.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`: awaiting an already-resolved promise still yields. The redundant await inserted a new scheduling gap after provider/compaction admission had validated its generation, including on every retry and continuation. Completed restoration is an immutable binding fact, so later runs retain their original admission ordering.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`: `_promptAgent` is the common engine run admission boundary.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: `_promptAgent`; `lifecycle-session-binding.ts`: restore state accessor.
+
 ## 2026-10-21 - Abort custom input during its header barrier (senpi#3864)
 
 ### What changed
