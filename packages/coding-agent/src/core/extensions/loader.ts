@@ -51,6 +51,7 @@ import {
 	extensionModuleImporter,
 	rememberExtensionFactory,
 } from "./extension-module-cache.ts";
+import { createLifecycleApi } from "./lifecycle-api.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AppendEntryOptions,
@@ -643,11 +644,11 @@ function createExtensionAPI(
 		},
 
 		// Action methods - delegate to shared runtime
-		get lifecycle() {
+		lifecycle: createLifecycleApi(() => {
 			assertActive();
 			if (!runtime.lifecycle) throw new Error("Extension lifecycle is not bound to a session");
 			return runtime.lifecycle;
-		},
+		}),
 		sendMessage(message, options): void {
 			assertActive();
 			runtime.sendMessage(message, options);
