@@ -30,6 +30,11 @@ export interface TurnEndLivenessState {
 	>;
 }
 
+/** A person's input is among the entries queued now (tagged by source when it was enqueued). */
+function personInputQueued(ctx: ExtensionContext): boolean {
+	return ctx.hasQueuedPersonInput?.() === true;
+}
+
 /** senpi#3860's hold ledger, when the engine exposes it: true while every engine-originated wake is held. */
 function engineTurnsHeld(ctx: ExtensionContext): boolean {
 	if (!("engineTurnsHeld" in ctx)) return false;
@@ -55,7 +60,9 @@ export function collectTurnEndLivenessInput(
 	const timer = monitor.scheduledContinuation();
 	if (timer !== undefined) expectations.push({ kind: "armed-timer", timer });
 	if (monitor.hasStagedRecovery()) expectations.push({ kind: "recovery-staged" });
-	if (ctx.hasPendingMessages()) expectations.push({ kind: "pending-messages" });
+	if (ctx.hasPendingMessages()) {
+		expectations.push(personInputQueued(ctx) ? { kind: "user-input-queued" } : { kind: "pending-messages" });
+	}
 	if (calledAskUser(event.messages) || endsWithQuestion(lastAssistantText(event.messages))) {
 		expectations.push({ kind: "question-to-user" });
 	}

@@ -3817,3 +3817,23 @@ Only the session owns account suppression and pending model selection.
 ### Expected merge conflict zones
 
 The compaction context/action declarations in `types.ts` and callback storage, binding, and context construction in `runner.ts`.
+
+## 2026-10-21 - Extensions can ask whether a person's input is queued (senpi#3863)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.hasQueuedPersonInput?()` and the matching optional context action; `sendUserMessage` options take `humanOrigin`, which marks an extension send as a person's input (an answered question).
+- `packages/coding-agent/src/core/extensions/runner.ts`: binds `hasQueuedPersonInput` from the session's context actions (false when the host does not provide it).
+
+### Why
+
+The goal extension's turn-end liveness verdict releases a hold only for a person's queued input. That has to come from the session's per-entry tags, not from a count the extension keeps.
+
+### Why an extension could not handle it
+
+This is the extension contract itself. The queue state lives in `AgentSession`.
+
+### Expected merge conflict zones
+
+- `types.ts`: beside `hasPendingMessages` in `ExtensionContext` and `ExtensionContextActions`, and both `sendUserMessage` option types.
+- `runner.ts`: the context-action fields and the `hasPendingMessages` binding.

@@ -566,6 +566,11 @@ export interface ExtensionContext {
 	/** Whether there are queued messages waiting */
 	hasPendingMessages(): boolean;
 	/**
+	 * Whether a person's input is waiting in the queue (a TUI submit, an RPC client prompt/steer/follow_up, or an
+	 * answered question), decided from the entries queued now. Extension and engine sends are never a person's.
+	 */
+	hasQueuedPersonInput?(): boolean;
+	/**
 	 * Request a full session reload when the host provides a reload action.
 	 * Interactive hosts may resolve without reloading while streaming or compacting, so
 	 * resolution alone does not confirm that a reload occurred.
@@ -799,7 +804,7 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
 
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean; humanOrigin?: boolean },
 	): Promise<void>;
 }
 
@@ -2590,7 +2595,7 @@ export interface ExtensionAPI {
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean; humanOrigin?: boolean },
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
@@ -3234,6 +3239,7 @@ export interface ExtensionContextActions {
 	getSignal: () => AbortSignal | undefined;
 	abort: (source?: "user" | "system") => void;
 	hasPendingMessages: () => boolean;
+	hasQueuedPersonInput?: () => boolean;
 	isCompacting: () => boolean;
 	checkReloadVeto?: () => Promise<ReloadVetoDecision>;
 	shutdown: () => void;

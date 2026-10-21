@@ -38,7 +38,8 @@ const MONITOR: WakeExpectation = { kind: "wake-source", source: "terminal-monito
 const GOAL_TIMER: WakeExpectation = { kind: "armed-timer", timer: "monitor" };
 const RECOVERY: WakeExpectation = { kind: "recovery-staged" };
 const QUESTION: WakeExpectation = { kind: "question-to-user" };
-const QUEUED: WakeExpectation = { kind: "pending-messages" };
+const QUEUED: WakeExpectation = { kind: "user-input-queued" };
+const ENGINE_QUEUED: WakeExpectation = { kind: "pending-messages" };
 
 /** One representative input per row of TURN_END_RULES, with the verdict that row must produce. */
 const ROWS: ReadonlyArray<readonly [string, string, Partial<TurnEndLivenessInput>, TurnEndLivenessVerdict]> = [
@@ -80,9 +81,27 @@ const ROWS: ReadonlyArray<readonly [string, string, Partial<TurnEndLivenessInput
 	],
 	[
 		"ledger-hold",
-		"an inherited hold in a child session",
-		{ ledgerHold: "inherited_hold", isChildSession: true, expectations: [QUEUED] },
+		"an inherited hold in a child session with a running child",
+		{ ledgerHold: "inherited_hold", isChildSession: true, expectations: [CHILD] },
 		{ kind: "held", reason: "inherited_hold" },
+	],
+	[
+		"wake",
+		"the user's own queued message releases an active hold",
+		{ ledgerHold: "unattended", expectations: [QUEUED, CHILD] },
+		{ kind: "waiting", on: [QUEUED, CHILD], heldBy: "unattended" },
+	],
+	[
+		"ledger-hold",
+		"a Stop hook or loop tick queued under a hold stays held: it is not the user's input",
+		{ ledgerHold: "unattended", expectations: [ENGINE_QUEUED, CHILD] },
+		{ kind: "held", reason: "unattended" },
+	],
+	[
+		"wake",
+		"an extension's queued message with no hold still starts a turn",
+		{ expectations: [ENGINE_QUEUED] },
+		{ kind: "waiting", on: [ENGINE_QUEUED] },
 	],
 	[
 		"continuation-queued",
@@ -244,7 +263,14 @@ describe("TURN_END_RULES invariants over every stop x hold x open work x wake x 
 		{ kind: "active-goal", goalId: "g" },
 		{ kind: "open-todos", count: 1 },
 	];
-	const wakes: ReadonlyArray<readonly WakeExpectation[]> = [[], [CHILD], [GOAL_TIMER], [QUESTION], [QUEUED]];
+	const wakes: ReadonlyArray<readonly WakeExpectation[]> = [
+		[],
+		[CHILD],
+		[GOAL_TIMER],
+		[QUESTION],
+		[QUEUED],
+		[ENGINE_QUEUED],
+	];
 	const starts: ReadonlyArray<Partial<TurnEndLivenessInput>> = [
 		{},
 		{ willRetry: true },
@@ -272,16 +298,21 @@ describe("TURN_END_RULES invariants over every stop x hold x open work x wake x 
 		}
 	});
 
-	it("holds every engine wake while the hold ledger is active, unless the run in flight retries", () => {
+	it("holds every engine wake while the hold ledger is active, unless the run in flight retries or the user queued input", () => {
 		for (const case_ of cases) {
 			if (case_.ledgerHold === undefined || case_.willRetry) continue;
+			if (case_.expectations.includes(QUEUED)) {
+				expect(evaluateTurnEndLiveness(case_).kind).not.toBe("held");
+				continue;
+			}
 			expect(evaluateTurnEndLiveness(case_)).toEqual({ kind: "held", reason: case_.ledgerHold });
 		}
 	});
 
 	it("reports continuing exactly when a turn will start from a retry or a queued continuation", () => {
 		for (const case_ of cases) {
-			const starting = case_.willRetry || (case_.continuationQueued !== undefined && case_.ledgerHold === undefined);
+			const released = case_.ledgerHold === undefined || case_.expectations.includes(QUEUED);
+			const starting = case_.willRetry || (case_.continuationQueued !== undefined && released);
 			expect(evaluateTurnEndLiveness(case_).kind === "continuing").toBe(starting);
 		}
 	});
@@ -392,7 +423,13 @@ describe("collectTurnEndLivenessInput reads the hold ledger (#3863, senpi#3860)"
 			sessionManager: { getBranch: () => [], getHeader: () => undefined, getSessionId: () => "s" },
 			...extra,
 		}) as unknown as ExtensionContext;
-	const state = { goal: null, todoOutcome: undefined, deadlineStop: false, continuationPending: false, monitor };
+	const state = {
+		goal: null,
+		todoOutcome: undefined,
+		deadlineStop: false,
+		continuationPending: false,
+		monitor,
+	};
 
 	it.each([
 		["an engine without the ledger", {}, undefined],
@@ -402,5 +439,47 @@ describe("collectTurnEndLivenessInput reads the hold ledger (#3863, senpi#3860)"
 		const collected = collectTurnEndLivenessInput(ctxWith(extra), event, state);
 		expect(collected.ledgerHold).toBe(ledgerHold);
 		expect(evaluateTurnEndLiveness(collected).kind).toBe(ledgerHold === undefined ? "waiting" : "held");
+	});
+});
+
+describe("the queued-message wake follows the session's per-entry origin tag (#3863)", () => {
+	const endOfTurn: AgentEndEvent = { type: "agent_end", messages: [fauxAssistantMessage("done")], willRetry: false };
+	const state = {
+		goal: null,
+		todoOutcome: undefined,
+		deadlineStop: false,
+		continuationPending: false,
+		monitor: { liveWakeSources: () => [], scheduledContinuation: () => undefined, hasStagedRecovery: () => false },
+	};
+	const ctxWith = (personQueued: boolean | undefined, held: boolean): ExtensionContext =>
+		({
+			mode: "tui",
+			hasPendingMessages: () => true,
+			...(personQueued === undefined ? {} : { hasQueuedPersonInput: (): boolean => personQueued }),
+			...(held ? { engineTurnsHeld: (): boolean => true } : {}),
+			sessionManager: { getBranch: () => [], getHeader: () => undefined, getSessionId: () => "s" },
+		}) as unknown as ExtensionContext;
+
+	it.each([
+		["a person's queued input", true, "user-input-queued"],
+		["only extension or engine messages", false, "pending-messages"],
+		["an engine without the per-entry tag", undefined, "pending-messages"],
+	] as const)("maps a pending queue holding %s to %s", (_label, personQueued, kind) => {
+		expect(collectTurnEndLivenessInput(ctxWith(personQueued, false), endOfTurn, state).expectations).toEqual([
+			{ kind },
+		]);
+	});
+
+	it.each([
+		[
+			"a person's queued input releases the hold",
+			true,
+			{ kind: "waiting", on: [{ kind: "user-input-queued" }], heldBy: "unattended" },
+		],
+		["an extension-queued message stays held", false, { kind: "held", reason: "unattended" }],
+	] as const)("under an active hold, %s", (_label, personQueued, verdict) => {
+		expect(
+			evaluateTurnEndLiveness(collectTurnEndLivenessInput(ctxWith(personQueued, true), endOfTurn, state)),
+		).toEqual(verdict);
 	});
 });
