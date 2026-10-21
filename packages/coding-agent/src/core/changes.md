@@ -1,3 +1,21 @@
+## 2026-10-21 - Human-input seam: who typed an input (senpi#3811)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts`: `onHumanInputAdmitted(listener)` reports a person's input synchronously, before it is queued or admitted: every input whose `inputOrigin` (`input-origin.ts`, classified at the entry point) is `person` (TUI submit, RPC `prompt`/`steer`/`follow_up`), human question answers (reported from the engine's `questionInput` release, before the answer is sent), and `resumeSession()`. Extension sends, wakes and continuations are never reported. It fires exactly once per input: internal re-entries into `prompt` carry `humanInputReported`.
+
+### Why
+
+Stop/pause (#3811) and the session lifecycle (#3864) both need to know, synchronously and once, when a person's input enters the session.
+
+### Why an extension could not handle it
+
+Input admission and its origin are engine-owned; the RPC connection role is core RPC.
+
+### Expected merge conflict zones
+
+The first lines of `prompt`, `steer`, `followUp` and `resumeSession`, and the `questionInput` context action in `agent-session.ts`.
+
 ## 2026-10-21 - An input release finishes when its run settles, and returns on every refused exit (senpi#3853)
 
 ### What changed

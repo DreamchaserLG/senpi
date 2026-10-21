@@ -1029,11 +1029,7 @@ export function createRpcConnectionHandler(
 
 			case "prompt": {
 				turnRequested = true;
-				const admission = handleClientInput(session, command, {
-					output,
-					promptCalls,
-					humanOrigin: interactiveUser === true,
-				});
+				const admission = handleClientInput(session, command, { output, promptCalls });
 				promptCalls.add(admission);
 				void admission.finally(() => promptCalls.delete(admission));
 				return undefined;
@@ -1103,7 +1099,7 @@ export function createRpcConnectionHandler(
 			case "steer":
 			case "follow_up": {
 				turnRequested = true;
-				await handleClientInput(session, command, { output, promptCalls, humanOrigin: interactiveUser === true });
+				await handleClientInput(session, command, { output, promptCalls });
 				return undefined;
 			}
 
@@ -1925,7 +1921,8 @@ export function createRpcConnectionHandler(
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,
-				...(interactiveUser === true ? { beforeAnswer: () => session.admitHumanAnswer() } : {}),
+				// An answer is a person's input by its entry point, whatever the connection role.
+				beforeAnswer: () => session.admitHumanAnswer(),
 			});
 			if (reply) output(reply);
 			return;

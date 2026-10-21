@@ -34,11 +34,11 @@
 
 ### What changed
 
-`connection-handler.ts` binds a connection's `interactive_user` capability at its first `set_client_info` declaration (a later change is refused with `connection_role_fixed`) and passes it to `client-input-handler.ts`, which marks that connection's `prompt`/`steer`/`follow_up` as `humanOrigin`. `custom-capability.ts` exports `INTERACTIVE_USER_CAPABILITY`.
+`connection-handler.ts` binds a connection's `interactive_user` capability at its first `set_client_info` declaration; a later change is refused with `connection_role_fixed`. The role is the connection's authority (who may Stop a session or release a pause, senpi#3811); it does not change an input's origin, which stays classified at the entry point. `custom-capability.ts` exports `INTERACTIVE_USER_CAPABILITY`.
 
 ### Why
 
-Only input a person typed may count as human input; bots, scripts and task runners use connections without the role.
+Stop and pause authority must belong to a person's client, not to bots, scripts or task runners, which connect without the role.
 
 ### Why an extension could not handle it
 
@@ -46,7 +46,7 @@ Connection capabilities and input admission are core RPC.
 
 ### Expected merge conflict zones
 
-The `set_client_info` case and the `handleClientInput` calls in `connection-handler.ts`; the `InputOutput` type and both `source: "rpc"` sites in `client-input-handler.ts`.
+The `set_client_info` case in `connection-handler.ts`.
 
 ## 2026-10-21 - Admit Resume promptly and preserve park context patches (senpi#3853)
 

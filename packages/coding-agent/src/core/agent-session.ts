@@ -1064,7 +1064,7 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 }
 
 export interface PromptOptions extends ClientMessageIdentity {
-	/** A person's input: an RPC input from a connection that declared `interactive_user`, or an answered question through the extension API; see `hasQueuedPersonInput`. */
+	/** A person's input that arrives through the extension API (an answered question); see `hasQueuedPersonInput`. */
 	humanOrigin?: boolean;
 	/** Internal: this input was already reported to `onHumanInputAdmitted` by the caller, so it is not reported again. */
 	humanInputReported?: boolean;
@@ -1197,9 +1197,8 @@ type SummarizationRequestAuth = {
 	thinkingLevel: ThinkingLevel;
 };
 
-function isHumanInput(options: { source?: InputSource; humanOrigin?: boolean } | undefined): boolean {
-	const source = options?.source ?? "interactive";
-	return source === "interactive" || (source === "rpc" && options?.humanOrigin === true);
+function isHumanInput(options: { source?: InputSource } | undefined): boolean {
+	return inputOriginOf(options?.source) === "person";
 }
 
 function promptKind(options: PromptOptions | undefined): HumanInputAdmittedEvent["kind"] {
