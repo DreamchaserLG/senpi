@@ -1,7 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentSession } from "./agent-session.ts";
 import { collectGoalLifecycleFacts, onGoalLifecycleChange } from "./extensions/builtin/goal/lifecycle-facts.ts";
-import { readGoal } from "./extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "./extensions/builtin/goal/store-ref.ts";
 import { collectTurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness-report.ts";
 import type { Goal } from "./extensions/builtin/goal/types.ts";
@@ -9,6 +8,7 @@ import type { ExtensionRunner } from "./extensions/runner.ts";
 import { StaleExtensionContextError } from "./extensions/stale-context-error.ts";
 import type { AgentEndEvent } from "./extensions/types.ts";
 import { consumeLifecycleDelivery, lifecycleDeliveryEntries, messageTicket } from "./lifecycle-delivery.ts";
+import { readLifecycleGoal } from "./lifecycle-goal.ts";
 import { lifecycleHistory } from "./lifecycle-history.ts";
 import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
 import type { LifecycleRecord } from "./lifecycle-record.ts";
@@ -140,7 +140,7 @@ export class LifecycleSessionBinding {
 		const goal = collected
 			? collected.goal
 			: changedGoal === undefined
-				? await readGoal(goalStoreRef(this.session.sessionManager, this.session.cwd))
+				? await readLifecycleGoal(goalStoreRef(this.session.sessionManager, this.session.cwd))
 				: changedGoal;
 		if (generation !== this.refreshGeneration) return;
 		let input = collected?.input;
