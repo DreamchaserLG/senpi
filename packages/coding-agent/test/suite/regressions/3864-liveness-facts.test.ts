@@ -133,3 +133,18 @@ it("discards a standing self-settle request on a failed seal", async () => {
 	expect(controller.snapshot.state).toBe("failed");
 	expect(controller.snapshot.settleDecision).toBeUndefined();
 });
+
+it.each(["senpi-task", "omo-dag", "workpool:review"])("defaults untyped %s wake facts to background", async (source) => {
+	// Given a live expectation with no producer-declared obligation kind.
+	const { controller } = await subject();
+	controller.goalFacts(null, input({ expectations: [{ kind: "wake-source", source }] }));
+
+	// When its turn ends before any typed producer registry is available.
+	controller.idle();
+
+	// Then a channel's name alone cannot turn legacy background work into children.
+	expect(controller.snapshot).toMatchObject({
+		state: "waiting_background",
+		waitingOn: { children: 0, background: [{ source, activeCount: 1 }] },
+	});
+});

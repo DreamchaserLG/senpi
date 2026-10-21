@@ -178,7 +178,7 @@ export class SessionLifecycleController {
 		const background: LifecycleWaits["background"][number][] = active
 			.filter((record) => record.kind === "background")
 			.map((record) => ({ source: record.source ?? record.key, activeCount: record.activeCount ?? 1 }));
-		let children = Math.max(childRecords, active
+		const children = Math.max(childRecords, active
 			.filter((record) => record.kind === "children")
 			.reduce((sum, record) => sum + (record.activeCount ?? 1), 0));
 		const input = this.liveness;
@@ -203,8 +203,8 @@ export class SessionLifecycleController {
 					break;
 				case "wake-source":
 					if (active.some((record) => record.source === expectation.source)) break;
-					if (/^(senpi-task|omo-dag|workpool|omo-workpool|omo-wake-queue)(:|$)/.test(expectation.source)) children++;
-					else background.push({ source: expectation.source, activeCount: 1 });
+					// A channel name is not a producer-declared kind.
+					background.push({ source: expectation.source, activeCount: 1 });
 					break;
 				case "question-to-user":
 					questionToUser = true;
