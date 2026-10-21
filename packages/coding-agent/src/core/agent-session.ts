@@ -1062,6 +1062,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 export interface PromptOptions extends ClientMessageIdentity {
 	/** An RPC input from a connection that declared `interactive_user`: a human typed it. */
 	humanOrigin?: boolean;
+	/** Internal: this input was already reported to `onHumanInputAdmitted` by the caller, so it is not reported again. */
+	humanInputReported?: boolean;
 	/** Where the input sorts among queued inputs if it ends up queued (a replaying client keeps its order). */
 	enqueueOrder?: number;
 	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
@@ -5176,7 +5178,7 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
-		if (isHumanInput(options)) this._humanInputAdmitted(promptKind(options));
+		if (isHumanInput(options) && options?.humanInputReported !== true) this._humanInputAdmitted(promptKind(options));
 		// Held synchronously, before any await: an external delivery never overtakes this input.
 		const hold = this.externalAdmission.beginInput({
 			command: this._isExtensionCommandText(text, options),
@@ -5910,7 +5912,7 @@ export class AgentSession {
 	): Promise<QueuedInputDisposition> {
 		const origin = inputOriginOf(options?.source);
 		if (origin === "person" && this._engineTurnHold.held) {
-			await this.prompt(text, { ...options, images, streamingBehavior: behavior });
+			await this.prompt(text, { ...options, images, streamingBehavior: behavior, humanInputReported: true });
 			return "queued";
 		}
 		if (origin === "person") this._beginPersonInput();
