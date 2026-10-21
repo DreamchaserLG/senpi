@@ -203,7 +203,7 @@ describe("async ask-user question in the interactive TUI", () => {
 					{ type: "text", text: "[The user's comment for question tc-async]" },
 					{ type: "text", text: "just use bun" },
 				],
-				options: { deliverAs: "steer", humanOrigin: true },
+				options: { deliverAs: "steer" },
 			},
 		]);
 		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();

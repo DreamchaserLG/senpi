@@ -1,12 +1,12 @@
-## 2026-10-21 - Preserve answered-question queue attribution (senpi#3864)
+## 2026-10-21 - Deliver a resumed question's answer as a user message (senpi#3864)
 
 ### What changed
 
-`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` retains #3865's `humanOrigin: true` delivery tag for an answered question after releasing the engine-owned question-input capability.
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` passes `deliver: "user-message"` for a question resumed after a restart, as it already did for an async question; only a live blocking question passes `tool-result`.
 
 ### Why
 
-`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the tag makes an answered question count as a person's queued input for turn-end liveness. Lifecycle revision accounting uses the engine-owned question-input report, not this queue tag; removing the tag changed another PR's behavior.
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: a resumed question's answer is delivered by `deliverAnswer`, whose question-input release reports it as human input. The RPC adapter reports `tool-result` answers itself, so the option must say which path delivers the answer or one answer counts twice.
 
 ### Why an extension could not handle it
 
@@ -14,7 +14,7 @@
 
 ### Expected merge conflict zones
 
-`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: `deliverAnswer` delivery options.
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the `deliver` member of the question dialog options in `startQuestion`.
 
 ## 2026-10-21 - Declare lifecycle wake-source obligation kinds (senpi#3864)
 

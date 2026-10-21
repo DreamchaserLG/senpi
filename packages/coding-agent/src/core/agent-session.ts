@@ -1043,6 +1043,16 @@ export type ClearedQueue = {
 	readonly ordered: readonly QueuedInput[];
 };
 
+/**
+ * The origin an input is tagged and released with: an explicit origin (a person's answer, classified when it is
+ * delivered through the extension API) wins over the one its source implies.
+ */
+function originOf(
+	options: { readonly source?: InputSource; readonly inputOrigin?: InputOrigin } | undefined,
+): InputOrigin {
+	return options?.inputOrigin ?? inputOriginOf(options?.source);
+}
+
 /** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
 /** A human input about to be queued or admitted (senpi#3811 design 4.4). */
 export interface HumanInputAdmittedEvent {
@@ -1058,15 +1068,13 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	enqueueOrder?: number;
 	/** Input provenance reported to `input` extension handlers; defaults to "interactive". */
 	source?: InputSource;
-	/** A person's input: an RPC input from a connection that declared `interactive_user`, or an answered question through the extension API; see `hasQueuedPersonInput`. */
-	humanOrigin?: boolean;
+	/** Who the input came from; defaults from `source` (see `originOf`). */
+	inputOrigin?: InputOrigin;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
 }
 
 export interface PromptOptions extends ClientMessageIdentity {
-	/** A person's input that arrives through the extension API (an answered question); see `hasQueuedPersonInput`. */
-	humanOrigin?: boolean;
 	/** Internal: this input was already reported to `onHumanInputAdmitted` by the caller, so it is not reported again. */
 	humanInputReported?: boolean;
 	/** Where the input sorts among queued inputs if it ends up queued (a replaying client keeps its order). */
@@ -1077,6 +1085,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	images?: ImageContent[];
 	/** Internal: the text blocks an extension sent `text` as; kept as separate blocks while they still spell it. */
 	textBlocks?: readonly string[];
+	/** Internal: who started this input when it differs from `source` (a person's answer sent through the extension API). */
+	inputOrigin?: InputOrigin;
 	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
 	streamingBehavior?: "steer" | "followUp";
 	/** Session-only thinking level applied before starting this prompt. */
@@ -1232,6 +1242,8 @@ export class AgentSession {
 	/** Settles once the queued message_end processing (persistence included) of that exact message has run. */
 	private readonly _messageEndPersistence = new WeakMap<AgentMessage, Promise<void>>();
 	private _isAgentRunActive = false;
+	private _promptsInFlight = 0;
+	private _personAnswerPending = false;
 	/** senpi#3650: the core may continue a run after agent_end; the settle must not wait on that continuation. */
 	private readonly _runContinuations = new AgentRunContinuations();
 	/** senpi#3650: the turn that owns extension handler waits started now; the turn deadline releases only its own. */
@@ -2992,6 +3004,9 @@ export class AgentSession {
 		settlementEpoch: number,
 		deferredTurnClaims: DeferredTurnClaim[],
 	): Promise<void> {
+		// Run settlement is a settle point even when a deferred turn or newer settlement takes over below.
+		const settlingFirst = this._settleInputRelease();
+		if (settlingFirst) await settlingFirst;
 		const dispositions = await Promise.all(deferredTurnClaims.map((claim) => claim.disposition));
 		if (dispositions.includes("started")) return;
 		if (dispositions.includes("delegated") || this._sessionWorkBarrier.hasActiveWork) {
@@ -3020,8 +3035,9 @@ export class AgentSession {
 		this._deadlineTracker.disarm();
 		this._emit({ type: "agent_idle" });
 		this._lifecycleBinding.controller.idle();
-		// An input release admitted into a turn that was already streaming completes here, once the run settles.
-		await this._engineTurnInput.finish((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
+		// An input release admitted into a turn that was already streaming settles here, once the run settles.
+		const settling = this._settleInputRelease();
+		if (settling) await settling;
 	}
 
 	private async _promptAgent(
@@ -5221,15 +5237,12 @@ export class AgentSession {
 			command: this._isExtensionCommandText(text, options),
 			submittedByCommand: options?.source === "extension",
 		});
-		const origin = inputOriginOf(options?.source);
-		let ownsRelease = false;
-		let disposed = false;
+		this._promptsInFlight++;
 		try {
-			ownsRelease = origin === "person" && this._beginPersonInput();
+			if ((options?.inputOrigin ?? inputOriginOf(options?.source)) === "person") this._beginPersonInput();
 			await this._prompt(text, {
 				...options,
 				promptDisposition: (disposition) => {
-					disposed = true;
 					if (disposition !== "started") hold.accepted();
 					if (disposition === "started" || disposition === "queued")
 						this._engineTurnInput.admit(disposition === "queued", (message) => this.agent.steer(message));
@@ -5240,21 +5253,39 @@ export class AgentSession {
 					options?.onTurnAdmitted?.();
 				},
 			});
-			if (this.isIdle)
-				await this._engineTurnInput.finish((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
 		} finally {
-			// An input that opened the release and ended with no disposition (thrown, cancelled) gives it back.
-			if (ownsRelease && !disposed) this._engineTurnInput.abandon();
-			hold.end();
+			this._promptsInFlight--;
+			// No await unless a release is pending: settling must not delay a prompt's completion.
+			const settling = this._settleInputRelease();
+			if (settling) {
+				try {
+					await settling;
+				} finally {
+					hold.end();
+				}
+			} else hold.end();
 		}
 	}
 
 	/** A person's input (prompt, steer, follow-up, answer) attends the session and releases what it holds. */
-	private _beginPersonInput(): boolean {
+	private _beginPersonInput(): void {
 		emitUserActivity(this, "prompt");
 		this._deadlineTracker.clearHold();
 		this._engineResumeWindow = false;
-		return this._engineTurnInput.begin();
+		this._engineTurnInput.begin();
+	}
+
+	/**
+	 * Every input release settles here, once nothing could still admit it: no prompt in flight (a
+	 * command's follow-on reaches `prompt()` synchronously) and no run active. Called from every
+	 * prompt's `finally`, from run settlement, and after an answer is dispatched.
+	 */
+	private _settleInputRelease(): Promise<void> | undefined {
+		if (!this._engineTurnInput.hasPending) return undefined;
+		if (this._promptsInFlight > 0 || this._isAgentRunActive || !this.isIdle) return undefined;
+		// Turns deferred by the agent_settled window or the session_start gate still enter prompt() later.
+		if (this._agentSettledDelivery.active || this._extensionRunner.sessionStartTurnsHeld()) return undefined;
+		return this._engineTurnInput.settle((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
 	}
 
 	private _isExtensionCommandText(text: string, options?: PromptOptions): boolean {
@@ -5748,7 +5779,7 @@ export class AgentSession {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
 		await this._promptAgent(messages, {
-			inputOrigin: options?.humanOrigin === true ? "person" : inputOriginOf(options?.source),
+			inputOrigin: originOf(options),
 			onQueuedInput: options?.onQueuedInput,
 			onTurnAdmitted: options?.onTurnAdmitted,
 		});
@@ -6194,8 +6225,7 @@ export class AgentSession {
 		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
 		queue.push(input.text);
 		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared, undefined, input.queuedId);
-		if (input.humanOrigin === true || (input.source ?? "interactive") !== "extension")
-			this._personQueuedIds.add(queuedId);
+		if (originOf(input) === "person") this._personQueuedIds.add(queuedId);
 		this._sessionLogger.debug("queue_enqueue", {
 			mode: input.mode,
 			count: queue.length,
@@ -6365,7 +6395,7 @@ export class AgentSession {
 		} satisfies CustomMessage;
 		if (
 			!releasedWake &&
-			!isUserDirectedTurn(message.customType) &&
+			customTurnOrigin(message.customType) === "engine" &&
 			options?.deliverAs !== "nextTurn" &&
 			options?.triggerTurn !== false &&
 			(this.isStreaming || options?.triggerTurn === true) &&
@@ -6478,11 +6508,7 @@ export class AgentSession {
 				if (releasedWake && !releasedWake()) return;
 				const inputOrigin = customTurnOrigin(message.customType);
 				if (inputOrigin === "engine") this._recordEngineTurnStart(message.customType);
-				// A wake released by a person's input continues that person's turn.
-				await this._promptAgent(messages, {
-					inputOrigin: releasedWake ? "person" : inputOrigin,
-					deferredTurnClaim,
-				});
+				await this._promptAgent(messages, { inputOrigin, deferredTurnClaim });
 			} else if (this.isStreaming) {
 				if (options?.ticket) this.workObligations.passive(options.ticket);
 				this._pendingCustomMessages.push(appMessage);
@@ -6775,11 +6801,11 @@ export class AgentSession {
 		options?: {
 			deliverAs?: "steer" | "followUp";
 			expandPromptTemplates?: boolean;
-			humanOrigin?: boolean;
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
+		inputOrigin: InputOrigin = "extension",
 	): Promise<void> {
-		if (this._engineTurnHold.held) {
+		if (this._engineTurnHold.held && inputOrigin !== "person") {
 			await this.sendCustomMessage(
 				{ customType: "extension-user-message", content, display: true },
 				{ triggerTurn: true, deliverAs: options?.deliverAs },
@@ -6838,7 +6864,7 @@ export class AgentSession {
 				images,
 				textBlocks,
 				source: "extension",
-				...(options?.humanOrigin === true ? { humanOrigin: true } : {}),
+				inputOrigin,
 				promptDisposition: (nextDisposition) => {
 					disposition = nextDisposition;
 					if (nextDisposition === "started") deferredTurnClaim?.resolve("started");
@@ -6860,13 +6886,13 @@ export class AgentSession {
 					await this._queueSteer(text, images, {
 						textBlocks,
 						source: "extension",
-						humanOrigin: options?.humanOrigin,
+						inputOrigin,
 					});
 				} else {
 					await this._queueFollowUp(text, images, {
 						textBlocks,
 						source: "extension",
-						humanOrigin: options?.humanOrigin,
+						inputOrigin,
 					});
 				}
 			}
@@ -10275,16 +10301,19 @@ export class AgentSession {
 							error: err instanceof Error ? err.message : String(err),
 						});
 					};
+					// A person's answer is classified when it is delivered, not by the phase it later runs in.
+					const inputOrigin: InputOrigin = this._personAnswerPending ? "person" : "extension";
+					this._personAnswerPending = false;
 					// sendUserMessage always triggers a turn; register a settlement-deferred
 					// turn claim so agent_idle is not emitted before its deferred agent_start.
 					if (
 						this._agentSettledDelivery.deferTriggerTurn((claim) => {
-							this.sendUserMessage(content, options, claim).catch(reportError);
+							this.sendUserMessage(content, options, claim, inputOrigin).catch(reportError);
 						})
 					) {
 						return;
 					}
-					this.sendUserMessage(content, options).catch(reportError);
+					this.sendUserMessage(content, options, undefined, inputOrigin).catch(reportError);
 				},
 				appendEntry: (customType, data, options) => {
 					const entryId = this.sessionManager.appendCustomEntry(customType, data, options);
@@ -10350,6 +10379,16 @@ export class AgentSession {
 					this._humanInputAdmitted("answer");
 					this._engineTurnInput.begin();
 					this._engineResumeWindow = false;
+					this._personAnswerPending = true;
+					// The answer's follow-on (if any) enters prompt() synchronously after this; settle once it has.
+					queueMicrotask(() => {
+						this._personAnswerPending = false;
+						this._settleInputRelease()?.catch((error: unknown) => {
+							this._sessionLogger.warn("input_release_settle_failed", {
+								error: error instanceof Error ? error.message : String(error),
+							});
+						});
+					});
 				},
 				getAgentDir: () => this._agentDir,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),

@@ -917,6 +917,11 @@ export class ExtensionRunner {
 		return this.uiContext;
 	}
 
+	/** True while session_start handlers run and the turns they trigger are still held. */
+	sessionStartTurnsHeld(): boolean {
+		return this.sessionStartTurns.holding;
+	}
+
 	hasUI(): boolean {
 		return this.uiContext !== noOpUIContext;
 	}

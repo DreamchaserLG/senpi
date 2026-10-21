@@ -16,24 +16,6 @@
 
 `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: session_start, agent_start, agent_end and shutdown handlers. Preserve #3865's verdict/reporting path unchanged.
 
-## 2026-10-21 - Revalidate held goal continuations before charging (senpi#3853)
-
-### What changed
-
-`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: Checks the engine hold before continuation accounting or prompt rendering, records only a goal wake, and handles held_wakes_released by reading the current active goal and queueing one fresh continuation.
-
-### Why
-
-`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: A pre-rendered held continuation can outlive its goal or contain an obsolete objective, and charging a held wake exhausts the goal guard without provider work.
-
-### Why an extension could not handle it
-
-`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: This is source-owned lifecycle behavior inside the goal builtin.
-
-### Expected merge conflict zones
-
-`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: admitAndQueueGoalContinuation and lifecycle event registration; preserve the existing continuation latch and normal post-release rules.
-
 ## 2026-10-21 - Turn-end liveness verdict (#3863)
 
 ### What changed
@@ -59,6 +41,25 @@ The idea of a turn-end liveness check is inspired by dinobot by roach (github.co
 ### Expected merge conflict zones
 
 - LOW: the `agent_end` tail and `session_start` head in `index.ts`; the `afterAgentEnd` return statements in `todo-owed-backstop.ts`.
+
+
+## 2026-10-21 - Revalidate held goal continuations before charging (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: Checks the engine hold before continuation accounting or prompt rendering, records only a goal wake, and handles held_wakes_released by reading the current active goal and queueing one fresh continuation.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: A pre-rendered held continuation can outlive its goal or contain an obsolete objective, and charging a held wake exhausts the goal guard without provider work.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: This is source-owned lifecycle behavior inside the goal builtin.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: admitAndQueueGoalContinuation and lifecycle event registration; preserve the existing continuation latch and normal post-release rules.
 
 ## 2026-10-17 - No fixed auto-continue cap; a no-progress guard instead (oh-my-openagent#10280)
 

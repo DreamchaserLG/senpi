@@ -3858,7 +3858,7 @@ The compaction context/action declarations in `types.ts` and callback storage, b
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.hasQueuedPersonInput?()` and the matching optional context action; `sendUserMessage` options take `humanOrigin`, which marks an extension send as a person's input (an answered question).
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.hasQueuedPersonInput?()` and the matching optional context action; `InputOrigin` (`person | extension | engine`); `sendUserMessage` options take `inputOrigin`, where `"person"` marks an extension send as a person's input (an answered question).
 - `packages/coding-agent/src/core/extensions/runner.ts`: binds `hasQueuedPersonInput` from the session's context actions (false when the host does not provide it).
 
 ### Why

@@ -143,7 +143,7 @@ describe("goal loop with an async ask-user question", () => {
 		expect(world.ask.deliveries).toEqual([
 			{
 				content: "[Answer to question call-async-answered]\nLibrary: OAuth",
-				options: { deliverAs: "followUp", humanOrigin: true },
+				options: { deliverAs: "followUp" },
 			},
 		]);
 

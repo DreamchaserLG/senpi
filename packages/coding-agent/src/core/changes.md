@@ -202,11 +202,11 @@
 
 ### What changed
 
-`packages/coding-agent/src/core/agent-session.ts` prepares lifecycle run origin from the lifecycle's pending human-admission report, before input custody is released. The existing input origin and answered-question queue tag remain unchanged.
+`packages/coding-agent/src/core/agent-session.ts` prepares lifecycle run origin from the lifecycle's pending human-admission report (the #3811 seam's `onHumanInputAdmitted`), before input custody is released. The `_promptAgent` `inputOrigin` classified at the entry point is unchanged and is not read by lifecycle.
 
 ### Why
 
-`packages/coding-agent/src/core/agent-session.ts`: a queue tag says how turn-end liveness treats an input, not whether a new human admission occurred. An asynchronous answer reports its revision once through question-input release; delivering the tagged answer must not manufacture another human admission or origin.
+`packages/coding-agent/src/core/agent-session.ts`: `inputOrigin` says how turn-end liveness treats an input, not whether a new human admission occurred. An asynchronous answer reports its revision once through the question-input release; delivering that answer as a `person` follow-up must not manufacture another human admission or origin.
 
 ### Why an extension could not handle it
 
@@ -214,7 +214,7 @@
 
 ### Expected merge conflict zones
 
-`packages/coding-agent/src/core/agent-session.ts`: `_promptAgent` lifecycle preparation. Preserve #3865's input-origin and queued-person-input behavior.
+`packages/coding-agent/src/core/agent-session.ts`: `_promptAgent` lifecycle preparation and its `onTurnAdmitted` option. Preserve #3865's `inputOrigin` and queued-person-input behavior.
 
 ## 2026-10-21 - Share the canonical turn-end provenance (senpi#3864)
 
@@ -270,44 +270,6 @@
 
 `packages/coding-agent/src/core/agent-session.ts`: the start of `_promptAgent`.
 
-## 2026-10-21 - Human-input seam: who typed an input (senpi#3811)
-
-### What changed
-
-`packages/coding-agent/src/core/agent-session.ts`: `onHumanInputAdmitted(listener)` reports a person's input synchronously, before it is queued or admitted: every input whose `inputOrigin` (`input-origin.ts`, classified at the entry point) is `person` (TUI submit, RPC `prompt`/`steer`/`follow_up`), human question answers (reported from the engine's `questionInput` release, before the answer is sent), and `resumeSession()`. Extension sends, wakes and continuations are never reported. It fires exactly once per input: internal re-entries into `prompt` carry `humanInputReported`.
-
-### Why
-
-Stop/pause (#3811) and the session lifecycle (#3864) both need to know, synchronously and once, when a person's input enters the session.
-
-### Why an extension could not handle it
-
-Input admission and its origin are engine-owned; the RPC connection role is core RPC.
-
-### Expected merge conflict zones
-
-The first lines of `prompt`, `steer`, `followUp` and `resumeSession`, and the `questionInput` context action in `agent-session.ts`.
-
-## 2026-10-21 - An input release finishes when its run settles, and returns on every refused exit (senpi#3853)
-
-### What changed
-
-- `packages/coding-agent/src/core/agent-session.ts`: an input release admitted into a turn that was already streaming finishes once the run settles idle (`_emitAgentIdleAfterDeferredTurns`), and a person's input that opened the release but ended with no disposition at all (refused before acceptance, thrown, cancelled) gives its release back in `prompt()`'s `finally`; only the input that opened the release may give it back, and a handled command keeps its release for the follow-on input it dispatches.
-- `packages/coding-agent/src/core/engine-turn-input.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`: `begin()` reports whether this input opened the release; `abandon()` / `abandonRelease()` lower the release barrier, clear the goal deferral and restore the released holds unless held wakes were already delivered.
-- `packages/coding-agent/src/core/input-origin.ts`, `packages/coding-agent/src/core/agent-session.ts`: one `InputOrigin` (`person` | `extension` | `engine`) classified at the entry point (prompt, steer and follow-up by input source; turn-triggering custom messages by type) replaces the scattered `source !== "extension"` checks of this PR, and `_promptAgent` takes an options object carrying it.
-
-### Why
-
-- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-input.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`: a steer or follow-up into a streaming turn released the hold but never finished it, so the goal stayed deferred while the session reported `paused=false`. An input that failed before admission left the release barrier set, so `resume_session` became a silent no-op.
-
-### Why an extension could not handle it
-
-- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-input.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`: run settlement and prompt admission are core lifecycle points.
-
-### Expected merge conflict zones
-
-- LOW: `packages/coding-agent/src/core/agent-session.ts`, the end of `_emitAgentIdleAfterDeferredTurns`, the `finally` of `prompt()`, `_queueUserInput`'s person check, and the `_promptAgent` signature and its two callers.
-
 ## 2026-10-21 - Durable engine-owned session lifecycle (senpi#3864)
 
 ### What changed
@@ -340,19 +302,39 @@ The first lines of `prompt`, `steer`, `followUp` and `resumeSession`, and the `q
 
 ### What changed
 
-`packages/coding-agent/src/core/agent-session.ts`: `onHumanInputAdmitted(listener)` reports human input synchronously, before it is queued or admitted: TUI input (`source` "interactive"), RPC `prompt`/`steer`/`follow_up` marked `humanOrigin` (sent on an `interactive_user` connection), human question answers (reported from the engine's `questionInput` release, before the answer is sent), and `resumeSession()`. Extension messages, wakes, continuations and input from connections without the role are never reported. `PromptOptions` and `QueuedInputOptions` gain `humanOrigin`.
+- `packages/coding-agent/src/core/agent-session.ts`: `onHumanInputAdmitted(listener)` reports a person's input synchronously, before it is queued or admitted: every input whose `inputOrigin` (`input-origin.ts`, classified at the entry point) is `person` (TUI submit, RPC `prompt`/`steer`/`follow_up`), human question answers (reported from the engine's `questionInput` release, before the answer is sent), and `resumeSession()`. Extension sends, wakes and continuations are never reported. It fires exactly once per input: internal re-entries into `prompt` carry `humanInputReported`.
 
 ### Why
 
-Stop/pause (#3811) and the session lifecycle (#3864) both need to know whether an input came from a person; counting every RPC input as human lets automation release a pause.
+- `packages/coding-agent/src/core/agent-session.ts`: Stop/pause (#3811) and the session lifecycle (#3864) both need to know, synchronously and once, when a person's input enters the session.
 
 ### Why an extension could not handle it
 
-Input admission and its origin are engine-owned; the RPC connection role is core RPC.
+- `packages/coding-agent/src/core/agent-session.ts`: input admission and its origin are engine-owned; the RPC connection role is core RPC.
 
 ### Expected merge conflict zones
 
-The first lines of `prompt`, `steer`, `followUp` and `resumeSession`, and the `questionInput` context action in `agent-session.ts`.
+- `packages/coding-agent/src/core/agent-session.ts`: the first lines of `prompt`, `steer`, `followUp` and `resumeSession`, and the `questionInput` context action.
+
+## 2026-10-21 - An input release finishes when its run settles, and returns on every refused exit (senpi#3853)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-settled-delivery.ts`, `packages/coding-agent/src/core/extensions/session-start-turn-gate.ts`, `packages/coding-agent/src/core/extensions/runner.ts`: read-only `active` / `holding` / `sessionStartTurnsHeld()` so the settle point can tell a deferred turn is still coming.
+- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-input.ts`: every input release settles at ONE point, `_settleInputRelease()`, once nothing can still admit it (no prompt in flight, since a command's follow-on enters `prompt()` synchronously, and no run active). It runs from every `prompt()` `finally`, from run settlement (`_emitAgentIdleAfterDeferredTurns`), and after an answer is dispatched (`questionInput`); it waits while the `agent_settled` window (`AgentSettledDelivery.active`) or the `session_start` gate (`SessionStartTurnGate.holding`) still holds deferred turns, and the run tail settles before its early returns. The settle adds no await (no microtask tick) unless a release is pending, so a prompt resolves exactly when it did before, and a `release_session` that follows `agent_settled` never sees a lingering `prompt`. A person's answer is classified when it is delivered: `questionInput` sets a token that the answer's `sendUserMessage` consumes synchronously, carried as `PromptOptions.inputOrigin`, so a deferred answer still starts a person's turn. A release some input admitted finishes; one no input admitted (handled, no-op command, thrown, cancelled, refused, an answer without a follow-on) is given back through `EngineTurnHold.abandonRelease()`, which lowers the barrier, clears the goal deferral and restores the released holds.
+- `packages/coding-agent/src/core/input-origin.ts`, `packages/coding-agent/src/core/agent-session.ts`: one `InputOrigin` (`person` | `extension` | `engine`) classified at the entry point (prompt, steer and follow-up by input source; turn-triggering custom messages by type, including the hold gate) replaces the scattered `source !== "extension"` checks of this PR, and `_promptAgent` takes an options object carrying it.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-input.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`: a steer or follow-up into a streaming turn released the hold but never finished it, so the goal stayed deferred while the session reported `paused=false`. An input that failed before admission left the release barrier set, so `resume_session` became a silent no-op.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-input.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`: run settlement and prompt admission are core lifecycle points.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, the end of `_emitAgentIdleAfterDeferredTurns`, the `finally` of `prompt()`, `questionInput`, the custom-message hold gate, `_queueUserInput`'s person check, and the `_promptAgent` signature and its two callers.
 
 ## 2026-10-21 - Release held wakes once without changing attended turns (senpi#3853)
 
@@ -481,6 +463,24 @@ The first lines of `prompt`, `steer`, `followUp` and `resumeSession`, and the `q
 ### Expected merge conflict zones
 
 `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`, `packages/coding-agent/src/core/engine-turn-release.ts`, `packages/coding-agent/src/core/question-input.ts`: Session construction, prompt admission and completion, custom-message admission, extension binding, and the new fork-only helpers.
+
+## 2026-10-18 - A session is found by the id its file name carries (oh-my-openagent#7471)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: new `sessionFileNameId(path)`; creating a session at a named path that does not exist yet (or is empty) adopts the id the file name carries instead of minting a new one, so name and header agree. The file is now written immediately (header only), like a caller-chosen id (#2010), instead of waiting for the first assistant message.
+
+### Why
+
+A session file named `<timestamp>_<id>.jsonl` whose header carried a different id could not be opened with `--session <id>`, though the file name (and the resume hint printed from it) named that id.
+
+### Why an extension could not handle it
+
+Session creation and `--session` resolution run in core before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `session-manager.ts`: `_beginSessionFile` and `_adoptFileEntries`, beside `assertValidSessionId`.
 
 ## 2026-10-21 - Pending input syncs on Windows; a local failure never walks the fallback chain (senpi#3866)
 
@@ -11668,7 +11668,7 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: every queued input is tagged when it is enqueued. A TUI submit, an RPC client `prompt`/`steer`/`follow_up`, or an extension send marked `humanOrigin` (an answered question) is a person's. Any other extension or engine send is not. Anything driven over RPC (for example `senpi host session steer` from automation) counts as a person's input by that entry-point rule, and when a person's input and an extension message are queued together, the extension message is delivered with it. A started prompt that a competing run displaces into the steer queue is tagged the same way, from its caller's source (`_promptAgent`'s `personInput`). `hasQueuedPersonInput` answers from the ids still in `_queuedInputOrder`, so an input that was delivered, dequeued or cleared (Esc) no longer counts. It is exposed to extensions through `hasQueuedPersonInput` on the context actions. `sendUserMessage` and `QueuedInputOptions`/`PromptOptions` take `humanOrigin`.
+- `packages/coding-agent/src/core/agent-session.ts`: every queued input is tagged when it is enqueued. Each input gets an `inputOrigin` (`person | extension | engine`, the lead's single field shared with senpi#3860/#3873/#3908) classified at its entry point by `inputOriginOf`: a TUI submit or an RPC client `prompt`/`steer`/`follow_up` is `person`, an extension API send is `extension` unless it carries `inputOrigin: "person"` (an answered question), and goal, monitor and codemode turns are `engine`. Only `person` entries count. Anything driven over RPC (for example `senpi host session steer` from automation) counts as a person's input by that entry-point rule, and when a person's input and an extension message are queued together, the extension message is delivered with it. A started prompt that a competing run displaces into the steer queue is tagged the same way, from its caller's source (`_promptAgent`'s `inputOrigin`). `hasQueuedPersonInput` answers from the ids still in `_queuedInputOrder`, so an input that was delivered, dequeued or cleared (Esc) no longer counts. It is exposed to extensions through `hasQueuedPersonInput` on the context actions. `sendUserMessage` and `QueuedInputOptions`/`PromptOptions` take `inputOrigin`; `_promptAgent` takes an options object (`deferredTurnClaim`, `onQueuedInput`, `inputOrigin`).
 
 ### Why
 

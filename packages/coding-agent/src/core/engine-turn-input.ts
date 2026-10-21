@@ -12,14 +12,16 @@ export class EngineTurnInput {
 		this.hold = hold;
 	}
 
-	/** Returns true when this input opened the release and therefore owns giving it back. */
-	begin(): boolean {
+	get hasPending(): boolean {
+		return this.pending !== undefined;
+	}
+
+	begin(): void {
 		this.hold.attend();
-		if (this.hold.releasing || this.pending || !this.hold.held) return false;
+		if (this.hold.releasing || this.pending || !this.hold.held) return;
 		const wakes = this.hold.messages();
 		const sources = this.hold.releaseAll("input");
-		this.pending = { sources, wakes, admitted: wakes.length === 0 };
-		return true;
+		this.pending = { sources, wakes, admitted: false };
 	}
 
 	messages(): CustomMessage[] {
@@ -35,19 +37,19 @@ export class EngineTurnInput {
 		pending.admitted = true;
 	}
 
-	/** The input that began this release ended without any disposition (thrown or cancelled): give it back, custody intact. */
-	abandon(): void {
-		if (!this.pending) return;
-		const delivered = this.pending.wakes.length > 0 && this.pending.admitted;
-		if (delivered) return;
-		this.pending = undefined;
-		this.hold.abandonRelease();
-	}
-
-	async finish(release: (sources: Record<string, number>) => Promise<void>): Promise<void> {
+	/**
+	 * The one settle point, called once the session is quiescent (no prompt in flight, no run active):
+	 * an admitted release finishes; one no input admitted (handled, no-op, thrown, cancelled, refused,
+	 * an answer without a follow-on) is given back with custody intact.
+	 */
+	async settle(release: (sources: Record<string, number>) => Promise<void>): Promise<void> {
 		const pending = this.pending;
-		if (!pending?.admitted) return;
+		if (!pending) return;
 		this.pending = undefined;
+		if (!pending.admitted) {
+			this.hold.abandonRelease();
+			return;
+		}
 		const remaining = this.hold.finish();
 		await release({ ...pending.sources, ...remaining });
 	}

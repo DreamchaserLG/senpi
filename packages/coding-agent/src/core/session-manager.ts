@@ -25,7 +25,7 @@ import {
 	writeFileSync,
 } from "fs";
 import { appendFile, type FileHandle, open, readdir, rm } from "fs/promises";
-import { join, resolve } from "path";
+import { basename, join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
@@ -470,6 +470,26 @@ export type ReadonlySessionManager = Pick<
 
 function createSessionId(): string {
 	return uuidv7();
+}
+
+const SESSION_FILE_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_(.+)\.jsonl$/;
+
+/** The id a session file's name carries (`<timestamp>_<id>.jsonl`), when the name has that shape and the id is valid. */
+export function sessionFileNameId(path: string): string | undefined {
+	const id = SESSION_FILE_NAME.exec(basename(path))?.[1];
+	if (id === undefined) return undefined;
+	try {
+		assertValidSessionId(id);
+		return id;
+	} catch {
+		return undefined;
+	}
+}
+
+function withFileNameId(path: string, options: NewSessionOptions | undefined): NewSessionOptions | undefined {
+	if (options?.id !== undefined) return options;
+	const id = sessionFileNameId(path);
+	return id === undefined ? options : { ...options, id };
 }
 
 export function assertValidSessionId(id: string): void {
@@ -1330,12 +1350,13 @@ export class SessionManager {
 		// The file does not exist yet, so this open CREATES the session: a caller-supplied
 		// id is the session's identity from here on. An EXISTING file never reaches this
 		// branch, which is why a supplied id can never overwrite a header id.
-		this._resetToNewSession(newSessionOptions);
+		const created = withFileNameId(resolvedFile, newSessionOptions);
+		this._resetToNewSession(created);
 		// A host-minted id is referenced by nothing yet, so its file may wait for the first
-		// assistant message. A CALLER-chosen id is already held in the caller's own records:
+		// assistant message. A CALLER-chosen id (or the id the file name carries) is already held in the caller's own records:
 		// the file has to answer to it now, or a reopen before the first reply would mint a
 		// different identity and the caller's record would point at nothing (#2010).
-		if (newSessionOptions?.id !== undefined) {
+		if (created?.id !== undefined) {
 			this._rewriteFile();
 			this.flushed = true;
 		}
@@ -1357,7 +1378,7 @@ export class SessionManager {
 			// The explicit path is already granted above and keeps being written here:
 			// allocating a second path would take a grant no writer ever uses.
 			// An empty file carries no identity yet, so a caller-supplied id still applies.
-			this._resetToNewSession(newSessionOptions);
+			this._resetToNewSession(withFileNameId(sessionFile, newSessionOptions));
 			this._rewriteFile();
 			this.flushed = true;
 			return false;
