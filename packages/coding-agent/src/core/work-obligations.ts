@@ -117,6 +117,11 @@ export class SessionWorkObligations implements WorkObligations {
 		this.store.changed();
 	}
 
+	cancel(ticketId: DeliveryTicketId): void {
+		const record = this.ticketRecord(ticketId);
+		if (custodyIsOpen(record) && record.state !== "consumed") this.close(record.id, "cancelled");
+	}
+
 	settleRun(runId: string): void {
 		for (const record of this.active) {
 			if (record.state === "consumed" && record.runId === runId) this.install({ ...record, state: "settled" });

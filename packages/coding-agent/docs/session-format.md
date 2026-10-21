@@ -221,6 +221,28 @@ For sessions with a parent (created via `/fork`, `/clone`, or `newSession({ pare
 {"type":"session","version":3,"id":"uuid","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/path/to/project","parentSession":"/path/to/original/session.jsonl"}
 ```
 
+Execution children additionally store `spawnedBy: { parentSessionId, rootSessionId,
+taskId }` in their header. Only `spawnedBy` establishes lifecycle role `child`;
+an ordinary fork with `parentSession` remains a root.
+
+Lifecycle persistence uses custom entries on the session that owes the work:
+
+- `session-lifecycle`: the wire snapshot plus session identity, sealed-epoch and
+  revision high-water marks, open synthetic attention occurrences, consuming run
+  identity, and any unsealed self-settle intent. It is appended before publication.
+- `work-custody`: obligation identity/key/kind and `open`, `queued`, `consumed`,
+  `settled`, `held`, `cancelled`, or `passive` state. Queued records retain a delivery
+  ticket and payload; consumed records name the run and transcript entry; held
+  records name the durable notice. The custom message itself carries `details.ticketId`.
+- `child-lifecycle`: the runner's latest task report, fenced by `runEpoch` and
+  `generation`, persisted before changing the parent's lifecycle.
+
+These records are durable even before a first conversation message. Reopening
+holds the restore barrier until producers rehydrate and custody recovery completes.
+Consumed but interrupted work is not redelivered; it requires human continuation
+(or remains held unattended). Unsealed self-settle requests are invalidated on
+restart, while a sealed decision and completion identity remain unchanged.
+
 ### SessionMessageEntry
 
 A message in the conversation. The `message` field contains an `AgentMessage`.

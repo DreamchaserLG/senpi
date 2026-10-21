@@ -88,6 +88,56 @@ a runtime. Worker-runtime sessions currently do not dispatch the extension hooks
 
 The shared Unix socket host keeps its ownership state in a PER-SOCKET daemon directory, `<agentDir>/rpc-host-daemon/<sha256(canonical socket)[:16]>/` (see [Daemon state directory](#daemon-state-directory-layout-2)). Clients attach to a compatible existing host regardless of which client surface started it; only incompatible unmanaged owners are refused.
 
+## Session lifecycle
+
+The `session_lifecycle` capability advertises one engine-owned root-work state.
+`get_state.lifecycle` returns it; `{ type: "session_lifecycle", sessionId, lifecycle }`
+publishes changes on the ordered session stream. Shared hosts broadcast the event
+to observers and replay only the latest lifecycle snapshot on attachment.
+
+The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
+
+- `state`: `running`, `waiting_children`, `waiting_background`, `waiting_human`,
+  `paused`, `held`, `done`, `failed`, or `cancelled`.
+- `seq`, `epoch`, `epochOrigin` (`human` or `automatic`), `humanInputRevision`,
+  `selfSettleEligible`, `restoring`, `persisted`, `runPaused`, and `since` (ISO time).
+- `role` (`root` or `child`), `rootSessionId`, and optional `parentSessionId` and `taskId`.
+- Optional `waitingOn`: `{ children, background, human }`. Background entries carry
+  `source`, `activeCount`, and optional `retryAtMs`. Human entries carry `kind`,
+  `originSessionId`, `requestId`, `revision`, `since`, and optional child identity/label.
+  Human kinds are `question`, `approval`, `goal_blocked`, `goal_paused`, `stalled`,
+  and `interrupted_run`; attention remains visible even when a hold wins precedence.
+- Optional `holds`: `{ kind, since }[]` from the shared hold ledger, where `kind` is
+  `session_hold`, `inherited_hold`, `run_fence`, or `unattended`.
+- On a sealed epoch, `completionId` is `<rootSessionId>:<epoch>`. A `done` also carries
+  `completion: { kind: "goal" | "run" | "agent" | "reply", at, goalId?, runId? }`.
+  A `failed` carries `failure: { reason, message?, retryAtMs?, taskId?, runEpoch? }`,
+  with reason `provider_error`, `tool_error`, `task_error`, `lost`, or `interrupted`.
+- A standing agent self-settle intent adds `settleDecision: { decisionId }` to the
+  persisted `done` seal, independently of the completion label.
+
+Clients must not notify or settle while `restoring` is true or `persisted` is false.
+Use `completionId` to deduplicate root completion/failure, not `agent_settled` or
+`agent_idle`: a queued result or background source can still own unfinished work.
+An ordinary reply completing is not itself a request to mark a thread Done.
+
+`request_self_settle` records an agent intent for the current root epoch:
+
+```json
+{"id":"settle","type":"request_self_settle"}
+```
+
+The successful response's `data` is `{ recorded, epoch, humanInputRevision, reason? }`.
+Refusal reasons are `not_eligible`, `held`, and `no_epoch`. Subsequent human input,
+a hold/fence, or a failed seal invalidates the intent. Unsealed intents fail closed
+on restart; sealed decisions retain their identity. Human revisions count only
+the shared human-admission hook, including connections that declared
+`interactive_user` in their first `set_client_info`, never automatic extension input.
+
+`open_session.spawnedBy` is `{ parentSessionId, rootSessionId, taskId }`, with three
+nonempty strings, persisted in the new session header. It identifies execution
+children; `parentSession` remains fork/transcript ancestry and does not make a child.
+
 ## Eval cell control
 
 `eval_cells.list`, `eval_cells.peek`, and `eval_cells.stop` are session-scoped

@@ -2059,6 +2059,36 @@ pi.sendMessage({
   - `"followUp"` - Waits for agent to finish. Delivered only when agent has no more tool calls.
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
 - `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`). Requested from a `session_start` handler, the turn starts once every extension's `session_start` handler has returned.
+- `ticket` - A delivery ticket from `pi.lifecycle.obligations`. Returning from
+  `sendMessage` does not acknowledge model consumption.
+
+### pi.lifecycle
+
+Use `pi.lifecycle.obligations.open(key, kind, detail?)` to retain unfinished work
+before it can leave a producer. `kind` is `"children"` or `"background"`; opening
+the same live key is idempotent. The returned token supports:
+
+- `transfer(nextKey, kind?)`: moves custody synchronously, opening the next owner
+  before closing the current one. Transferring a closed token is an error.
+- `ticket()`: obtains the stable delivery identity for `sendMessage(..., { ticket })`.
+- `heldAsNotice(noticeId)`: closes custody after a durable held notice exists.
+- `close("consumed" | "cancelled" | "passive")`: releases producer-owned work.
+
+The engine acknowledges a ticket when its custom message enters model context
+at `message_start`, including a steer into an existing run. Its work stays in
+that run's custody until `agent_idle`. A failed delivery retains custody for retry;
+a passive message closes immediately; a held message closes against the persisted
+session-notice identity. Restart redelivers unconsumed queued messages once, but
+never replays a consumed result or reruns an interrupted tool.
+
+`pi.lifecycle.reportChild({ taskId, childSessionId, runEpoch, generation, state,
+waitingOn?, terminal? })` persists runner-owned child state. Stale epoch/generation
+pairs are ignored; a higher `runEpoch` clears the old terminal status. Terminal
+values are `completed`, `error`, `lost`, `interrupted`, and `cancelled`. Child UI
+requests remain automatically answered by their runners, not routed to a person.
+
+`pi.lifecycle.markRunCompleted({ runId })` records successful workflow completion
+for the current epoch's label. It does not request automatic thread settlement.
 
 ### pi.sendUserMessage(content, options?)
 

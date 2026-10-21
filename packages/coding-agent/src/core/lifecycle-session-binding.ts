@@ -6,6 +6,7 @@ import { goalStoreRef } from "./extensions/builtin/goal/store-ref.ts";
 import type { Goal } from "./extensions/builtin/goal/types.ts";
 import { collectTurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness-report.ts";
 import type { AgentEndEvent } from "./extensions/types.ts";
+import type { ExtensionRunner } from "./extensions/runner.ts";
 import { consumeLifecycleDelivery, messageTicket } from "./lifecycle-delivery.ts";
 import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
 import type { LifecycleRecord } from "./lifecycle-record.ts";
@@ -25,6 +26,7 @@ export class LifecycleSessionBinding {
 	readonly controller: SessionLifecycleController;
 	readonly sessionId: string;
 	private readonly session: AgentSession;
+	private readonly host: LifecycleBindingHost;
 	private readonly unsubscribeHuman: () => void;
 	private readonly unsubscribeAdmission: () => void;
 	private readonly unsubscribeGoal: () => void;
@@ -33,9 +35,11 @@ export class LifecycleSessionBinding {
 	private restored = false;
 	private nextRunOrigin: "human" | "automatic" | undefined;
 	private restoring: Promise<void> | undefined;
+	private retireFactEvents: (() => void) | undefined;
 
 	constructor(session: AgentSession, host: LifecycleBindingHost) {
 		this.session = session;
+		this.host = host;
 		this.sessionId = session.sessionId;
 		this.controller = new SessionLifecycleController({
 			sessionId: session.sessionId,
@@ -57,6 +61,26 @@ export class LifecycleSessionBinding {
 			void this.refreshFacts(goal).catch((error: unknown) => host.factsFailed(error));
 			this.controller.goalChanged(goal);
 		});
+	}
+
+	bindFactEvents(runner: ExtensionRunner): void {
+		this.retireFactEvents?.();
+		const refresh = () => {
+			void this.refreshFacts().catch((error: unknown) => this.host.factsFailed(error));
+		};
+		const retire = [
+			runner.onBusEvent("wake_source_state", (data) => {
+				this.observeWakeSource(data);
+				refresh();
+			}),
+			runner.onBusEvent("goal_continuation_timer_state", refresh),
+			runner.onBusEvent("goal_store_changed", (data) => {
+				if (isRecord(data) && data.threadId === this.sessionId) refresh();
+			}),
+		];
+		this.retireFactEvents = () => {
+			for (const unsubscribe of retire) unsubscribe();
+		};
 	}
 
 	prepareRun(origin: "human" | "automatic"): void {
@@ -184,7 +208,7 @@ export class LifecycleSessionBinding {
 		});
 	}
 
-	observeWakeSource(data: unknown): void {
+	private observeWakeSource(data: unknown): void {
 		if (!isRecord(data) || typeof data.source !== "string" || typeof data.activeCount !== "number") return;
 		if (!Number.isFinite(data.activeCount)) return;
 		this.controller.obligations.syncSource(
@@ -194,6 +218,7 @@ export class LifecycleSessionBinding {
 
 	dispose(): void {
 		this.refreshGeneration++;
+		this.retireFactEvents?.();
 		this.unsubscribeHuman();
 		this.unsubscribeAdmission();
 		this.unsubscribeGoal();

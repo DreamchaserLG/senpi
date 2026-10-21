@@ -1322,7 +1322,6 @@ export class AgentSession {
 	 */
 	private readonly _wakeSources = new WakeSourceTracker();
 	private _unsubscribeWakeSources: (() => void) | undefined;
-	private _unsubscribeLifecycleGoal: (() => void) | undefined;
 	private _overflowRecoveryRungs = 0;
 	private _autoCompactionSessionOverride: boolean | undefined;
 	private _compactionSkippedTooSmall = false;
@@ -4300,8 +4299,6 @@ export class AgentSession {
 		this._unregisterMemoryReport();
 		this._unsubscribeWakeSources?.();
 		this._unsubscribeWakeSources = undefined;
-		this._unsubscribeLifecycleGoal?.();
-		this._unsubscribeLifecycleGoal = undefined;
 		this._lifecycleBinding.dispose();
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
@@ -6239,6 +6236,7 @@ export class AgentSession {
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; ticket?: string },
 		deferredTurnClaim?: DeferredTurnClaim,
 		releasedWake?: () => boolean,
+		onQueued?: () => void,
 	): Promise<void> {
 		const obligations = this.workObligations;
 		// Normalize the legacy untyped content boundary before persisting a retry payload.
@@ -6249,21 +6247,35 @@ export class AgentSession {
 				: undefined
 		);
 		const generation = this._userAbortGeneration;
-		if (ticket && !obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs })) return;
+		if (ticket && !obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs })) {
+			deferredTurnClaim?.resolve("finished-without-start");
+			return;
+		}
+		onQueued?.();
 		try {
 			await this.sessionManager.persistHeaderNow();
 			if (generation !== this._userAbortGeneration) {
-				if (ticket) obligations.retire(ticket);
+				if (ticket) this._retireLifecycleDelivery(ticket, options?.ticket !== undefined);
 				deferredTurnClaim?.resolve("finished-without-start");
 				return;
 			}
 			await this._deliverCustomMessage(deliveryMessage, { ...options, ticket }, deferredTurnClaim, releasedWake);
+			if (ticket && generation !== this._userAbortGeneration) this._retireLifecycleDelivery(ticket, options?.ticket !== undefined);
 		} catch (error) {
 			if (ticket) obligations.failed(ticket);
 			throw error;
 		} finally {
 			if (ticket) obligations.endDelivery(ticket);
 		}
+	}
+
+	private _retireLifecycleDelivery(ticket: string, producerOwned: boolean): void {
+		for (const queued of this.agent.peekQueuedMessages({ all: true })) {
+			if (queued.role === "custom" && messageTicket(queued) === ticket) this.agent.removeQueuedMessage(queued);
+		}
+		this._pendingNextTurnMessages = this._pendingNextTurnMessages.filter((queued) => messageTicket(queued) !== ticket);
+		if (producerOwned) this.workObligations.retire(ticket);
+		else this.workObligations.cancel(ticket);
 	}
 
 	private async _deliverCustomMessage<T = unknown>(
@@ -6279,7 +6291,10 @@ export class AgentSession {
 		const userAbortGeneration = this._userAbortGeneration;
 		if (options?.ticket && [
 			...this.agent.peekQueuedMessages({ all: true }), ...this._pendingNextTurnMessages,
-		].some((queued) => queued.role === "custom" && messageTicket(queued) === options.ticket)) return;
+		].some((queued) => queued.role === "custom" && messageTicket(queued) === options.ticket)) {
+			deferredTurnClaim?.resolve("delegated");
+			return;
+		}
 		const appMessage = {
 			role: "custom" as const,
 			customType: message.customType,
@@ -6453,7 +6468,7 @@ export class AgentSession {
 				const generation = this._userAbortGeneration;
 				await this.waitForIdle();
 				const claim = new DeferredTurnClaim();
-				await this.sendCustomMessage(message, { triggerTurn: true }, claim, admit);
+				await this.sendCustomMessage(message, { triggerTurn: true }, claim, admit, () => input.accepted());
 				if ((await claim.disposition) !== "started") return false;
 				await this.waitForIdle();
 				if (generation !== this._userAbortGeneration) {
@@ -10090,17 +10105,8 @@ export class AgentSession {
 		// per runner; counts survive the swap so a reload cannot make live work
 		// look idle to an occupancy sweep.
 		this._unsubscribeWakeSources?.();
-		this._unsubscribeWakeSources = runner.onBusEvent(WAKE_SOURCE_STATE_EVENT, (data) => {
-			this._wakeSources.observe(data);
-			this._lifecycleBinding.observeWakeSource(data);
-		});
-		this._unsubscribeLifecycleGoal?.();
-		this._unsubscribeLifecycleGoal = runner.onBusEvent("goal_store_changed", (data) => {
-			if (typeof data !== "object" || data === null || !("threadId" in data) || data.threadId !== this.sessionId) return;
-			void this._lifecycleBinding.refreshFacts().catch((error: unknown) => {
-				this._sessionLogger.warn("lifecycle_goal_read_failed", { error: String(error) });
-			});
-		});
+		this._unsubscribeWakeSources = runner.onBusEvent(WAKE_SOURCE_STATE_EVENT, (data) => this._wakeSources.observe(data));
+		this._lifecycleBinding.bindFactEvents(runner);
 		const getCommands = (): SlashCommandInfo[] => {
 			const extensionCommands: SlashCommandInfo[] = runner.getRegisteredCommands().map((command) => ({
 				name: command.invocationName,
