@@ -126,6 +126,38 @@ describe("Agent queuedInputPort (senpi#3549)", () => {
 		expect(texts(agent.peekQueuedMessages())).toEqual(["later"]);
 	});
 
+	it("marks a run that failed in the port as a local failure, not a provider one (senpi#3866)", async () => {
+		const log: string[] = [];
+		const agent = new Agent({
+			streamFn: recordingStream(log),
+			queuedInputPort: loggingPort(log, async () => {
+				throw Object.assign(new Error("EPERM: operation not permitted, fsync"), { code: "EPERM" });
+			}),
+		});
+		agent.followUp(user("later"));
+
+		await agent.prompt("first");
+
+		const failure = agent.state.messages.at(-1);
+		expect(failure?.role === "assistant" && failure.stopReason).toBe("error");
+		expect(failure?.role === "assistant" && failure.failureSource).toBe("local");
+	});
+
+	it("leaves a failure thrown by the stream unmarked", async () => {
+		const agent = new Agent({
+			streamFn: () => {
+				throw new Error("socket hang up");
+			},
+			queuedInputPort: loggingPort([]),
+		});
+
+		await agent.prompt("first");
+
+		const failure = agent.state.messages.at(-1);
+		expect(failure?.role === "assistant" && failure.stopReason).toBe("error");
+		expect(failure?.role === "assistant" && failure.failureSource).toBeUndefined();
+	});
+
 	it.each([
 		{ queue: "steering" as const, enqueue: (agent: Agent) => agent.steer(user("queued")) },
 		{ queue: "followUp" as const, enqueue: (agent: Agent) => agent.followUp(user("queued")) },

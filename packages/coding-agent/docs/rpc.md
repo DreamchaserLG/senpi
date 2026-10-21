@@ -14,7 +14,11 @@ held. Attaching a client does not release the hold.
 
 Real prompt, steer, follow-up, or question input releases it. The user's message
 starts one turn with the latest coalesced non-goal context before that message;
-the goal revalidates and may continue afterwards. An explicit Resume instead is:
+the goal revalidates and may continue afterwards.
+
+#### resume_session
+
+An explicit Resume (the user's Resume action) instead is:
 
 ```json
 {"id":"resume","type":"resume_session","sessionId":"rpc-1"}

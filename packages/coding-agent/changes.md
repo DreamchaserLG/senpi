@@ -16,6 +16,24 @@
 
 - `packages/coding-agent/tsconfig.build.json` (the exclude list) only.
 
+## 2026-10-21 - Bundled Claude Agent SDK 0.3.306 (senpi#3854)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.296 -> 0.3.306; `bun.lock` and `install-lock/` regenerated (`node scripts/generate-coding-agent-install-lock.mjs`), and the advertised [CC] floor in `packages/ai/src/api/anthropic-messages.ts` follows to 2.1.306.
+
+### Why
+
+- The Releasability gate's SDK currency check fails on main as soon as a newer SDK is published; the anthropic-subscription lane needs the current SDK to use new Claude models.
+
+### Why an extension could not handle it
+
+- The SDK is a pinned dependency of the coding-agent package.
+
+### Expected merge conflict zones
+
+- The single dependency line in `packages/coding-agent/package.json`, `bun.lock`, and `install-lock/package-lock.json`.
+
 ## What changed
 
 `tsconfig.build.json` excludes `**/*.test.ts`. The tool-child runtime is the first code with tests inside `src/`, and the emitted `dist/**/*.test.js` made every CI shard sweep and fail the compiled copies (their spawned children cannot bootstrap from dist), so CI failed all three test shards.

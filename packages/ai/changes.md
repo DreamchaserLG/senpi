@@ -2042,3 +2042,41 @@ Upstream manifest edits at the next sync.
 ### Expected merge conflict zones
 
 - LOW: the Moonshot variant `cost` block and `XAI_THINKING_LEVEL_MAPS` when upstream changes how Moonshot prices or xAI efforts are sourced.
+
+## 2026-10-21 - Upstream-deprecated models stay in the catalog, labeled
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the six provider loops that skipped a models.dev row with `status: "deprecated"` (baseten, together, venice, opencode/opencode-go, github-copilot, and the xiaomi family) keep it when the previous generated catalog (the committed `src/providers/data`) already shipped it (`keepDeprecatedUpstream`), and skip it as before otherwise; a post-pass (`applyDeprecatedUpstreamMetadata`) sets `deprecated: true` on the kept rows. A row that models.dev no longer lists still disappears, and a deprecated row the catalog never shipped is not added. The catalog was regenerated with `--strict`.
+- `packages/ai/src/model.ts`: `Model` gains the optional `deprecated` flag.
+
+### Why
+
+- models.dev marks a model deprecated while the provider still serves it. Dropping those rows removed working models (GitHub Copilot Claude Opus 4.7, GPT-5.5, GPT-5.4; Baseten Kimi K2.x) from users mid-release and broke the 2026.10.21-1 release run's live catalog regeneration. Keeping them labeled lets the UI mark them and fallback prefer current models; not re-adding long-dropped deprecated rows keeps the pickers clean.
+
+### Why an extension could not handle it
+
+- The built-in catalog is generated in this package; nothing at runtime can restore rows the generator dropped.
+
+### Expected merge conflict zones
+
+- LOW: the deprecated-status checks in the provider loops of `generate-models.ts` when upstream adds or reshapes provider loops.
+
+## 2026-10-21 - Correction: what the deprecated label does today, and the drift the refresh carries
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: no code change; this entry corrects the 2026-10-21 "Upstream-deprecated models stay in the catalog, labeled" entry above. Its "Why" says the label lets the UI mark deprecated models and lets fallback prefer current models; nothing reads `Model.deprecated` yet (tracked in #3895). What the change does today: a model models.dev marks deprecated stays in the catalog, labeled `deprecated: true`, instead of disappearing, so it keeps working.
+- The same catalog refresh also takes models.dev's current thinking levels and compat for existing models, not only prices and limits (for example Baseten Nemotron 3 Ultra's `off` value becomes `none`, and Baseten DeepSeek-V4-Pro's supported levels change).
+
+### Why
+
+- Tracker entries are append-only, and release notes state only what ships; this keeps the record accurate without rewriting the earlier entry.
+
+### Why an extension could not handle it
+
+- Same as the entry above: the bundled catalog is generated in this package.
+
+### Expected merge conflict zones
+
+- None beyond the entry above.

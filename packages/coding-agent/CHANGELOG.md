@@ -10,9 +10,13 @@
 
 ### Changed
 
+- A new engine host no longer re-transpiles extensions whose sources have not changed: the importer keeps its prepared module source under `<agent dir>/cache/extension-modules` and reuses it after re-checking every import, so a host starts faster ([#3716](https://github.com/code-yeongyu/senpi/issues/3716))
+- The bundled Claude Agent SDK is updated to 0.3.306 (from 0.3.296), so the Anthropic subscription lane runs Claude Code 2.1.306 and the models it knows ([#3854](https://github.com/code-yeongyu/senpi/issues/3854)).
+
 ### Fixed
 
 - Reopening an unattended session no longer spends quota on goals or background events until you send input or choose Resume. Held events survive restart and are released once; ordinary attended sessions keep receiving every event, and completed tasks are not reopened after a host restart ([#3853](https://github.com/code-yeongyu/senpi/issues/3853)).
+- On Windows, input sent while a turn was running no longer gets stuck. Every save of a queued input failed with `EPERM` (the session file was flushed through a read-only handle), and each reopen replayed the input and failed again. The same failure was also taken for a model error, so the session ran through its whole fallback chain in under a second and stayed on the last model. A local file or journal error now shows as a local error naming the file, and the session keeps its model ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
 - An idle RPC host (one open session, no work) no longer wakes about eleven times a second. While its supervisor pipe is watched, the supervisor pid is checked every 5 s instead of every 250 ms, and the event-loop stall probe ticks once a second after 2 s without session work, going back to 200 ms as soon as a session works. This cuts the idle CPU of every thread host the desktop keeps open ([#3738](https://github.com/code-yeongyu/senpi/issues/3738)).
 ### Removed
 
@@ -80,8 +84,6 @@
 - Subscription limits are known before an account's first turn: in interactive and RPC modes the engine polls each signed-in Claude (every 5 min) and ChatGPT (every 2.5 min) subscription account's usage, so `get_subscription_limits` and the `subscription_limits` record carry its windows on a fresh session. Turns keep updating the same record, the newest reading wins, one machine-wide cache keeps several senpi processes to one request per account per interval, and a failed poll keeps the last windows and reports why in a new optional `error` field (with `plan` beside it). A login the token endpoint already rejected shows `auth stale - run /login` and is not polled again. Extensions read the same store through `pi.getSubscriptionLimits()` and `pi.onSubscriptionLimits()` ([#3684](https://github.com/code-yeongyu/senpi/issues/3684)).
 
 ### Changed
-
-- A new engine host no longer re-transpiles extensions whose sources have not changed: the importer keeps its prepared module source under `<agent dir>/cache/extension-modules` and reuses it after re-checking every import, so a host starts faster ([#3716](https://github.com/code-yeongyu/senpi/issues/3716))
 
 ### Fixed
 

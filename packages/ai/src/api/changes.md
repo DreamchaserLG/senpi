@@ -73,6 +73,25 @@ The diagnostic rides the provider's thrown error inside the adapter, before any 
 
 - LOW: `packages/ai/src/api/google-vertex.ts`, the import block and the two helper bodies (`buildGoogleAuthOptions`, `resolveProject`).
 
+## 2026-10-21 - Advertised [CC] floor 2.1.306 (senpi#3854)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `claudeCodeVersion` moves 2.1.296 -> 2.1.306 to match the @anthropic-ai/claude-agent-sdk 0.3.306 bump in `packages/coding-agent/package.json` (and its regenerated `install-lock`).
+
+### Why
+
+- The Releasability gate's SDK currency check failed on main once 0.3.305/0.3.306 were published; the floor must track the pinned SDK's shipped [CC] version (senpi#2033).
+
+### Why an extension could not handle it
+
+- The advertised [CC] identity is a build-time constant; it is not runtime extension surface.
+
+### Expected merge conflict zones
+
+- The single `claudeCodeVersion` declaration line.
+
+
 ## 2026-10-13 - Advertised [CC] floor 2.1.296 (senpi#3258)
 
 ### What changed

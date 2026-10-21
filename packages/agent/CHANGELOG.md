@@ -6,6 +6,8 @@
 
 ### Added
 
+- A run that fails on an error from the `queuedInputPort` (`claim`, `release`, `commitConsumption`) ends with a failure message marked `failureSource: "local"`, so callers can tell a local failure from a provider one ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
+
 ### Changed
 
 ### Fixed

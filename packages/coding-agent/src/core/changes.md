@@ -1,3 +1,23 @@
+## 2026-10-21 - An input release finishes when its run settles, and returns on every refused exit (senpi#3853)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: an input release admitted into a turn that was already streaming finishes once the run settles idle (`_emitAgentIdleAfterDeferredTurns`), and a person's input that opened the release but ended with no disposition at all (refused before acceptance, thrown, cancelled) gives its release back in `prompt()`'s `finally`; only the input that opened the release may give it back, and a handled command keeps its release for the follow-on input it dispatches.
+- `packages/coding-agent/src/core/engine-turn-input.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`: `begin()` reports whether this input opened the release; `abandon()` / `abandonRelease()` lower the release barrier, clear the goal deferral and restore the released holds unless held wakes were already delivered.
+- `packages/coding-agent/src/core/input-origin.ts`, `packages/coding-agent/src/core/agent-session.ts`: one `InputOrigin` (`person` | `extension` | `engine`) classified at the entry point (prompt, steer and follow-up by input source; turn-triggering custom messages by type) replaces the scattered `source !== "extension"` checks of this PR, and `_promptAgent` takes an options object carrying it.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-input.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`: a steer or follow-up into a streaming turn released the hold but never finished it, so the goal stayed deferred while the session reported `paused=false`. An input that failed before admission left the release barrier set, so `resume_session` became a silent no-op.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-input.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`: run settlement and prompt admission are core lifecycle points.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, the end of `_emitAgentIdleAfterDeferredTurns`, the `finally` of `prompt()`, `_queueUserInput`'s person check, and the `_promptAgent` signature and its two callers.
+
 ## 2026-10-21 - Durable engine-owned session lifecycle (senpi#3864)
 
 ### What changed
@@ -171,6 +191,27 @@ The first lines of `prompt`, `steer`, `followUp` and `resumeSession`, and the `q
 ### Expected merge conflict zones
 
 `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`, `packages/coding-agent/src/core/engine-turn-release.ts`, `packages/coding-agent/src/core/question-input.ts`: Session construction, prompt admission and completion, custom-message admission, extension binding, and the new fork-only helpers.
+
+## 2026-10-21 - Pending input syncs on Windows; a local failure never walks the fallback chain (senpi#3866)
+
+### What changed
+
+- `packages/coding-agent/src/core/pending-input-journal.ts`: `fsJournalDurability` syncs the session file through an `r+` handle (a directory still through `r`, skipped on win32) and takes an injectable `JournalFileOpener`. `PendingInputAppendUncertainError` names the session file and the OS error, and says it is a local file error.
+- `packages/coding-agent/src/core/agent-session.ts`: a new `_isLocalFailure(message)` reads the typed `failureSource: "local"` mark. `_isRetryableError`, `_isHardErrorFallbackEligible`, and the `agent_end` health branch that calls `_retryFallback.noteHealthFailure` all skip a local failure, so it never retries, walks the fallback chain, or marks a model unhealthy. The check reads the typed mark, never the message text: the text carries the OS error, and `EDQUOT: disk quota exceeded` matched `isHealthExhaustionFailure` (#3868 review).
+
+### Why
+
+- On Windows `FlushFileBuffers` needs a handle with write access, so the fsync on the read-only handle failed with EPERM on every pending-input transition, and queued input got stuck and replayed on each reopen (omo#10781).
+- The failure was then classified as a model hard error and the session walked its whole fallback chain in under a second, ending on the last model. A local failure cannot be fixed by another model.
+- Regressions: `test/suite/pending-input-journal.test.ts` (a simulated win32 opener whose read-only fsync rejects with EPERM) and `test/suite/regressions/3866-local-failure-keeps-model.test.ts`.
+
+### Why an extension could not handle it
+
+- The journal's durability and the session's retry classification are core session internals.
+
+### Expected merge conflict zones
+
+- LOW: the first guard of `_isRetryableError`, the predicate list of `_isHardErrorFallbackEligible`, the `noteHealthFailure` condition at the top of the `agent_end` retry block, and the new `_isLocalFailure` beside `_isCursorPayloadOverflow` in `agent-session.ts`.
 
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 

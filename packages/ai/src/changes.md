@@ -1,3 +1,21 @@
+## 2026-10-21 - AssistantMessage.failureSource (senpi#3866)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `failureSource?: "local"`.
+
+### Why
+
+- A run can fail in local code (the session's pending-input journal, a local file) with no provider request involved. The agent marks that failure so a session never retries the model or walks the fallback chain on it (omo#10781).
+
+### Why an extension could not handle it
+
+- `AssistantMessage` is the public message contract in `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: after `abortSource` in `AssistantMessage` in `packages/ai/src/types.ts`.
+
 ## 2026-10-18 - AnthropicMessagesCompat.supportsGzipRequestBody (senpi#3643)
 
 ### What changed

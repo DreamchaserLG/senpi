@@ -12,12 +12,14 @@ export class EngineTurnInput {
 		this.hold = hold;
 	}
 
-	begin(): void {
+	/** Returns true when this input opened the release and therefore owns giving it back. */
+	begin(): boolean {
 		this.hold.attend();
-		if (this.hold.releasing || this.pending || !this.hold.held) return;
+		if (this.hold.releasing || this.pending || !this.hold.held) return false;
 		const wakes = this.hold.messages();
 		const sources = this.hold.releaseAll("input");
 		this.pending = { sources, wakes, admitted: wakes.length === 0 };
+		return true;
 	}
 
 	messages(): CustomMessage[] {
@@ -31,6 +33,15 @@ export class EngineTurnInput {
 			if (this.hold.consume(wake.source, wake.noticeIds) && queued) enqueue(wake.message);
 		}
 		pending.admitted = true;
+	}
+
+	/** The input that began this release ended without any disposition (thrown or cancelled): give it back, custody intact. */
+	abandon(): void {
+		if (!this.pending) return;
+		const delivered = this.pending.wakes.length > 0 && this.pending.admitted;
+		if (delivered) return;
+		this.pending = undefined;
+		this.hold.abandonRelease();
 	}
 
 	async finish(release: (sources: Record<string, number>) => Promise<void>): Promise<void> {

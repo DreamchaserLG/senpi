@@ -274,6 +274,7 @@ import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/type
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
 import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
+import { customTurnOrigin, type InputOrigin, inputOriginOf } from "./input-origin.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
 import { heldLifecycleNotice, messageTicket } from "./lifecycle-delivery.ts";
 import { LifecycleSessionBinding } from "./lifecycle-session-binding.ts";
@@ -3021,22 +3022,31 @@ export class AgentSession {
 		this._deadlineTracker.disarm();
 		this._emit({ type: "agent_idle" });
 		this._lifecycleBinding.controller.idle();
+		// An input release admitted into a turn that was already streaming completes here, once the run settles.
+		await this._engineTurnInput.finish((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
 	}
 
 	private async _promptAgent(
 		messages: AgentMessage | AgentMessage[],
-		deferredTurnClaim?: DeferredTurnClaim,
-		onQueuedInput?: (input: PreparedClientInput) => void,
-		origin: "human" | "automatic" = "automatic",
-		onTurnAdmitted?: () => void,
-		personInput = false,
+		{
+			inputOrigin,
+			deferredTurnClaim,
+			onQueuedInput,
+			onTurnAdmitted,
+		}: {
+			readonly inputOrigin: InputOrigin;
+			readonly deferredTurnClaim?: DeferredTurnClaim;
+			readonly onQueuedInput?: (input: PreparedClientInput) => void;
+			/** Called once the turn is admitted: the human-input seam releases its admission hold here. */
+			readonly onTurnAdmitted?: () => void;
+		},
 	): Promise<void> {
 		if (this._extensionBindingPromptReadiness === undefined) await this._lifecycleBinding.restore();
 		else await this.sessionManager.persistHeaderNow();
 		if (this._lifecycleBinding.controller.requiresHumanContinuation)
 			throw new Error("The previous run was interrupted. Human input or Resume is required before another turn.");
 		deferredTurnClaim?.resolve("started");
-		this._lifecycleBinding.prepareRun(origin);
+		this._lifecycleBinding.prepareRun(inputOrigin === "person" ? "human" : "automatic");
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
 		this._isAgentRunActive = true;
 		onTurnAdmitted?.();
@@ -3105,7 +3115,7 @@ export class AgentSession {
 				if (prepared) {
 					this._steeringMessages.push(prepared.text);
 					const queuedId = this._recordQueuedInput(prepared.text, "steer", prepared, userMessage);
-					if (personInput) this._personQueuedIds.add(queuedId);
+					if (inputOrigin === "person") this._personQueuedIds.add(queuedId);
 					this._emitQueueUpdate();
 				}
 				return;
@@ -3687,6 +3697,7 @@ export class AgentSession {
 			// whether or not the chain has a candidate left.
 			if (
 				msg.stopReason === "error" &&
+				!this._isLocalFailure(msg) &&
 				(isHealthExhaustionFailure(msg.errorMessage) || usageLimitScope(msg.errorMessage) === "account") &&
 				this.model
 			) {
@@ -5210,16 +5221,15 @@ export class AgentSession {
 			command: this._isExtensionCommandText(text, options),
 			submittedByCommand: options?.source === "extension",
 		});
+		const origin = inputOriginOf(options?.source);
+		let ownsRelease = false;
+		let disposed = false;
 		try {
-			if (options?.source !== "extension") {
-				emitUserActivity(this, "prompt");
-				this._deadlineTracker.clearHold();
-				this._engineTurnInput.begin();
-				this._engineResumeWindow = false;
-			}
+			ownsRelease = origin === "person" && this._beginPersonInput();
 			await this._prompt(text, {
 				...options,
 				promptDisposition: (disposition) => {
+					disposed = true;
 					if (disposition !== "started") hold.accepted();
 					if (disposition === "started" || disposition === "queued")
 						this._engineTurnInput.admit(disposition === "queued", (message) => this.agent.steer(message));
@@ -5233,8 +5243,18 @@ export class AgentSession {
 			if (this.isIdle)
 				await this._engineTurnInput.finish((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
 		} finally {
+			// An input that opened the release and ended with no disposition (thrown, cancelled) gives it back.
+			if (ownsRelease && !disposed) this._engineTurnInput.abandon();
 			hold.end();
 		}
+	}
+
+	/** A person's input (prompt, steer, follow-up, answer) attends the session and releases what it holds. */
+	private _beginPersonInput(): boolean {
+		emitUserActivity(this, "prompt");
+		this._deadlineTracker.clearHold();
+		this._engineResumeWindow = false;
+		return this._engineTurnInput.begin();
 	}
 
 	private _isExtensionCommandText(text: string, options?: PromptOptions): boolean {
@@ -5725,14 +5745,11 @@ export class AgentSession {
 		if (options?.thinkingLevel !== undefined) {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
-		await this._promptAgent(
-			messages,
-			undefined,
-			options?.onQueuedInput,
-			isHumanInput(options) ? "human" : "automatic",
-			options?.onTurnAdmitted,
-			options?.humanOrigin === true || (options?.source ?? "interactive") !== "extension",
-		);
+		await this._promptAgent(messages, {
+			inputOrigin: options?.humanOrigin === true ? "person" : inputOriginOf(options?.source),
+			onQueuedInput: options?.onQueuedInput,
+			onTurnAdmitted: options?.onTurnAdmitted,
+		});
 		await this.waitForRetry();
 		await this.waitForIdle();
 		if (options?.onSessionWorkReady) {
@@ -5935,9 +5952,10 @@ export class AgentSession {
 		behavior: "steer" | "followUp",
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
+		const origin = inputOriginOf(options?.source);
 		const hold = this.externalAdmission.beginInput();
 		try {
-			if (options?.source !== "extension" && this._engineTurnHold.held) {
+			if (origin === "person" && this._engineTurnHold.held) {
 				await this.prompt(text, {
 					...options,
 					images,
@@ -5962,12 +5980,7 @@ export class AgentSession {
 		behavior: "steer" | "followUp",
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
-		if (options?.source !== "extension") {
-			emitUserActivity(this, "prompt");
-			this._deadlineTracker.clearHold();
-			this._engineTurnInput.begin();
-			this._engineResumeWindow = false;
-		}
+		if (inputOriginOf(options?.source) === "person") this._beginPersonInput();
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -6447,8 +6460,13 @@ export class AgentSession {
 					this._triggerTurnAdmissionAbortGeneration = undefined;
 				}
 				if (releasedWake && !releasedWake()) return;
-				if (!isUserDirectedTurn(message.customType)) this._recordEngineTurnStart(message.customType);
-				await this._promptAgent(messages, deferredTurnClaim, undefined, releasedWake ? "human" : "automatic");
+				const inputOrigin = customTurnOrigin(message.customType);
+				if (inputOrigin === "engine") this._recordEngineTurnStart(message.customType);
+				// A wake released by a person's input continues that person's turn.
+				await this._promptAgent(messages, {
+					inputOrigin: releasedWake ? "person" : inputOrigin,
+					deferredTurnClaim,
+				});
 			} else if (this.isStreaming) {
 				if (options?.ticket) this.workObligations.passive(options.ticket);
 				this._pendingCustomMessages.push(appMessage);
@@ -10985,6 +11003,7 @@ export class AgentSession {
 	private _isRetryableError(message: AssistantMessage): boolean {
 		// Providers mark post-delta failures to prevent replaying visible text/tool calls.
 		if (message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX)) return false;
+		if (this._isLocalFailure(message)) return false;
 
 		// Context overflow is handled by compaction, not retry.
 		if (isContextOverflow(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0)) return false;
@@ -10997,6 +11016,16 @@ export class AgentSession {
 		}
 
 		return isRetryableAssistantError(message);
+	}
+
+	/**
+	 * A failure the agent marked local (the session's journal or file, senpi#3866). The mark is typed and set by
+	 * where the error came from, never read from its text: the text carries the OS error, which can read like a
+	 * provider quota (EDQUOT). No model produced it, so it never retries, walks the fallback chain, or marks a
+	 * model unhealthy.
+	 */
+	private _isLocalFailure(message: AssistantMessage): boolean {
+		return message.failureSource === "local";
 	}
 
 	private _isCursorPayloadOverflow(message: AssistantMessage): boolean {
@@ -11058,6 +11087,7 @@ export class AgentSession {
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
+			!this._isLocalFailure(message) &&
 			!this._isClaudeSdkAuthMissError(message) &&
 			!this._isClaudeSdkSameModelRemintError(message) &&
 			message.stopReason === "error" &&

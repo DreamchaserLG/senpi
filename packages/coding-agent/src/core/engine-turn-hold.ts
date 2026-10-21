@@ -206,6 +206,14 @@ export class EngineTurnHold {
 		return sources;
 	}
 
+	/** Undo a release whose input never reached admission: lower the barrier and keep every held wake held. */
+	abandonRelease(): void {
+		this.releaseBarrier = false;
+		this.goalDeferred = false;
+		for (const { kind, key, data } of this.released) this.addHold(kind, { key, data });
+		this.released = [];
+	}
+
 	rejectInput(): void {
 		this.releaseBarrier = false;
 		this.goalDeferred = false;
