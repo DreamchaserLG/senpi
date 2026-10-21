@@ -9,6 +9,7 @@ import type { ExtensionRunner } from "./extensions/runner.ts";
 import { StaleExtensionContextError } from "./extensions/stale-context-error.ts";
 import type { AgentEndEvent } from "./extensions/types.ts";
 import { consumeLifecycleDelivery, lifecycleDeliveryEntries, messageTicket } from "./lifecycle-delivery.ts";
+import { lifecycleHistory } from "./lifecycle-history.ts";
 import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
 import type { LifecycleRecord } from "./lifecycle-record.ts";
 import { readLifecycleRuntimeFacts } from "./lifecycle-runtime-facts.ts";
@@ -46,7 +47,7 @@ export class LifecycleSessionBinding {
 			sessionId: session.sessionId,
 			spawnedBy: session.sessionManager.getHeader()?.spawnedBy,
 			entries: session.sessionManager
-				.getEntries()
+				.reduceHistory(lifecycleHistory)
 				.filter(
 					(entry) =>
 						entry.type !== "custom" ||
@@ -183,14 +184,13 @@ export class LifecycleSessionBinding {
 
 	private async recover(): Promise<void> {
 		await this.refreshFacts();
-		const entries = this.session.sessionManager.getEntries();
+		const entries = this.session.sessionManager.reduceHistory(lifecycleHistory);
 		const active = this.controller.obligations.active;
 		for (const record of active) {
 			if (!record.ticketId) continue;
 			const ticketId = record.ticketId;
-			const transcript = entries.find(
-				(entry) => entry.type === "custom_message" && messageTicket(entry) === ticketId,
-			);
+			const entryId = this.session.sessionManager.reduceHistory(lifecycleDeliveryEntries).get(ticketId);
+			const transcript = entryId ? this.session.sessionManager.getEntry(entryId) : undefined;
 			if (record.state !== "consumed" && !transcript) continue;
 			if (transcript && record.state !== "consumed")
 				this.controller.obligations.consumed(ticketId, {

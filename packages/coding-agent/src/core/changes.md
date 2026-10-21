@@ -1,3 +1,21 @@
+## 2026-10-21 - Restore lifecycle without materializing conversation history (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/lifecycle-session-binding.ts` reads lifecycle restoration records through the existing incremental history reducer. Recovery looks up ticketed transcript entries by identity rather than retaining every conversation entry.
+
+### Why
+
+`packages/coding-agent/src/core/lifecycle-session-binding.ts`: replacing the per-message ticket scans was not sufficient for #2537. Construction and recovery still called `getEntries()`, pinning the compacted session's full history before the first engine turn. If the next turn arrived before idle memory release, that view remained resident throughout the stream. Restoration only needs its custom bookkeeping records and specific ticketed entries.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/lifecycle-session-binding.ts`: the engine constructs and restores lifecycle before any extension can consume its state.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/lifecycle-session-binding.ts`: constructor entries and recovery transcript lookup; `lifecycle-history.ts`: bookkeeping-only history fold.
+
 ## 2026-10-21 - Preserve guarded edits across lifecycle bookkeeping (senpi#3864)
 
 ### What changed
