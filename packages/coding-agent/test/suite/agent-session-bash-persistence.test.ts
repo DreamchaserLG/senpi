@@ -228,7 +228,10 @@ describe("AgentSession bash and persistence characterization", () => {
 		});
 		await harness.session.prompt("start");
 
-		const entries = harness.sessionManager.getEntries();
+		// Design 4.4 adds lifecycle records without changing conversation entry order.
+		const entries = harness.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type !== "custom" || entry.customType !== "session-lifecycle");
 		expect(entries.map((entry) => entry.type)).toEqual([
 			"custom_message",
 			"message",
