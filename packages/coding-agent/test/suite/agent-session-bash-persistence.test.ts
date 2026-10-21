@@ -287,7 +287,9 @@ describe("AgentSession bash and persistence characterization", () => {
 		await harness.session.abort();
 		await promptPromise;
 
-		const lastEntry = harness.sessionManager.getEntries()[harness.sessionManager.getEntries().length - 1];
+		const lastEntry = harness.sessionManager
+			.getEntries()
+			.findLast((entry) => entry.type !== "custom" || entry.customType !== "session-lifecycle");
 		expect(lastEntry?.type).toBe("message");
 		if (lastEntry?.type === "message") {
 			expect(lastEntry.message.role).toBe("assistant");
