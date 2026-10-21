@@ -1,3 +1,21 @@
+## 2026-10-21 - Share the canonical turn-end provenance (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts` gives lifecycle the same `AgentEndEvent` that extension handlers receive, including its abort flag and source.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`: the public subscriber event intentionally omits abort provenance. Feeding that projection back into lifecycle classified an unexplained abort as a provider error rather than the human-attention stall required by design section 4.6.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`: the core owns both provenance collection and lifecycle binding.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: `_emitExtensionEvent` and the public subscriber emission in `_processAgentEvent`.
+
 ## 2026-10-21 - Preserve native event and idle ordering (senpi#3864)
 
 ### What changed

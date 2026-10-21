@@ -3578,7 +3578,6 @@ export class AgentSession {
 					? withResolvedToolName(event, (name) => this.resolveToolCallName(name))
 					: event;
 		this._emit(sessionEvent);
-		if (sessionEvent.type === "agent_end") await this._lifecycleBinding.turnEnded(sessionEvent);
 		if (event.type === "agent_end") {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 		}
@@ -4136,6 +4135,7 @@ export class AgentSession {
 			);
 			try {
 				await this._extensionRunner.emit(extensionEvent);
+				await this._lifecycleBinding.turnEnded(extensionEvent);
 			} finally {
 				this._abortProvenance.endAgentEnd(extensionEvent);
 			}

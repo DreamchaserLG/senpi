@@ -87,7 +87,7 @@ it("does not classify an automatic dialog timeout as a human answer", async () =
 	const answer = fake.createExtensionUIContext().confirm("Review", "Approve?", { timeout: 10 });
 
 	// When only the dialog's timer expires.
-	await vi.advanceTimersByTimeAsync(10);
+	await vi.advanceTimersToNextTimerAsync();
 	expect(await answer).toBe(false);
 	child.close("cancelled");
 
