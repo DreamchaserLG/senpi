@@ -77,6 +77,10 @@ export class LifecycleLedger {
 		return this.current;
 	}
 
+	custodyWriteFailed(): void {
+		this.current = { ...this.current, persisted: false, selfSettleEligible: false };
+	}
+
 	releaseRestoreBarrier(): void {
 		this.current = { ...this.current, restoring: false };
 	}
@@ -209,7 +213,7 @@ export class LifecycleLedger {
 			// Input changes during session_start are collected, but cannot publish.
 			return;
 		}
-		if (equivalent(this.current, next)) return;
+		if (this.current.persisted && equivalent(this.current, next)) return;
 		// A brand-new idle session has no completed work epoch to announce.
 		if (terminal && base.epoch === 0) {
 			this.current = next;

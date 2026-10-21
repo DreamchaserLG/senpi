@@ -45,7 +45,13 @@ export class SessionLifecycleController {
 
 	constructor(options: SessionLifecycleOptions) {
 		this.options = options;
-		this.ledger = new LifecycleLedger(options);
+		this.ledger = new LifecycleLedger({
+			...options,
+			append: (record) => {
+				this.obligations.flush();
+				options.append(record);
+			},
+		});
 		if (this.ledger.lastTurnEnd)
 			this.liveness = {
 				...this.ledger.lastTurnEnd,
@@ -179,6 +185,7 @@ export class SessionLifecycleController {
 	}
 
 	recompute(): void {
+		if (!this.obligations.persisted) this.ledger.custodyWriteFailed();
 		if (this.ledger.snapshot.restoring || this.admittingHuman) return;
 		if (this.evaluating) {
 			this.deferred = true;

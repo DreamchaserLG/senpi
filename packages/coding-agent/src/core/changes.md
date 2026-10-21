@@ -16,6 +16,26 @@
 
 `packages/coding-agent/src/core/agent-session.ts`: guarded edits and `_navigateTree`; `lifecycle-edit-leaf.ts`: lifecycle-only ancestor traversal.
 
+## 2026-10-21 - Preserve execution when custody journal writes are refused (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/work-obligations.ts` retains the current live custody record in memory when its append fails. Before publishing a durable lifecycle state, the ledger flushes outstanding custody records. Until that succeeds lifecycle is `persisted: false` and self-settle eligibility is false. Unchanged failed snapshots can recover their durability on a later fact read.
+
+`packages/coding-agent/src/core/agent-session.ts` routes early message-start transcript refusal through the existing message-end refusal/reporting path without attempting that message's write again in the same run. External delivery identity selects the same implicit ticket when the admission ledger permits redelivery.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`: the existing #2967 and external-admission contracts require a read-only session file not to prevent execution; the turn reports its own transcript error. New custody writes had thrown before that run began, and early consumption could throw out of the native event callback. Live custody is retained rather than forgotten, while a failed journal cannot produce a durable completion.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`: native consumption, transcript refusal, and the durable lifecycle/custody publication order are engine boundaries. The existing external-admission refusal regressions remain unchanged; `3864-custody-write-refusal.test.ts` checks live custody and custody-before-lifecycle recovery.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: custom ticket identity, message-start consumption, message-end persistence. `work-obligations.ts`, `session-lifecycle.ts`, and `lifecycle-ledger.ts`: failed journal state and flush-before-publication.
+
 ## 2026-10-21 - Refresh lifecycle facts after extension rebind (senpi#3864)
 
 ### What changed

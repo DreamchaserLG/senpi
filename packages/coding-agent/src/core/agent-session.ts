@@ -3130,8 +3130,12 @@ export class AgentSession {
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
 		if (event.type === "agent_start") this._lifecycleBinding.startRun();
 		if (event.type === "message_start") {
-			const entryId = this._lifecycleBinding.consume(event.message);
-			if (entryId) this._emitEntryAppended(entryId);
+			try {
+				const entryId = this._lifecycleBinding.consume(event.message);
+				if (entryId) this._emitEntryAppended(entryId);
+			} catch (error) {
+				this._transcriptWriteFailures.record(event.message, error);
+			}
 		}
 		this._runContinuations.observe(event);
 		// Record the calls a tool made through ctx.executeTool() and their usage on its result message,
@@ -3594,6 +3598,8 @@ export class AgentSession {
 			this._observeEngineTurnMessage(event.message);
 			let entryId: string | undefined;
 			try {
+				const refusal = this._transcriptWriteFailures.refusal(event.message);
+				if (refusal) throw refusal.error;
 				// Check if this is a custom message from extensions
 				if (event.message.role === "custom") {
 					// Persist as CustomMessageEntry
@@ -6268,10 +6274,11 @@ export class AgentSession {
 		const obligations = this.workObligations;
 		// Normalize the legacy untyped content boundary before persisting a retry payload.
 		const deliveryMessage = { ...message, content: message.content ?? [] };
+		const deliveryId = deliveryIdOf({ ...deliveryMessage, role: "custom", timestamp: Date.now() });
 		const ticket =
 			options?.ticket ??
 			(this.isStreaming || options?.triggerTurn === true || options?.deliverAs === "nextTurn"
-				? obligations.open(`delivery:${message.customType}:${randomUUID()}`, "background").ticket()
+				? obligations.open(`delivery:${message.customType}:${deliveryId ?? randomUUID()}`, "background").ticket()
 				: undefined);
 		const generation = this._userAbortGeneration;
 		if (ticket && !obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs })) {

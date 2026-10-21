@@ -20,6 +20,7 @@ export interface CustodyStore {
 /** One session's durable registry. A token never acknowledges its own delivery. */
 export class SessionWorkObligations implements WorkObligations {
 	private readonly records = new Map<string, WorkCustodyRecord>();
+	private readonly unpersisted = new Map<string, WorkCustodyRecord>();
 	private readonly delivering = new Set<DeliveryTicketId>();
 	private readonly store: CustodyStore;
 	constructor(store: CustodyStore) {
@@ -37,6 +38,10 @@ export class SessionWorkObligations implements WorkObligations {
 
 	get activeCount(): number {
 		return this.active.reduce((sum, record) => sum + (record.activeCount ?? 1), 0);
+	}
+
+	get persisted(): boolean {
+		return this.unpersisted.size === 0;
 	}
 
 	open(key: string, kind: ObligationKind, detail?: string): ObligationToken {
@@ -130,8 +135,22 @@ export class SessionWorkObligations implements WorkObligations {
 	}
 
 	private install(record: WorkCustodyRecord): void {
-		this.store.append(record);
+		try {
+			this.store.append(record);
+			this.unpersisted.delete(record.id);
+		} catch (error) {
+			if (!(error instanceof Error)) throw error;
+			this.unpersisted.set(record.id, record);
+		}
 		this.records.set(record.id, record);
+	}
+
+	/** A lifecycle publication cannot claim durability before its live custody is durable. */
+	flush(): void {
+		for (const [id, record] of this.unpersisted) {
+			this.store.append(record);
+			this.unpersisted.delete(id);
+		}
 	}
 
 	private owned(id: string): WorkCustodyRecord {
