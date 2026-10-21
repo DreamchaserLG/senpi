@@ -1,3 +1,21 @@
+## 2026-10-21 - Refresh lifecycle facts after extension rebind (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts` refreshes lifecycle facts after an already-restored session finishes binding extensions. The first bind still performs custody recovery and releases the restore barrier once.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`: a second bind could install a new collector or follow a goal-store change while the previous restore promise already held old facts. Returning that completed promise left stale attention after reopen/rebind. A new fact collection also supersedes any older in-flight collection.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`: binding completion is the shared rehydration boundary and must sample the currently bound collector.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: the end of `bindExtensions`.
+
 ## 2026-10-21 - Keep restored run admission synchronous (senpi#3864)
 
 ### What changed

@@ -10101,7 +10101,8 @@ export class AgentSession {
 			void Promise.allSettled(bindingPromptReadiness).then(settleSessionStart);
 		}
 		await Promise.all(bindingPromptReadiness);
-		await this._lifecycleBinding.restore();
+		if (this._lifecycleBinding.isRestored) await this._lifecycleBinding.refreshFacts();
+		else await this._lifecycleBinding.restore();
 	}
 
 	private _beginSessionStartSettlement(): () => void {
