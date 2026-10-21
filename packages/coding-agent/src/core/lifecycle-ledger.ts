@@ -1,6 +1,7 @@
 import { LifecycleAttention } from "./lifecycle-attention.ts";
 import { type DurableTurnEnd, type LifecycleRecord, readLifecycleRecord } from "./lifecycle-record.ts";
 import type { SessionEntry } from "./session-manager.ts";
+import { lifecycleTerminal } from "./session-lifecycle-reducer.ts";
 import type { LifecycleHold, LifecycleWaits, SelfSettleResult, SessionLifecycle, SessionLifecycleEvent, SessionLifecycleState, SpawnedBy } from "./session-lifecycle-types.ts";
 
 export interface LifecyclePersistence {
@@ -67,7 +68,14 @@ export class LifecycleLedger {
 	humanInput(at: string): void {
 		this.request = undefined;
 		const { settleDecision: _decision, ...current } = this.current;
-		const next = { ...current, humanInputRevision: current.humanInputRevision + 1, since: current.since || at };
+		// The first revision is input preparation, not an epoch-zero completion.
+		const preparingFirstTurn = current.epoch === 0 && lifecycleTerminal(current.state);
+		const next: SessionLifecycle = {
+			...current,
+			state: preparingFirstTurn ? "running" : current.state,
+			humanInputRevision: current.humanInputRevision + 1,
+			since: preparingFirstTurn ? at : current.since,
+		};
 		if (!this.write(next, true)) this.admissionWriteFailed = true;
 	}
 
