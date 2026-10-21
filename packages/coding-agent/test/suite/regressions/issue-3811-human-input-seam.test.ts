@@ -88,4 +88,17 @@ describe("senpi#3811 human-input seam", () => {
 		expect(flip.success).toBe(false);
 		expect(flip.error).toContain("connection_role_fixed");
 	});
+	it("reports each human input exactly once, also when a held session routes a steer through prompt", async () => {
+		const { fixture, seen } = await seamFixture();
+		const human = fixture.bind();
+		await human.send({ type: "set_client_info", capabilities: ["interactive_user"] });
+		Reflect.get(fixture.session, "_engineTurnHold").addHold("unattended");
+
+		await human.send({ type: "steer", message: "while held" });
+		await fixture.session.waitForIdle();
+		await fixture.session.sendUserMessage("my answer", undefined, undefined, true);
+		await fixture.session.waitForIdle();
+
+		expect(seen.map((event) => event.kind)).toEqual(["steer", "answer"]);
+	});
 });
