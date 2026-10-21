@@ -9,7 +9,6 @@ it("keeps a continuation scheduled at agent_settled running until its final repl
 	const release = Promise.withResolvers<void>();
 	const timeout = AbortSignal.timeout(10_000);
 	timeout.addEventListener("abort", () => entered.reject(timeout.reason), { once: true });
-	let requests = 0;
 	let continued = false;
 	const h = await createHarness({
 		persistSession: true,
@@ -23,11 +22,6 @@ it("keeps a continuation scheduled at agent_settled running until its final repl
 						{ triggerTurn: true },
 					);
 				});
-				pi.on("before_provider_request", async () => {
-					if (++requests !== 2) return;
-					entered.resolve();
-					await release.promise;
-				});
 			},
 		],
 	});
@@ -35,7 +29,14 @@ it("keeps a continuation scheduled at agent_settled running until its final repl
 	try {
 		expect(h.session.lifecycle).toBeDefined();
 		await h.session.bindExtensions({ mode: "rpc" });
-		h.setResponses([fauxAssistantMessage("Intermediate reply."), fauxAssistantMessage("Final reply.")]);
+		h.setResponses([
+			fauxAssistantMessage("Intermediate reply."),
+			async () => {
+				entered.resolve();
+				await release.promise;
+				return fauxAssistantMessage("Final reply.");
+			},
+		]);
 		const idle = nextSessionEvent(h, (event) => event.type === "agent_idle");
 		run = h.session.prompt("Finish both steps.");
 		void run.catch(entered.reject);
