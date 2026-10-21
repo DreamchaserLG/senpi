@@ -1,7 +1,8 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HumanInputAdmittedEvent } from "../../../src/core/agent-session.ts";
-import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extensions/types.ts";
+import { releaseQuestionInput } from "../../../src/core/question-input.ts";
 import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
 
 type Fixture = Awaited<ReturnType<typeof createIdentityHarness>>;
@@ -13,10 +14,14 @@ afterEach(async () => {
 
 async function seamFixture() {
 	let api: ExtensionAPI | undefined;
+	let context: ExtensionContext | undefined;
 	const fixture = await createIdentityHarness({
 		extensionFactories: [
 			(pi: ExtensionAPI) => {
 				api = pi;
+				pi.on("session_start", (_event, ctx) => {
+					context = ctx;
+				});
 			},
 		],
 	});
@@ -32,8 +37,8 @@ async function seamFixture() {
 		const userMessagesAtCall = fixture.session.messages.filter((message) => message.role === "user").length;
 		seen.push({ ...event, userMessagesAtCall });
 	});
-	if (api === undefined) throw new Error("extension binding unavailable");
-	return { fixture, api, seen };
+	if (api === undefined || context === undefined) throw new Error("extension binding unavailable");
+	return { fixture, api, context, seen };
 }
 
 describe("senpi#3811 human-input seam", () => {
@@ -89,14 +94,16 @@ describe("senpi#3811 human-input seam", () => {
 		expect(flip.error).toContain("connection_role_fixed");
 	});
 	it("reports each human input exactly once, also when a held session routes a steer through prompt", async () => {
-		const { fixture, seen } = await seamFixture();
+		const { fixture, api, context, seen } = await seamFixture();
 		const human = fixture.bind();
 		await human.send({ type: "set_client_info", capabilities: ["interactive_user"] });
 		Reflect.get(fixture.session, "_engineTurnHold").addHold("unattended");
 
 		await human.send({ type: "steer", message: "while held" });
 		await fixture.session.waitForIdle();
-		await fixture.session.sendUserMessage("my answer", undefined, undefined, true);
+		// ask-user's human answer: release the question input, then deliver through the extension API.
+		releaseQuestionInput(context);
+		api.sendUserMessage("my answer");
 		await fixture.session.waitForIdle();
 
 		expect(seen.map((event) => event.kind)).toEqual(["steer", "answer"]);
