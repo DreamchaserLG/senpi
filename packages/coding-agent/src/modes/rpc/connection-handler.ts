@@ -929,17 +929,21 @@ export function createRpcConnectionHandler(
 		activeLogins.set(provider, controller);
 
 		try {
-			await session.modelRegistry.authStorage.login(provider as OAuthProviderId, {
-				onAuth: (info) => {
-					outputEvent({ type: "auth_login_url", provider, url: info.url });
+			await session.modelRegistry.authStorage.login(
+				provider as OAuthProviderId,
+				{
+					onAuth: (info) => {
+						outputEvent({ type: "auth_login_url", provider, url: info.url });
+					},
+					onDeviceCode: (info) => {
+						outputEvent({ type: "auth_login_url", provider, url: info.verificationUri });
+					},
+					...createRpcLoginPromptCallbacks(createExtensionUIContext(), loginSignal),
+					onProgress: () => {},
+					signal: controller.signal,
 				},
-				onDeviceCode: (info) => {
-					outputEvent({ type: "auth_login_url", provider, url: info.verificationUri });
-				},
-				...createRpcLoginPromptCallbacks(createExtensionUIContext(), loginSignal),
-				onProgress: () => {},
-				signal: controller.signal,
-			}, accountName === undefined ? undefined : { accountName });
+				accountName === undefined ? undefined : { accountName },
+			);
 			session.modelRegistry.refresh();
 			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
 			outputEvent({ type: "auth_login_end", provider, success: true });

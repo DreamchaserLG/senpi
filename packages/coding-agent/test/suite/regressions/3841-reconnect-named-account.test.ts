@@ -45,23 +45,26 @@ describe("Reconnect re-authenticates the saved account in place (senpi#3841)", (
 		expect(oauthProviderIds.length).toBeGreaterThan(0);
 	});
 
-	test.each(oauthProviderIds)("%s: a login for 'office' replaces office and never adds a second account", async (id) => {
-		const storage = AuthStorage.inMemory({ [id]: pool() });
-		storage.registerOAuthProvider(id, freshLogin());
+	test.each(oauthProviderIds)(
+		"%s: a login for 'office' replaces office and never adds a second account",
+		async (id) => {
+			const storage = AuthStorage.inMemory({ [id]: pool() });
+			storage.registerOAuthProvider(id, freshLogin());
 
-		await storage.login(id, callbacks, { accountName: "office" });
+			await storage.login(id, callbacks, { accountName: "office" });
 
-		const slots = listSlots(storage.get(id) as PooledCredential);
-		expect(slots.map((slot) => slot.name)).toEqual(["office", "owen"]);
-		expect(slots.find((slot) => slot.name === "office")).toMatchObject({
-			access: "office-new-access",
-			refresh: "office-new-refresh",
-			expires: 9_000,
-		});
-		expect(slots.find((slot) => slot.name === "owen")).toMatchObject({ access: "owen-access" });
-		// office was the account the flat fields mirrored, so they now carry its new material.
-		expect(storage.get(id)).toMatchObject({ access: "office-new-access", refresh: "office-new-refresh" });
-	});
+			const slots = listSlots(storage.get(id) as PooledCredential);
+			expect(slots.map((slot) => slot.name)).toEqual(["office", "owen"]);
+			expect(slots.find((slot) => slot.name === "office")).toMatchObject({
+				access: "office-new-access",
+				refresh: "office-new-refresh",
+				expires: 9_000,
+			});
+			expect(slots.find((slot) => slot.name === "owen")).toMatchObject({ access: "owen-access" });
+			// office was the account the flat fields mirrored, so they now carry its new material.
+			expect(storage.get(id)).toMatchObject({ access: "office-new-access", refresh: "office-new-refresh" });
+		},
+	);
 
 	test("a login for a name the pool doesn't have adds that one account under that name", async () => {
 		const id = oauthProviderIds[0] ?? "openai-codex";
@@ -70,7 +73,11 @@ describe("Reconnect re-authenticates the saved account in place (senpi#3841)", (
 
 		await storage.login(id, callbacks, { accountName: "laptop" });
 
-		expect(listSlots(storage.get(id) as PooledCredential).map((slot) => slot.name)).toEqual(["office", "owen", "laptop"]);
+		expect(listSlots(storage.get(id) as PooledCredential).map((slot) => slot.name)).toEqual([
+			"office",
+			"owen",
+			"laptop",
+		]);
 	});
 
 	test("a login without an account name still adds a new account (Add account)", async () => {
@@ -80,7 +87,11 @@ describe("Reconnect re-authenticates the saved account in place (senpi#3841)", (
 
 		await storage.login(id, callbacks);
 
-		expect(listSlots(storage.get(id) as PooledCredential).map((slot) => slot.name)).toEqual(["office", "owen", "login-2"]);
+		expect(listSlots(storage.get(id) as PooledCredential).map((slot) => slot.name)).toEqual([
+			"office",
+			"owen",
+			"login-2",
+		]);
 	});
 
 	test("an invalid account name is refused before any login runs", async () => {
