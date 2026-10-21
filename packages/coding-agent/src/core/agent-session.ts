@@ -272,7 +272,7 @@ import type {
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
-import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
+import { deliveryIdOf, ExternalAdmission, type InputHold } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputOriginOf } from "./input-origin.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
@@ -5979,29 +5979,41 @@ export class AgentSession {
 	 * Shared queueing path for `steer()` and `followUp()`: extension-command guard,
 	 * `input` handlers, skill/template expansion, then the recovery-ordered enqueue.
 	 */
-	private async _queueUserInput(
+	private _queueUserInput(
 		text: string,
 		images: ImageContent[] | undefined,
 		behavior: "steer" | "followUp",
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
-		const origin = inputOriginOf(options?.source);
 		const hold = this.externalAdmission.beginInput();
+		if (inputOriginOf(options?.source) === "person" && this._engineTurnHold.held)
+			return this._promptHeldQueuedInput(text, images, behavior, options, hold);
+		// The caller awaits the admission itself: the hold is released beside it, so holding the input adds no
+		// turns to a caller that queues several inputs before the run drains its steering queue.
+		const admitted = this._admitQueuedInput(text, images, behavior, options);
+		admitted.then(hold.end, hold.end);
+		return admitted;
+	}
+
+	private async _promptHeldQueuedInput(
+		text: string,
+		images: ImageContent[] | undefined,
+		behavior: "steer" | "followUp",
+		options: QueuedInputOptions | undefined,
+		hold: InputHold,
+	): Promise<QueuedInputDisposition> {
 		try {
-			if (origin === "person" && this._engineTurnHold.held) {
-				await this.prompt(text, {
-					...options,
-					images,
-					streamingBehavior: behavior,
-					humanInputReported: true,
-					promptDisposition: (disposition) => {
-						if (disposition !== "started") hold.accepted();
-					},
-					onTurnAdmitted: () => hold.accepted(),
-				});
-				return "queued";
-			}
-			return await this._admitQueuedInput(text, images, behavior, options);
+			await this.prompt(text, {
+				...options,
+				images,
+				streamingBehavior: behavior,
+				humanInputReported: true,
+				promptDisposition: (disposition) => {
+					if (disposition !== "started") hold.accepted();
+				},
+				onTurnAdmitted: () => hold.accepted(),
+			});
+			return "queued";
 		} finally {
 			hold.end();
 		}

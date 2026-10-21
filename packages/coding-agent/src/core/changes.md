@@ -1,3 +1,21 @@
+## 2026-10-21 - Hold queued input without delaying its caller (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts` `_queueUserInput` returns the queued admission's own promise and releases the lifecycle input hold beside it. A person's input on a held session still delegates to `prompt()` and keeps the hold until the turn is admitted.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`: awaiting the admission inside a `try`/`finally` added microtask hops before `followUp()` or `steer()` settled. A caller that queues several inputs in sequence (the TUI compaction-queue transfer) then queued a steer after the started run had drained its steering queue, so the steer ran as an extra provider turn instead of joining the first.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`: queued-input admission and the engine's external-admission holds are core.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: `_queueUserInput`, `_promptHeldQueuedInput` and `_admitQueuedInput`.
+
 ## 2026-10-21 - Keep abandoned branches out of the compacted mirror (senpi#3864)
 
 ### What changed
