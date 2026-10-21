@@ -37,6 +37,8 @@ export interface TurnEndLivenessInput {
 	readonly isChildSession: boolean;
 	readonly mode: ExtensionMode;
 	readonly endedBy: TurnEndKind;
+	/** An active hold-ledger kind: every engine-originated wake is held until input or resume_session. */
+	readonly ledgerHold: HoldLedgerKind | undefined;
 	/** The core will retry or fall back after this end (`AgentEndEvent.willRetry`). */
 	readonly willRetry: boolean;
 	/** A turn-deadline stop is never auto-continued; it waits for user input. */
@@ -53,7 +55,16 @@ export interface TurnEndLivenessInput {
 	readonly providerRetryAtMs: number | undefined;
 }
 
-export type HeldReason = "user-abort" | "child-session" | "non-interactive" | "deadline-stop" | "goal-stopped";
+/** An active kind in the session hold ledger (senpi#3860 owns `unattended`; #3811 adds the rest). */
+export type HoldLedgerKind = "unattended" | "session_hold" | "run_fence" | "inherited_hold";
+
+export type HeldReason =
+	| HoldLedgerKind
+	| "user-abort"
+	| "child-session"
+	| "non-interactive"
+	| "deadline-stop"
+	| "goal-stopped";
 
 export type StalledReason = "budget" | "provider-error" | "aborted" | "no-wake";
 
@@ -120,12 +131,18 @@ export interface TurnEndRule {
 
 /**
  * The whole decision, as one ordered table: the first matching row decides. Every input matches a row (the last
- * row has no condition). Rows 1-2 report a turn that will start; 3 a run that exits; 4 a wake that will deliver a
- * turn (with the stop reason, when one applies, as `heldBy`); 5 a stop that waits for a person; 6-9 open work that
- * nothing will bring back; 10 a completed turn with nothing open.
+ * row has no condition). A retry is part of the run in flight; an active hold-ledger kind then holds every
+ * engine-originated wake (child, monitor, goal) until input or resume_session; then a queued continuation; a run
+ * that exits; a wake that will deliver a turn (with the stop reason, when one applies, as `heldBy`); a stop that
+ * waits for a person; open work that nothing will bring back; and a completed turn with nothing open.
  */
 export const TURN_END_RULES: readonly TurnEndRule[] = [
 	{ id: "retry", when: (i) => i.willRetry, verdict: () => ({ kind: "continuing", via: "retry" }) },
+	{
+		id: "ledger-hold",
+		when: (i) => i.ledgerHold !== undefined,
+		verdict: (i) => ({ kind: "held", reason: i.ledgerHold ?? "unattended" }),
+	},
 	{
 		id: "continuation-queued",
 		when: (i) => i.continuationQueued !== undefined,

@@ -11,13 +11,15 @@ import {
 	type TurnEndLivenessVerdict,
 	type WakeExpectation,
 } from "../../src/core/extensions/builtin/goal/turn-end-liveness.ts";
-import type { AgentEndEvent, ExtensionMode } from "../../src/core/extensions/types.ts";
+import { collectTurnEndLivenessInput } from "../../src/core/extensions/builtin/goal/turn-end-liveness-report.ts";
+import type { AgentEndEvent, ExtensionContext, ExtensionMode } from "../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
 
 function input(overrides: Partial<TurnEndLivenessInput> = {}): TurnEndLivenessInput {
 	return {
 		isChildSession: false,
 		mode: "tui",
+		ledgerHold: undefined,
 		endedBy: "clean",
 		willRetry: false,
 		deadlineStop: false,
@@ -51,6 +53,36 @@ const ROWS: ReadonlyArray<readonly [string, string, Partial<TurnEndLivenessInput
 		"the core retries a system abort",
 		{ endedBy: "system-abort", willRetry: true, deadlineStop: true },
 		{ kind: "continuing", via: "retry" },
+	],
+	[
+		"ledger-hold",
+		"an unattended session with a running child: the ledger holds every engine wake",
+		{ ledgerHold: "unattended", expectations: [CHILD, MONITOR] },
+		{ kind: "held", reason: "unattended" },
+	],
+	[
+		"ledger-hold",
+		"an unattended session whose goal queued a continuation",
+		{ ledgerHold: "unattended", continuationQueued: "goal" },
+		{ kind: "held", reason: "unattended" },
+	],
+	[
+		"ledger-hold",
+		"a session hold with a monitor and a stall",
+		{ ledgerHold: "session_hold", endedBy: "provider-error", expectations: [MONITOR] },
+		{ kind: "held", reason: "session_hold" },
+	],
+	[
+		"ledger-hold",
+		"a run fence after a system abort",
+		{ ledgerHold: "run_fence", endedBy: "system-abort", openWork: { kind: "none" } },
+		{ kind: "held", reason: "run_fence" },
+	],
+	[
+		"ledger-hold",
+		"an inherited hold in a child session",
+		{ ledgerHold: "inherited_hold", isChildSession: true, expectations: [QUEUED] },
+		{ kind: "held", reason: "inherited_hold" },
 	],
 	[
 		"continuation-queued",
@@ -205,6 +237,7 @@ describe("TURN_END_RULES invariants over every stop x hold x open work x wake x 
 		{ isChildSession: true },
 		{ budgetSpent: true },
 		{ mode: "print" as ExtensionMode },
+		{ ledgerHold: "unattended" },
 	];
 	const works: ReadonlyArray<TurnEndLivenessInput["openWork"]> = [
 		{ kind: "none" },
@@ -239,9 +272,16 @@ describe("TURN_END_RULES invariants over every stop x hold x open work x wake x 
 		}
 	});
 
+	it("holds every engine wake while the hold ledger is active, unless the run in flight retries", () => {
+		for (const case_ of cases) {
+			if (case_.ledgerHold === undefined || case_.willRetry) continue;
+			expect(evaluateTurnEndLiveness(case_)).toEqual({ kind: "held", reason: case_.ledgerHold });
+		}
+	});
+
 	it("reports continuing exactly when a turn will start from a retry or a queued continuation", () => {
 		for (const case_ of cases) {
-			const starting = case_.willRetry || case_.continuationQueued !== undefined;
+			const starting = case_.willRetry || (case_.continuationQueued !== undefined && case_.ledgerHold === undefined);
 			expect(evaluateTurnEndLiveness(case_).kind === "continuing").toBe(starting);
 		}
 	});
@@ -259,7 +299,12 @@ describe("TURN_END_RULES invariants over every stop x hold x open work x wake x 
 	it("never calls a run that exits waiting, and holds or stalls when nothing will deliver", () => {
 		for (const case_ of cases) {
 			const verdict = evaluateTurnEndLiveness(case_);
-			if (case_.mode === "print" && !case_.willRetry && case_.continuationQueued === undefined) {
+			if (
+				case_.mode === "print" &&
+				!case_.willRetry &&
+				case_.continuationQueued === undefined &&
+				case_.ledgerHold === undefined
+			) {
 				expect(verdict).toEqual({ kind: "held", reason: "non-interactive" });
 			}
 			const nothingDelivers =
@@ -330,5 +375,32 @@ describe("repeatsLastStall (#3863)", () => {
 		expect(repeatsLastStall([stall({ reason: "no-wake" }), userMessage], verdict)).toBe(false);
 		expect(repeatsLastStall([stall({ reason: "budget" })], verdict)).toBe(false);
 		expect(repeatsLastStall([], verdict)).toBe(false);
+	});
+});
+
+describe("collectTurnEndLivenessInput reads the hold ledger (#3863, senpi#3860)", () => {
+	const monitor = {
+		liveWakeSources: () => ["senpi-task"],
+		scheduledContinuation: () => undefined,
+		hasStagedRecovery: () => false,
+	};
+	const event: AgentEndEvent = { type: "agent_end", messages: [fauxAssistantMessage("done")], willRetry: false };
+	const ctxWith = (extra: object): ExtensionContext =>
+		({
+			mode: "tui",
+			hasPendingMessages: () => false,
+			sessionManager: { getBranch: () => [], getHeader: () => undefined, getSessionId: () => "s" },
+			...extra,
+		}) as unknown as ExtensionContext;
+	const state = { goal: null, todoOutcome: undefined, deadlineStop: false, continuationPending: false, monitor };
+
+	it.each([
+		["an engine without the ledger", {}, undefined],
+		["a released ledger", { engineTurnsHeld: (): boolean => false }, undefined],
+		["an active ledger", { engineTurnsHeld: (): boolean => true }, "unattended"],
+	] as const)("maps %s to ledgerHold %s", (_label, extra, ledgerHold) => {
+		const collected = collectTurnEndLivenessInput(ctxWith(extra), event, state);
+		expect(collected.ledgerHold).toBe(ledgerHold);
+		expect(evaluateTurnEndLiveness(collected).kind).toBe(ledgerHold === undefined ? "waiting" : "held");
 	});
 });

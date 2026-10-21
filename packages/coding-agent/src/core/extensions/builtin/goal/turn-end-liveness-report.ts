@@ -30,6 +30,13 @@ export interface TurnEndLivenessState {
 	>;
 }
 
+/** senpi#3860's hold ledger, when the engine exposes it: true while every engine-originated wake is held. */
+function engineTurnsHeld(ctx: ExtensionContext): boolean {
+	if (!("engineTurnsHeld" in ctx)) return false;
+	const probe = ctx.engineTurnsHeld;
+	return typeof probe === "function" && probe.call(ctx) === true;
+}
+
 /** Builds the decision input from session state; shared with lifecycle consumers so there is one collector. */
 export function collectTurnEndLivenessInput(
 	ctx: ExtensionContext,
@@ -55,6 +62,7 @@ export function collectTurnEndLivenessInput(
 	return {
 		isChildSession: ctx.sessionManager.getHeader?.()?.parentSession !== undefined,
 		mode: ctx.mode,
+		ledgerHold: engineTurnsHeld(ctx) ? "unattended" : undefined,
 		endedBy: classifyTurnEnd(event),
 		willRetry: event.willRetry === true,
 		deadlineStop: state.deadlineStop,
