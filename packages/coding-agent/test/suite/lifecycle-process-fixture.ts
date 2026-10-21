@@ -40,7 +40,6 @@ registry.registerProvider(model.provider, {
 		maxTokens: item.maxTokens,
 	})),
 });
-let effectFinished = false;
 const resultWritten = Promise.withResolvers<void>();
 const done = Promise.withResolvers<void>();
 const agent = new Agent({
@@ -48,18 +47,6 @@ const agent = new Agent({
 	getApiKey: () => "faux-key",
 	streamFn: streamSimple,
 	convertToLlm,
-	onPayload: async (payload) => {
-		if (phase === "before-tool") {
-			emit("checkpoint");
-			await stopped;
-		}
-		if (phase === "after-result" && effectFinished) {
-			await resultWritten.promise;
-			emit("checkpoint");
-			await stopped;
-		}
-		return payload;
-	},
 });
 const session = new AgentSession({
 	agent,
@@ -78,7 +65,6 @@ const session = new AgentSession({
 			parameters: Type.Object({}),
 			execute: async () => {
 				appendFileSync(join(cwd, "effects"), "effect\n");
-				effectFinished = true;
 				if (phase === "after-effect") {
 					emit("checkpoint");
 					await stopped;
@@ -104,9 +90,24 @@ faux.setResponses(
 	phase === "after-effect" || phase === "after-result"
 		? [
 				fauxAssistantMessage([fauxToolCall("effect", {})], { stopReason: "toolUse" }),
-				fauxAssistantMessage("Effect incorporated."),
+				async () => {
+					if (phase === "after-result") {
+						await resultWritten.promise;
+						emit("checkpoint");
+						await stopped;
+					}
+					return fauxAssistantMessage("Effect incorporated.");
+				},
 			]
-		: [fauxAssistantMessage("Result incorporated.")],
+		: [
+				async () => {
+					if (phase === "before-tool") {
+						emit("checkpoint");
+						await stopped;
+					}
+					return fauxAssistantMessage("Result incorporated.");
+				},
+			],
 );
 const custody = new Map<string, { state: string }>();
 for (const entry of manager.getEntries()) {
