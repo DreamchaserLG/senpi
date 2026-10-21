@@ -112,6 +112,7 @@ it("gives two stalls in the same epoch different occurrence identities", async (
 
 it("ignores heldBy-style stop explanations when an independent child wake still owns work", async () => {
 	const { controller } = await subject();
+	controller.obligations.syncSource("senpi-task", "children", 1);
 	controller.goalFacts(
 		null,
 		input({
