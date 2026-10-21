@@ -1,3 +1,21 @@
+## 2026-10-21 - Keep asynchronous answer attribution on the question seam (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` leaves answer delivery options unchanged after releasing the engine-owned question-input capability.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the release already reports a human answer synchronously. Tagging the subsequent extension message as another human input duplicated attribution and broke the established answer delivery contract.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: this builtin is the canonical answer sender for every question surface.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: `deliverAnswer` delivery options.
+
 ## 2026-10-21 - Declare lifecycle wake-source obligation kinds (senpi#3864)
 
 ### What changed
