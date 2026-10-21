@@ -371,7 +371,7 @@ function hasNewerMaterial(candidate: CredentialSlot, stored: CredentialSlot): bo
 export function appendLoginSlot(
 	current: PooledCredential | undefined,
 	flat: Credential,
-	onAllocated?: (name: string, origin: "generated" | "provider") => void,
+	onAllocated?: (name: string, origin: "generated" | "provider" | "refreshed") => void,
 	targetName?: string,
 ): Credential {
 	const provided = providedSlots(flat);
@@ -406,30 +406,56 @@ export function appendLoginSlot(
 }
 
 /**
- * Writes a login's material into the named slot, REPLACING that slot whole (fresh tokens, no stale fields), or
- * adds it under that name when the pool has no such slot. Account blocks live in the pool state keyed by the slot's
- * credential revision, so new material makes the old block inapplicable: the account is usable again.
+ * Writes a login's material into the named slot, or adds it under that name when the pool has no such slot. A
+ * refresh replaces ONLY the credential material (key / access / refresh / expires): the account's identity, its
+ * user-owned `displayName`, its `source`, and its provider settings (`env`, unless the new login carries its own)
+ * stay, so "Office laptop" is still "Office laptop" after Reconnect (#3861 review). Account blocks live in the pool
+ * state keyed by the slot's credential revision, so new material makes the old block inapplicable: usable again.
  */
 function writeTargetSlot(
 	current: PooledCredential | undefined,
 	flat: Credential,
 	targetName: string,
-	onAllocated?: (name: string, origin: "generated" | "provider") => void,
+	onAllocated?: (name: string, origin: "generated" | "provider" | "refreshed") => void,
 ): PooledCredential {
 	assertValidSlotName(targetName);
-	const slot = slotFromFlatCredentialNamed(flat, targetName);
+	const fresh = slotFromFlatCredentialNamed(flat, targetName);
 	if (!current) {
 		onAllocated?.(targetName, "generated");
-		return upsertSlot(undefined, slot);
+		return upsertSlot(undefined, fresh);
 	}
 	const existing = listSlots(current);
 	const replaced = existing.find((candidate) => candidate.name === targetName);
+	const slot: CredentialSlot =
+		replaced === undefined
+			? fresh
+			: {
+					name: targetName,
+					...(replaced.displayName === undefined ? {} : { displayName: replaced.displayName }),
+					...(replaced.source === undefined ? {} : { source: replaced.source }),
+					...credentialMaterial(fresh),
+					...(fresh.env !== undefined
+						? { env: fresh.env }
+						: replaced.env !== undefined
+							? { env: replaced.env }
+							: {}),
+				};
 	const accounts = replaced
 		? existing.map((candidate) => (candidate.name === targetName ? slot : candidate))
 		: [...existing, slot];
 	const reprojected = replaced && slotMirrorsFlat(current, replaced) ? projectFlatFields(current, slot) : current;
-	onAllocated?.(targetName, "generated");
+	onAllocated?.(targetName, replaced ? "refreshed" : "generated");
 	return { ...reprojected, accounts };
+}
+
+/** Only the credential material of a slot: what a fresh login replaces. */
+function credentialMaterial(slot: CredentialSlot): Pick<CredentialSlot, "key" | "access" | "refresh" | "expires"> {
+	return {
+		...(slot.key === undefined ? {} : { key: slot.key }),
+		...(slot.access === undefined ? {} : { access: slot.access }),
+		...(slot.refresh === undefined ? {} : { refresh: slot.refresh }),
+		...(slot.expires === undefined ? {} : { expires: slot.expires }),
+	};
 }
 
 /**

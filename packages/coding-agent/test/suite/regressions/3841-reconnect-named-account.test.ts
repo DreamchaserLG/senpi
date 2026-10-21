@@ -115,3 +115,45 @@ describe("Reconnect re-authenticates the saved account in place (senpi#3841)", (
 		expect(listSlots(storage.get(id) as PooledCredential).map((slot) => slot.name)).toEqual(["office", "owen"]);
 	});
 });
+
+describe("Reconnect keeps the account's own metadata (senpi#3861 review)", () => {
+	test.each(oauthProviderIds)(
+		"%s: only the credential material changes; display name, source and settings stay",
+		async (id) => {
+			const storage = AuthStorage.inMemory({
+				[id]: {
+					type: "oauth",
+					access: "office-old-access",
+					refresh: "office-old-refresh",
+					expires: 1_000,
+					accounts: [
+						{
+							name: "office",
+							displayName: "Office laptop",
+							source: "import",
+							access: "office-old-access",
+							refresh: "office-old-refresh",
+							expires: 1_000,
+							env: { REGION: "cn" },
+						},
+						{ name: "owen", source: "login", access: "owen-access", refresh: "owen-refresh", expires: 2_000 },
+					],
+				} satisfies PooledCredential,
+			});
+			storage.registerOAuthProvider(id, freshLogin());
+
+			await storage.login(id, callbacks, { accountName: "office" });
+
+			const office = listSlots(storage.get(id) as PooledCredential).find((slot) => slot.name === "office");
+			expect(office).toEqual({
+				name: "office",
+				displayName: "Office laptop",
+				source: "import",
+				access: "office-new-access",
+				refresh: "office-new-refresh",
+				expires: 9_000,
+				env: { REGION: "cn" },
+			});
+		},
+	);
+});

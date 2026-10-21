@@ -158,7 +158,8 @@ export type AuthEvent =
 export interface AccountLoginReceipt {
 	readonly providerId: string;
 	readonly name: string;
-	readonly origin: "generated" | "provider";
+	/** `refreshed`: an existing named account got fresh credentials in place (Reconnect). */
+	readonly origin: "generated" | "provider" | "refreshed";
 }
 
 /**

@@ -929,7 +929,9 @@ export function createRpcConnectionHandler(
 		activeLogins.set(provider, controller);
 
 		try {
-			await session.modelRegistry.authStorage.login(
+			// The account name is a third argument only when the client named one, so an unnamed login keeps the
+			// two-argument call every caller and test of `login(provider, callbacks)` relies on (#3861 review).
+			const loginArgs: [OAuthProviderId, Parameters<typeof session.modelRegistry.authStorage.login>[1]] = [
 				provider as OAuthProviderId,
 				{
 					onAuth: (info) => {
@@ -942,8 +944,9 @@ export function createRpcConnectionHandler(
 					onProgress: () => {},
 					signal: controller.signal,
 				},
-				accountName === undefined ? undefined : { accountName },
-			);
+			];
+			if (accountName === undefined) await session.modelRegistry.authStorage.login(...loginArgs);
+			else await session.modelRegistry.authStorage.login(...loginArgs, { accountName });
 			session.modelRegistry.refresh();
 			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
 			outputEvent({ type: "auth_login_end", provider, success: true });
