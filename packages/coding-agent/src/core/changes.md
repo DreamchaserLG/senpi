@@ -10,17 +10,19 @@
 
 `agent-session.ts` exposes an internal `admitHumanAnswer` adapter for validated replies that resume an existing turn. It uses the supplied human-admission hook and the existing input hold, so synchronous UI answers invalidate self-settle without requiring a second turn.
 
+`packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/agent-session-runtime.ts`, `packages/coding-agent/src/core/external-admission.ts` and `packages/coding-agent/src/core/session-manager.ts` carry the lifecycle runtime bindings, spawn profile, input-custody fact and durable session records respectively.
+
 ### Why
 
-Turn settlement alone does not mean that child results, queued wakes, timers or user-input preparation have finished. A root must not publish Done while that work is still owed, and restart cannot safely replay work the model may already have acted on.
+`packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/agent-session-runtime.ts`, `packages/coding-agent/src/core/external-admission.ts` and `packages/coding-agent/src/core/session-manager.ts`: turn settlement alone does not mean that child results, queued wakes, timers or user-input preparation have finished. A root must not publish Done while that work is still owed, and restart cannot safely replay work the model may already have acted on.
 
 ### Why an extension could not handle it
 
-Native model-context consumption, input admission, JSONL writes, the restore barrier and shared client state are engine-owned.
+`packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/agent-session-runtime.ts`, `packages/coding-agent/src/core/external-admission.ts` and `packages/coding-agent/src/core/session-manager.ts`: native model-context consumption, input admission, JSONL writes, the restore barrier and shared client state are engine-owned.
 
 ### Expected merge conflict zones
 
-`agent-session.ts`: native event subscription, settled/idle processing, prompt disposition/admission, `sendCustomMessage`, extension binding and disposal. `session-manager.ts`: header creation and synchronous persistence. Coordinate the held-notice ID wrapper with #3860 and preserve #3873's exactly-once hook.
+`packages/coding-agent/src/core/agent-session.ts`: native event subscription, settled/idle processing, prompt disposition/admission, `sendCustomMessage`, extension binding and disposal. `packages/coding-agent/src/core/session-manager.ts`: header creation and synchronous persistence. `packages/coding-agent/src/core/agent-session-runtime.ts`: immutable launch profile. `packages/coding-agent/src/core/external-admission.ts`: input hold ownership. Coordinate the held-notice ID wrapper with #3860 and preserve #3873's exactly-once hook.
 
 ## 2026-10-21 - Human-input seam: who typed an input (senpi#3811)
 

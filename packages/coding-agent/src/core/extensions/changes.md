@@ -21,19 +21,19 @@
 
 ### What changed
 
-`types.ts`, `loader.ts`, `runner.ts` and `index.ts` expose `pi.lifecycle.obligations`, generation-fenced `reportChild`, `markRunCompleted` and the `sendMessage` ticket option. The runner's existing UI-prompt tracker supplies stable TUI attention identity and lifecycle open/close notifications.
+`packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/loader.ts`, `packages/coding-agent/src/core/extensions/runner.ts` and `packages/coding-agent/src/core/extensions/index.ts` expose `pi.lifecycle.obligations`, generation-fenced `reportChild`, `markRunCompleted` and the `sendMessage` ticket option. The runner's existing UI-prompt tracker supplies stable TUI attention identity and lifecycle open/close notifications.
 
 ### Why
 
-Producers must transfer custody before sending a result, and the engine must fold the runner's current child state without relying on a client UI.
+`packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/loader.ts`, `packages/coding-agent/src/core/extensions/runner.ts` and `packages/coding-agent/src/core/extensions/index.ts`: producers must transfer custody before sending a result, and the engine must fold the runner's current child state without relying on a client UI.
 
 ### Why an extension could not handle it
 
-The extension facade, native delivery boundary and TUI request tracker are core bindings.
+`packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/loader.ts`, `packages/coding-agent/src/core/extensions/runner.ts` and `packages/coding-agent/src/core/extensions/index.ts`: the extension facade, native delivery boundary and TUI request tracker are core bindings.
 
 ### Expected merge conflict zones
 
-`types.ts`: ExtensionAPI, ExtensionActions and sendMessage options. `loader.ts`: runtime facade. `runner.ts`: bindCore and withUIPrompt.
+`packages/coding-agent/src/core/extensions/types.ts`: ExtensionAPI, ExtensionActions and sendMessage options. `packages/coding-agent/src/core/extensions/loader.ts`: runtime facade. `packages/coding-agent/src/core/extensions/runner.ts`: bindCore and withUIPrompt. `packages/coding-agent/src/core/extensions/index.ts`: public type exports.
 
 ## 2026-10-21 - Expose held-wake source admission and release (senpi#3853)
 

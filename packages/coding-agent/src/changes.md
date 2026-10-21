@@ -6,11 +6,11 @@
 
 ### Why
 
-RPC clients and extension producers need the engine's named contract rather than separate copies.
+`packages/coding-agent/src/index.ts`: RPC clients and extension producers need the engine's named contract rather than separate copies.
 
 ### Why an extension could not handle it
 
-The package's public entry point and its declarations belong to the engine.
+`packages/coding-agent/src/index.ts`: the package's public entry point and its declarations belong to the engine.
 
 ### Expected merge conflict zones
 
