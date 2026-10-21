@@ -1248,6 +1248,7 @@ export class AgentSession {
 	private _admissionIdleWaiters: Array<() => void> = [];
 	/** User-abort generation at the start of an idle trigger turn's awaited admission hooks. */
 	private _triggerTurnAdmissionAbortGeneration: number | undefined;
+	private _pendingCustomTurnHeaders = 0;
 	private _engineTurnStarts: EngineTurnStartRecord[] = [];
 	private _engineResumeWindow: boolean;
 	private readonly _engineTurnHold: EngineTurnHold;
@@ -6277,7 +6278,13 @@ export class AgentSession {
 		}
 		onQueued?.();
 		try {
-			await this.sessionManager.persistHeaderNow();
+			const startsTurn = options?.triggerTurn === true && !this.isStreaming;
+			if (startsTurn) this._pendingCustomTurnHeaders++;
+			try {
+				await this.sessionManager.persistHeaderNow();
+			} finally {
+				if (startsTurn) this._pendingCustomTurnHeaders--;
+			}
 			if (generation !== this._userAbortGeneration) {
 				if (ticket) this._retireLifecycleDelivery(ticket, options?.ticket !== undefined);
 				deferredTurnClaim?.resolve("finished-without-start");
@@ -7117,7 +7124,8 @@ export class AgentSession {
 		// Streaming aborts are carried by agent_end provenance; only gaps need session_abort.
 		const wasMidRun = this.isStreaming && this._retryAbortController === undefined;
 		const hadRetryBackoff = this._retryAbortController !== undefined;
-		const hasPendingTriggerTurnAdmission = this._triggerTurnAdmissionAbortGeneration === this._userAbortGeneration;
+		const hasPendingTriggerTurnAdmission =
+			this._pendingCustomTurnHeaders > 0 || this._triggerTurnAdmissionAbortGeneration === this._userAbortGeneration;
 		const hadCompactionOrPending =
 			!this.isStreaming && (this.isCompacting || this.pendingMessageCount > 0 || hasPendingTriggerTurnAdmission);
 		const hadClearedQueues = this._hadClearedQueuedMessages;

@@ -1,3 +1,21 @@
+## 2026-10-21 - Abort custom input during its header barrier (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts` counts idle trigger-turn admissions awaiting the session-header barrier. Abort recognizes that pending input before the later before-agent-start hook begins.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`: lifecycle ticket ownership is established before awaiting the header, but abort previously recognized only the later hook window. Esc during the new gap saw an idle session, did not advance the abort generation, and admitted a ghost turn instead of retiring the ticket. The existing retired-delivery regression covers both engine-owned and explicit producer tickets.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`: the header barrier and abort generation are engine-owned admission boundaries.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: `sendCustomMessage` header wait and `_abortWithProvenance` pending-admission check.
+
 ## 2026-10-21 - Keep lifecycle delivery lookup off full-history views (senpi#3864)
 
 ### What changed
