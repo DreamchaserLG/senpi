@@ -2997,9 +2997,6 @@ export class AgentSession {
 		}
 		if (settlementEpoch !== this._settlementEpoch) return;
 		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
-		await this._lifecycleBinding.refreshFacts();
-		if (settlementEpoch !== this._settlementEpoch || this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork)
-			return;
 		if (settledRepetitiveTurnPause(this.sessionManager.getBranch())) {
 			try {
 				this._emitEntryAppended(
@@ -3566,8 +3563,6 @@ export class AgentSession {
 			this._extensionEventSignal = undefined;
 		}
 		if (event.type === "agent_end" && this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
-		if (event.type === "agent_start") await this._lifecycleBinding.refreshFacts();
-
 		// Notify all listeners
 		const sessionEvent =
 			event.type === "agent_end"

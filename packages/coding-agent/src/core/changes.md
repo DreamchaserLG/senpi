@@ -1,3 +1,21 @@
+## 2026-10-21 - Preserve native event and idle ordering (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts` does not wait for goal-store I/O before forwarding `agent_start` or before emitting `agent_idle`. The lifecycle binding still refreshes shared goal facts during `agent_end`, and fact-change subscriptions handle later changes.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`: additional asynchronous reads let the native provider outrun start observers and allowed idle waiters, abort receipts and session release to finish before the idle event.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`: only the core owns native event dispatch and the settled-to-idle boundary.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: `_processAgentEvent` and `_emitAgentIdleAfterDeferredTurns`.
+
 ## 2026-10-21 - Avoid lifecycle-only writes before any work (senpi#3864)
 
 ### What changed
