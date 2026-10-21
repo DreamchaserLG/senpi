@@ -1,3 +1,21 @@
+## 2026-10-21 - interactive_user connection role (senpi#3811)
+
+### What changed
+
+`connection-handler.ts` binds a connection's `interactive_user` capability at its first `set_client_info` declaration (a later change is refused with `connection_role_fixed`) and passes it to `client-input-handler.ts`, which marks that connection's `prompt`/`steer`/`follow_up` as `humanOrigin`. `custom-capability.ts` exports `INTERACTIVE_USER_CAPABILITY`.
+
+### Why
+
+Only input a person typed may count as human input; bots, scripts and task runners use connections without the role.
+
+### Why an extension could not handle it
+
+Connection capabilities and input admission are core RPC.
+
+### Expected merge conflict zones
+
+The `set_client_info` case and the `handleClientInput` calls in `connection-handler.ts`; the `InputOutput` type and both `source: "rpc"` sites in `client-input-handler.ts`.
+
 ## 2026-10-21 - Admit Resume promptly and preserve park context patches (senpi#3853)
 
 ### What changed

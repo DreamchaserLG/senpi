@@ -1039,6 +1039,12 @@ export type ClearedQueue = {
 };
 
 /** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
+/** A human input about to be queued or admitted (senpi#3811 design 4.4). */
+export interface HumanInputAdmittedEvent {
+	readonly kind: "prompt" | "steer" | "follow_up" | "answer" | "resume";
+	readonly at: number;
+}
+
 export interface QueuedInputOptions extends ClientMessageIdentity {
 	/**
 	 * Recovery-ordered enqueue position. A reconnecting client replays its pending
@@ -1047,11 +1053,15 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	enqueueOrder?: number;
 	/** Input provenance reported to `input` extension handlers; defaults to "interactive". */
 	source?: InputSource;
+	/** An RPC input from a connection that declared `interactive_user`: a human typed it. */
+	humanOrigin?: boolean;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
 }
 
 export interface PromptOptions extends ClientMessageIdentity {
+	/** An RPC input from a connection that declared `interactive_user`: a human typed it. */
+	humanOrigin?: boolean;
 	/** Where the input sorts among queued inputs if it ends up queued (a replaying client keeps its order). */
 	enqueueOrder?: number;
 	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
@@ -1179,6 +1189,17 @@ type SummarizationRequestAuth = {
 	thinkingLevel: ThinkingLevel;
 };
 
+function isHumanInput(options: { source?: InputSource; humanOrigin?: boolean } | undefined): boolean {
+	const source = options?.source ?? "interactive";
+	return source === "interactive" || (source === "rpc" && options?.humanOrigin === true);
+}
+
+function promptKind(options: PromptOptions | undefined): HumanInputAdmittedEvent["kind"] {
+	if (options?.streamingBehavior === "steer") return "steer";
+	if (options?.streamingBehavior === "followUp") return "follow_up";
+	return "prompt";
+}
+
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
@@ -1225,6 +1246,7 @@ export class AgentSession {
 	private readonly _engineTurnHold: EngineTurnHold;
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
+	private readonly _humanInputListeners = new Set<(event: HumanInputAdmittedEvent) => void>();
 	private _engineTurnPauseRecorded = false;
 	// The pause warning is shown once per pause: a stream of refused events would otherwise add one line each (senpi#2537).
 	private _engineTurnPauseNotified = false;
@@ -5154,6 +5176,7 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		if (isHumanInput(options)) this._humanInputAdmitted(promptKind(options));
 		// Held synchronously, before any await: an external delivery never overtakes this input.
 		const hold = this.externalAdmission.beginInput({
 			command: this._isExtensionCommandText(text, options),
@@ -5940,6 +5963,7 @@ export class AgentSession {
 	 * @throws Error if text is an extension command
 	 */
 	async steer(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<QueuedInputDisposition> {
+		if (isHumanInput(options)) this._humanInputAdmitted("steer");
 		return this._queueUserInput(text, images, "steer", options);
 	}
 
@@ -5957,6 +5981,7 @@ export class AgentSession {
 		images?: ImageContent[],
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
+		if (isHumanInput(options)) this._humanInputAdmitted("follow_up");
 		return this._queueUserInput(text, images, "followUp", options);
 	}
 
@@ -6309,7 +6334,30 @@ export class AgentSession {
 	}
 
 	/** Explicit user Resume; attachment alone must never call this. */
+	/**
+	 * Subscribe to human input as it enters the session: called synchronously, before the input is queued or
+	 * admitted, for TUI input, `interactive_user` RPC prompt/steer/follow_up, human question answers and
+	 * `resumeSession`. Never called for automatic deliveries (extension messages, wakes, continuations, input from
+	 * a connection without the role). A throwing listener does not block the input.
+	 */
+	onHumanInputAdmitted(listener: (event: HumanInputAdmittedEvent) => void): () => void {
+		this._humanInputListeners.add(listener);
+		return () => this._humanInputListeners.delete(listener);
+	}
+
+	private _humanInputAdmitted(kind: HumanInputAdmittedEvent["kind"]): void {
+		const event = { kind, at: Date.now() };
+		for (const listener of this._humanInputListeners) {
+			try {
+				listener(event);
+			} catch (error) {
+				this._sessionLogger.warn("human_input_listener_failed", { error: String(error) });
+			}
+		}
+	}
+
 	resumeSession(): Promise<void> {
+		this._humanInputAdmitted("resume");
 		return this._engineTurnRelease.resume(
 			this._engineTurnHold,
 			async (message, admit) => {
@@ -10038,6 +10086,7 @@ export class AgentSession {
 				engineTurnsHeld: () => this._engineTurnHold.holdsSource("goal"),
 				noteHeldWake: (source) => this._engineTurnHold.note(source),
 				questionInput: () => {
+					this._humanInputAdmitted("answer");
 					this._engineTurnInput.begin();
 					this._engineResumeWindow = false;
 				},

@@ -24,6 +24,8 @@ type PromptPathOptions = Pick<
 type InputOutput = {
 	readonly output: (record: object) => void;
 	readonly promptCalls: Set<Promise<unknown>>;
+	/** The connection declared `interactive_user`: its input is human input. */
+	readonly humanOrigin?: boolean;
 };
 
 /** The same admission path serves classic stdio, shared sessions, and worker sessions. */
@@ -64,6 +66,7 @@ export async function handleClientInput(
 							images: command.images,
 							...options,
 							source: "rpc",
+							humanOrigin: io.humanOrigin === true,
 							onQueuedInput: hooks.queued,
 							promptDisposition: (next) => {
 								disposition = next;
@@ -114,6 +117,7 @@ export async function handleClientInput(
 							...clientMessageIdentity(hooks.identity),
 							enqueueOrder: command.enqueueOrder,
 							source: "rpc" as const,
+							humanOrigin: io.humanOrigin === true,
 							onQueuedInput: hooks.queued,
 						};
 						disposition =

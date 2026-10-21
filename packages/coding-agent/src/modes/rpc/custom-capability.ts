@@ -52,6 +52,8 @@ export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
  * no other connection will still see it attached (senpi#3238).
  */
 export const DETACH_CONNECTION_CAPABILITY = "detach_connection";
+/** The connection speaks for a human: its input is human input (senpi#3811). Fixed at first declaration. */
+export const INTERACTIVE_USER_CAPABILITY = "interactive_user";
 
 /**
  * HOST capability: this host accepts `open_session.context`, hands it to that session's

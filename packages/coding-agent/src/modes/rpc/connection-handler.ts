@@ -76,6 +76,7 @@ import {
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
 	EVAL_CELLS_CAPABILITY,
 	EXTENSION_EVENTS_CAPABILITY,
+	INTERACTIVE_USER_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	QUESTION_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
@@ -325,6 +326,8 @@ export function createRpcConnectionHandler(
 	options: RpcConnectionOptions = {},
 ): RpcConnectionHandler {
 	let clientCapabilities = options.capabilities;
+	// Bound to the connection at its first declaration; no later command can change who it speaks for.
+	let interactiveUser: boolean | undefined = options.capabilities?.includes(INTERACTIVE_USER_CAPABILITY);
 	const routingSessionId = options.sessionId;
 	// True only while THIS connection's own command drives a replacement; the issuer
 	// already learns the new identity from its command response.
@@ -1025,7 +1028,11 @@ export function createRpcConnectionHandler(
 
 			case "prompt": {
 				turnRequested = true;
-				const admission = handleClientInput(session, command, { output, promptCalls });
+				const admission = handleClientInput(session, command, {
+					output,
+					promptCalls,
+					humanOrigin: interactiveUser === true,
+				});
 				promptCalls.add(admission);
 				void admission.finally(() => promptCalls.delete(admission));
 				return undefined;
@@ -1095,7 +1102,7 @@ export function createRpcConnectionHandler(
 			case "steer":
 			case "follow_up": {
 				turnRequested = true;
-				await handleClientInput(session, command, { output, promptCalls });
+				await handleClientInput(session, command, { output, promptCalls, humanOrigin: interactiveUser === true });
 				return undefined;
 			}
 
@@ -1189,6 +1196,16 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "set_client_info":
+				if (command.capabilities !== undefined) {
+					const declares = command.capabilities.includes(INTERACTIVE_USER_CAPABILITY);
+					if (interactiveUser !== undefined && interactiveUser !== declares)
+						return error(
+							id,
+							"set_client_info",
+							"connection_role_fixed: interactive_user cannot change after it is declared",
+						);
+					interactiveUser = declares;
+				}
 				if (options.clientInfo && command.capabilities !== undefined) {
 					clientCapabilities = command.capabilities;
 					options.clientInfo.setCapabilities(options.clientInfo.connectionId(), command.capabilities);
