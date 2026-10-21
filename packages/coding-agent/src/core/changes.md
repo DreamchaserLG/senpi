@@ -2,6 +2,8 @@
 
 ### What changed
 
+`packages/coding-agent/src/core/session-activity.ts` retains child and background wake-source counts separately, defaulting untyped publishers to background. `packages/coding-agent/src/core/session-lifecycle.ts` lets a child's authoritative terminal task report outrank leftover local producer custody; root completion still waits for idle and zero obligations.
+
 `session-lifecycle*.ts` and `lifecycle-*.ts` collect live facts, apply precedence, persist epochs/revisions/attention identities and decide root self-settle at a work seal. `work-obligations.ts` persists custody through transfer, queued tickets, model-context consumption, idle settlement and held notices. Recovery does not replay a consumed result or an interrupted tool. `agent-session.ts` binds these to native message/idle edges, the supplied human-admission hook, real question/dialog registries and the shared hold ledger. `session-manager.ts` persists `spawnedBy` and durable lifecycle/custody/child entries before committing them in memory.
 
 `agent-session.ts` keeps the external input hold until the native turn owns a started input, rather than releasing it at preflight disposition. Queued-input preparation uses the same hold; `external-admission.ts` exposes its in-flight work to the common activity snapshot. Actual prompt admission reuses the existing human-origin classifier for epoch origin. No connection-role authority, Stop hold, run fence or new Resume command is added here.
