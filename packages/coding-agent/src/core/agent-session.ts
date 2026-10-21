@@ -6300,8 +6300,13 @@ export class AgentSession {
 				return;
 			}
 			await this._deliverCustomMessage(deliveryMessage, { ...options, ticket }, deferredTurnClaim, releasedWake);
-			if (ticket && generation !== this._userAbortGeneration)
-				this._retireLifecycleDelivery(ticket, options?.ticket !== undefined);
+			if (ticket && generation !== this._userAbortGeneration) {
+				const retainedForLater = [
+					...this.agent.peekQueuedMessages({ all: true }),
+					...this._pendingNextTurnMessages,
+				].some((queued) => queued.role === "custom" && messageTicket(queued) === ticket);
+				if (!retainedForLater) this._retireLifecycleDelivery(ticket, options?.ticket !== undefined);
+			}
 		} catch (error) {
 			if (ticket) obligations.failed(ticket);
 			throw error;

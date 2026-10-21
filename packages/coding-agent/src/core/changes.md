@@ -1,3 +1,21 @@
+## 2026-10-21 - Preserve intentionally requeued trigger custody after abort (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts` retains a delivery ticket when trigger-turn preflight intentionally restores its custom message to a native or next-turn queue after an abort.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`: the existing trigger-hook cancellation path queues its message for later without starting a provider turn. Lifecycle's outer abort-generation check then removed that message and cancelled its custody, overriding the established retention contract. The wrapper now retires only deliveries that were not retained by the inner path.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`: the engine owns trigger preflight, native queues, abort generation and durable delivery tickets.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: post-delivery abort-generation handling in `sendCustomMessage`. The earlier pre-header abort guard remains unchanged. The existing issue-1329 regression also checks that the retained message keeps queued custody.
+
 ## 2026-10-21 - Keep final provider admission synchronous (senpi#3864)
 
 ### What changed
