@@ -1,3 +1,21 @@
+## 2026-10-21 - Derive lifecycle run origin from human admission (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts` prepares lifecycle run origin from the lifecycle's pending human-admission report, before input custody is released. The existing input origin and answered-question queue tag remain unchanged.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`: a queue tag says how turn-end liveness treats an input, not whether a new human admission occurred. An asynchronous answer reports its revision once through question-input release; delivering the tagged answer must not manufacture another human admission or origin.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`: lifecycle run preparation and the human-admission hook are core boundaries.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: `_promptAgent` lifecycle preparation. Preserve #3865's input-origin and queued-person-input behavior.
+
 ## 2026-10-21 - Share the canonical turn-end provenance (senpi#3864)
 
 ### What changed

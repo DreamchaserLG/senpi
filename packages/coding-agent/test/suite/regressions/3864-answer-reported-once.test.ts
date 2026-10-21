@@ -1,7 +1,9 @@
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it } from "vitest";
 import type { HumanInputAdmittedEvent } from "../../../src/core/agent-session.ts";
-import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extensions/types.ts";
-import { releaseQuestionInput } from "../../../src/core/question-input.ts";
+import { deliverAnswer } from "../../../src/core/extensions/builtin/ask-user/tool.ts";
+import type { ExtensionAPI, ExtensionContext, QuestionRequest } from "../../../src/core/extensions/types.ts";
+import { nextSessionEvent } from "../lifecycle-test-harness.ts";
 import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
 
 // senpi#3864: a person's answer over RPC `extension_ui_response` is reported as human input exactly once.
@@ -21,10 +23,12 @@ const cases = [
 
 for (const testCase of cases) {
 	it(`reports ${testCase.name}'s RPC answer exactly once`, async () => {
+		let api: ExtensionAPI | undefined;
 		let context: ExtensionContext | undefined;
 		const fixture = await createIdentityHarness({
 			extensionFactories: [
 				(pi: ExtensionAPI) => {
+					api = pi;
 					pi.on("session_start", (_event, ctx) => {
 						context = ctx;
 					});
@@ -37,37 +41,43 @@ for (const testCase of cases) {
 		fixture.session.onHumanInputAdmitted((event) => seen.push(event.kind));
 		const client = fixture.bind();
 		const question = fixture.session.extensionRunner.createContext().ui.question;
-		if (!question || context === undefined) throw new Error("The RPC question UI must be bound");
+		if (!question || context === undefined || api === undefined) throw new Error("The RPC question UI must be bound");
+		const revision = fixture.session.lifecycle.humanInputRevision;
+		const questionRequest: QuestionRequest = {
+			requestId: "choice",
+			waitForAnswer: testCase.waitForAnswer,
+			timeoutMs: 60_000,
+			questions: [
+				{
+					id: "choice",
+					header: "Choice",
+					question: "Ship it?",
+					options: [{ label: "Yes", description: "Ship" }],
+					multiSelect: false,
+				},
+			],
+		};
 		const frame = client.waitFor(
 			(record) => record.type === "extension_ui_request" && record.method === "question",
 			10_000,
 		);
 
-		const answered = question(
-			{
-				requestId: "choice",
-				waitForAnswer: testCase.waitForAnswer,
-				timeoutMs: 60_000,
-				questions: [
-					{
-						id: "choice",
-						header: "Choice",
-						question: "Ship it?",
-						options: [{ label: "Yes", description: "Ship" }],
-						multiSelect: false,
-					},
-				],
-			},
-			{ timeout: 60_000, deliver: testCase.deliver },
-		);
+		const answered = question(questionRequest, { timeout: 60_000, deliver: testCase.deliver });
 		const request = await frame;
 		await client.handler.handleInputLine(
 			JSON.stringify({ type: "extension_ui_response", id: request.id, answers: { choice: { selected: ["Yes"] } } }),
 		);
-		expect((await answered).status).toBe("answered");
-		// What ask-user's deliverAnswer does for an answer it delivers as a user message.
-		if (testCase.deliveredAsMessage) releaseQuestionInput(context);
+		const response = await answered;
+		expect(response.status).toBe("answered");
+		if (testCase.deliveredAsMessage) {
+			fixture.harness.setResponses([fauxAssistantMessage("Answer received.")]);
+			const idle = nextSessionEvent(fixture.harness, (event) => event.type === "agent_idle");
+			deliverAnswer(api, context, questionRequest, response, "codex");
+			await idle;
+			expect(fixture.session.lifecycle.epochOrigin).toBe("human");
+		}
 
 		expect(seen).toEqual(["answer"]);
+		expect(fixture.session.lifecycle.humanInputRevision).toBe(revision + 1);
 	});
 }

@@ -1,16 +1,16 @@
-## 2026-10-21 - Keep asynchronous answer attribution on the question seam (senpi#3864)
+## 2026-10-21 - Preserve answered-question queue attribution (senpi#3864)
 
 ### What changed
 
-`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` leaves answer delivery options unchanged after releasing the engine-owned question-input capability.
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` retains #3865's `humanOrigin: true` delivery tag for an answered question after releasing the engine-owned question-input capability.
 
 ### Why
 
-`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the release already reports a human answer synchronously. Tagging the subsequent extension message as another human input duplicated attribution and broke the established answer delivery contract.
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the tag makes an answered question count as a person's queued input for turn-end liveness. Lifecycle revision accounting uses the engine-owned question-input report, not this queue tag; removing the tag changed another PR's behavior.
 
 ### Why an extension could not handle it
 
-`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: this builtin is the canonical answer sender for every question surface.
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the builtin owns answer delivery for every surface, while lifecycle accounting belongs to the engine.
 
 ### Expected merge conflict zones
 

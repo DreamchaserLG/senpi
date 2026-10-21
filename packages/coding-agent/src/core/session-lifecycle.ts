@@ -92,6 +92,10 @@ export class SessionLifecycleController {
 		return this.ledger.interrupted && !this.pendingHuman;
 	}
 
+	get nextRunOrigin(): "human" | "automatic" {
+		return this.pendingHuman ? "human" : "automatic";
+	}
+
 	restoreComplete(): void {
 		this.ledger.releaseRestoreBarrier();
 		this.idleBoundaryPassed = true;

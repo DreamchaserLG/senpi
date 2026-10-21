@@ -93,8 +93,8 @@ export class LifecycleSessionBinding {
 		};
 	}
 
-	prepareRun(origin: "human" | "automatic"): void {
-		this.nextRunOrigin = origin;
+	prepareRun(): void {
+		this.nextRunOrigin = this.controller.nextRunOrigin;
 	}
 
 	startRun(): void {

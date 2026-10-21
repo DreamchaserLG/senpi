@@ -75,6 +75,7 @@ export function deliverAnswer(
 	if (answeredByPerson) releaseQuestionInput(ctx);
 	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions, request.required === true), {
 		deliverAs: ctx.isIdle() ? "followUp" : "steer",
+		...(answeredByPerson ? { humanOrigin: true } : {}),
 	});
 	void emitAskUserNotification(pi, ctx, request, response, variant);
 }

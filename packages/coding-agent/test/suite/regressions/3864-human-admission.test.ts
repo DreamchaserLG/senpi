@@ -28,20 +28,23 @@ it("increments exactly once for a human steer on a held session", async () => {
 	expect(h.session.lifecycle).toMatchObject({ humanInputRevision: 1, epochOrigin: "human" });
 });
 
-it("does not count an extension sendUserMessage as human input", async () => {
-	// Given an epoch completed by a human prompt.
-	const h = await createHarness();
-	harnesses.push(h);
-	h.setResponses([fauxAssistantMessage("First reply."), fauxAssistantMessage("Automatic follow-up.")]);
-	await runToAgentIdle(h, () => h.session.prompt("Human request"));
-	expect(h.session.lifecycle).toMatchObject({ humanInputRevision: 1 });
+it.each([false, true])(
+	"does not count an extension delivery as human admission (person queue tag: %s)",
+	async (humanOrigin) => {
+		// Given an epoch completed by a human prompt.
+		const h = await createHarness();
+		harnesses.push(h);
+		h.setResponses([fauxAssistantMessage("First reply."), fauxAssistantMessage("Automatic follow-up.")]);
+		await runToAgentIdle(h, () => h.session.prompt("Human request"));
+		expect(h.session.lifecycle).toMatchObject({ humanInputRevision: 1 });
 
-	// When an extension-origin user message starts the next turn.
-	await runToAgentIdle(h, () => h.session.sendUserMessage("An automatic extension delivery"));
+		// When an extension-origin user message starts the next turn.
+		await runToAgentIdle(h, () => h.session.sendUserMessage("An automatic extension delivery", { humanOrigin }));
 
-	// Then the message role cannot impersonate human admission.
-	expect(h.session.lifecycle).toMatchObject({ humanInputRevision: 1, epochOrigin: "automatic" });
-});
+		// Then the message role cannot impersonate human admission.
+		expect(h.session.lifecycle).toMatchObject({ humanInputRevision: 1, epochOrigin: "automatic" });
+	},
+);
 
 it("fails self-settle eligibility closed when the revision cannot be persisted", async () => {
 	// Given a real persisted session with a write failure at the lifecycle boundary.

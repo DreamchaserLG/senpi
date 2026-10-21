@@ -3041,7 +3041,7 @@ export class AgentSession {
 		if (this._lifecycleBinding.controller.requiresHumanContinuation)
 			throw new Error("The previous run was interrupted. Human input or Resume is required before another turn.");
 		deferredTurnClaim?.resolve("started");
-		this._lifecycleBinding.prepareRun(inputOrigin === "person" ? "human" : "automatic");
+		this._lifecycleBinding.prepareRun();
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
 		this._isAgentRunActive = true;
 		onTurnAdmitted?.();
