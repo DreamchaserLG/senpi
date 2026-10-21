@@ -56,7 +56,7 @@ for (const child of [false, true]) {
 		});
 		fixtures.push(fixture);
 		await fixture.session.bindExtensions({ mode: "rpc" });
-		const client = fixture.bind();
+		const client = fixture.bind(["interactive_user", "question"]);
 		await client.send({ type: "set_client_info", capabilities: ["interactive_user", "question"] });
 		expect(fixture.session.lifecycle).toBeDefined();
 		fixture.harness.setResponses([

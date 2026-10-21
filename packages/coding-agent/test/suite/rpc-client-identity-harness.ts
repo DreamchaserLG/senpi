@@ -14,7 +14,7 @@ export async function createIdentityHarness(options: HarnessOptions = {}) {
 	let request = 0;
 	const connections: ReturnType<typeof createRpcConnectionHandler>[] = [];
 	const runtimes: AgentSessionRuntime[] = [];
-	const bind = () => {
+	const bind = (capabilities?: readonly string[]) => {
 		const collected = makeSink();
 		const runtime = new AgentSessionRuntime(
 			session,
@@ -34,6 +34,7 @@ export async function createIdentityHarness(options: HarnessOptions = {}) {
 		);
 		runtimes.push(runtime);
 		const handler = createRpcConnectionHandler(runtime, collected.sink, {
+			capabilities,
 			disposeRuntime: false,
 			eventFlushScheduler: (flush) => flush(),
 		});
