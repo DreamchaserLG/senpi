@@ -16,6 +16,31 @@
 
 `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: admitAndQueueGoalContinuation and lifecycle event registration; preserve the existing continuation latch and normal post-release rules.
 
+## 2026-10-21 - Turn-end liveness verdict (#3863)
+
+### What changed
+
+- `turn-end-liveness.ts` (new): pure `evaluateTurnEndLiveness` returns `continuing | held | waiting | done | stalled` from what the goal lane and the todo-owed backstop just did, plus `classifyTurnEnd` over the existing terminal-error helpers. Order: a turn the core retries (`willRetry`) or a queued continuation is `continuing`; a print/json run is `held`; any live re-entry source is `waiting` (it outranks the remaining held reasons: user abort, child session, deadline stop, paused/blocked goal); then `stalled` vs `done`. An errored turn is never `done`. A stall identical to the last recorded one since the last user message is not written again.
+- `index.ts`: the `agent_end` tail builds the input after both lanes ran, publishes `turn_end_liveness` through `publishGoalContinuationEvent` (bus + RPC), and appends a `turn-end-liveness` entry only for `stalled`.
+- `monitor-continuation.ts`: read-only `scheduledContinuation()` and `hasStagedRecovery()` getters. No scheduling change.
+- `todo-owed-backstop.ts`: `afterAgentEnd` returns its outcome (`delivered | capped | <suppression>`); `calledAskUser` is exported. No behavior change.
+
+### Why
+
+- Both lanes already decided whether something would re-enter the session, but only privately. RPC clients, the desktop app and pane watchdogs could not tell a healthy wait from a stall, and a no-goal turn that ended on a usage limit left no resume point. The verdict adds no budget and starts or suppresses nothing; the existing caps (8 consecutive, 60 without progress, 2 todo nudges per chain) stay the only bounds.
+
+### Follow-up
+
+- An unattended (held) session is not reported yet: once senpi#3860 lands, the verdict reads its hold ledger (`ctx.engineTurnsHeld()`) and reports `held{unattended}`. A start-time snapshot would go stale when input or Resume releases the hold, and it would be a second notion of the same state.
+
+### Design credit
+
+The idea of a turn-end liveness check is inspired by dinobot by roach (github.com/dinobot-labs/dinobot, PolyForm Noncommercial 1.0.0). No dinobot code, tests or prompt text were used; this is an independent implementation for senpi's goal and wake-source architecture.
+
+### Expected merge conflict zones
+
+- LOW: the `agent_end` tail and `session_start` head in `index.ts`; the `afterAgentEnd` return statements in `todo-owed-backstop.ts`.
+
 ## 2026-10-17 - No fixed auto-continue cap; a no-progress guard instead (oh-my-openagent#10280)
 
 ### What changed
