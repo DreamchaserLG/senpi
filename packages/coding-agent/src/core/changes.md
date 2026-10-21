@@ -1,3 +1,21 @@
+## 2026-10-21 - Keep lifecycle delivery lookup off full-history views (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/lifecycle-delivery.ts` folds ticket-to-transcript-entry identities through SessionManager's existing history reducer. Consumption and later message-end lookup share the same identity fold.
+
+### Why
+
+`packages/coding-agent/src/core/lifecycle-delivery.ts`: calling `getEntries()` for each engine delivery materialized the compacted session's complete history at message_start and retained it through turn_start, breaking senpi#2537. The fold retains only ticket and entry IDs and preserves the first matching transcript entry.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/lifecycle-delivery.ts`: the core message-start boundary records consumption before any extension or provider work.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/lifecycle-delivery.ts` and `lifecycle-session-binding.ts`: delivery consumption and persisted-entry lookup.
+
 ## 2026-10-21 - Derive lifecycle run origin from human admission (senpi#3864)
 
 ### What changed

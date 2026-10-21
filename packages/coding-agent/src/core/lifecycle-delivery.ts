@@ -1,9 +1,22 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentSession } from "./agent-session.ts";
 import type { CustomMessage } from "./messages.ts";
+import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionLifecycleController } from "./session-lifecycle.ts";
 import type { DeliveryTicketId } from "./session-lifecycle-types.ts";
 import { isRecord } from "./work-custody-record.ts";
+
+/** Keep delivery identities, not materialized conversation history, between engine turns. */
+export const lifecycleDeliveryEntries: HistoryReducer<Map<string, string>> = {
+	initial: () => new Map(),
+	add: (entries, entry) => {
+		if (entry.type === "custom_message") {
+			const ticket = messageTicket(entry);
+			if (ticket && !entries.has(ticket)) entries.set(ticket, entry.id);
+		}
+		return entries;
+	},
+};
 
 export function messageTicket(message: Pick<CustomMessage, "details">): DeliveryTicketId | undefined {
 	return isRecord(message.details) && typeof message.details.ticketId === "string"
@@ -25,11 +38,9 @@ export function consumeLifecycleDelivery(
 	if (custody.state === "consumed") return undefined;
 	const runId = controller.ledger.runId;
 	if (!runId) return undefined;
-	const existing = session.sessionManager
-		.getEntries()
-		.find((entry) => entry.type === "custom_message" && messageTicket(entry) === ticketId);
+	const existing = session.sessionManager.reduceHistory(lifecycleDeliveryEntries).get(ticketId);
 	const transcriptEntryId =
-		existing?.id ??
+		existing ??
 		session.sessionManager.appendCustomMessageEntry(
 			message.customType,
 			message.content,

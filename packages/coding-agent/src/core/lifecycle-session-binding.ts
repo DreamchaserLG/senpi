@@ -8,7 +8,7 @@ import type { Goal } from "./extensions/builtin/goal/types.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
 import { StaleExtensionContextError } from "./extensions/stale-context-error.ts";
 import type { AgentEndEvent } from "./extensions/types.ts";
-import { consumeLifecycleDelivery, messageTicket } from "./lifecycle-delivery.ts";
+import { consumeLifecycleDelivery, lifecycleDeliveryEntries, messageTicket } from "./lifecycle-delivery.ts";
 import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
 import type { LifecycleRecord } from "./lifecycle-record.ts";
 import { readLifecycleRuntimeFacts } from "./lifecycle-runtime-facts.ts";
@@ -111,11 +111,7 @@ export class LifecycleSessionBinding {
 	consumedEntry(message: AgentMessage): string | undefined {
 		if (message.role !== "custom") return undefined;
 		const ticketId = messageTicket(message);
-		return ticketId
-			? this.session.sessionManager
-					.getEntries()
-					.find((entry) => entry.type === "custom_message" && messageTicket(entry) === ticketId)?.id
-			: undefined;
+		return ticketId ? this.session.sessionManager.reduceHistory(lifecycleDeliveryEntries).get(ticketId) : undefined;
 	}
 
 	async turnEnded(event: AgentEndEvent): Promise<void> {
