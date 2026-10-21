@@ -181,11 +181,14 @@ export interface SessionHeader {
 	timestamp: string;
 	cwd: string;
 	parentSession?: string;
+	/** Execution ancestry, unlike parentSession's transcript/fork provenance. */
+	spawnedBy?: import("./session-lifecycle-types.ts").SpawnedBy;
 }
 
 export interface NewSessionOptions {
 	id?: string;
 	parentSession?: string;
+	spawnedBy?: import("./session-lifecycle-types.ts").SpawnedBy;
 }
 
 export interface SessionEntryBase {
@@ -1422,6 +1425,7 @@ export class SessionManager {
 			timestamp,
 			cwd: this.cwd,
 			parentSession: options?.parentSession,
+			...(options?.spawnedBy ? { spawnedBy: options.spawnedBy } : {}),
 		};
 		this.fileEntries = [header];
 		this.historyGeneration++;
@@ -1700,10 +1704,15 @@ export class SessionManager {
 
 		// Entries stay in memory only until the branch holds a user or assistant message; then all are
 		// written (#10000: the prompt reaches disk even if the first turn never completes).
-		if (!isConversationEntry(entry) && !this._hasConversation()) return;
+		const durableLifecycle = entry.type === "custom" &&
+			(entry.customType === "session-lifecycle" || entry.customType === "work-custody" || entry.customType === "child-lifecycle");
+		if (!isConversationEntry(entry) && !durableLifecycle && !this._hasConversation()) return;
 
 		// An asynchronous header write owns the file until it finishes, and appends this entry.
-		if (this.headerWrite) return;
+		if (this.headerWrite) {
+			if (durableLifecycle) throw new Error("Lifecycle append requires the pending session header write to finish");
+			return;
+		}
 		const fd = openSync(this.sessionFile, "wx");
 		try {
 			for (const e of [...this.fileEntries, entry]) {

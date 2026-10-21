@@ -36,6 +36,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		paused: session.paused ?? false,
 		pausedNoticeCount: session.pausedNoticeCount ?? 0,
 		holds: session.holds ?? [],
+		lifecycle: session.lifecycle,
 		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
 		pendingDialogs: sessionDialogRequests.get(session)?.snapshot() ?? [],
 		model: session.model,

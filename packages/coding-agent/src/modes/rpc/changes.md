@@ -1,3 +1,21 @@
+## 2026-10-21 - Share lifecycle state, events and self-settle over RPC (senpi#3864)
+
+### What changed
+
+`rpc-types.ts` and `rpc-session-state.ts` add `get_state.lifecycle`; `connection-handler.ts` handles `request_self_settle`. Classic and multi-session protocol capabilities advertise `session_lifecycle`. `session-event-fanout.ts` broadcasts lifecycle to observers and retains one latest-only snapshot per session. Question/dialog registries trigger projection refresh on open and close. The open-session router, registry, launch profile and client carry validated `spawnedBy` into the session header.
+
+### Why
+
+Every connection must see the same durable revision, root-work state and completion identity, including after missed events or a reconnect.
+
+### Why an extension could not handle it
+
+The RPC protocol, connection fanout, live request registries and session creation path are engine-owned.
+
+### Expected merge conflict zones
+
+Command/response unions and protocol capabilities; `SessionEventFanout` replay/forget paths; open-session profile construction; question/dialog completion callbacks. Preserve #3873's first-declaration connection-role capture.
+
 ## 2026-10-21 - interactive_user connection role (senpi#3811)
 
 ### What changed

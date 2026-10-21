@@ -643,6 +643,11 @@ function createExtensionAPI(
 		},
 
 		// Action methods - delegate to shared runtime
+		get lifecycle() {
+			assertActive();
+			if (!runtime.lifecycle) throw new Error("Extension lifecycle is not bound to a session");
+			return runtime.lifecycle;
+		},
 		sendMessage(message, options): void {
 			assertActive();
 			runtime.sendMessage(message, options);

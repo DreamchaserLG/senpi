@@ -1,3 +1,23 @@
+## 2026-10-21 - Durable engine-owned session lifecycle (senpi#3864)
+
+### What changed
+
+`session-lifecycle*.ts` and `lifecycle-*.ts` collect live facts, apply precedence, persist epochs/revisions/attention identities and decide root self-settle at a work seal. `work-obligations.ts` persists custody through transfer, queued tickets, model-context consumption, idle settlement and held notices. Recovery does not replay a consumed result or an interrupted tool. `agent-session.ts` binds these to native message/idle edges, the supplied human-admission hook, real question/dialog registries and the shared hold ledger. `session-manager.ts` persists `spawnedBy` and durable lifecycle/custody/child entries before committing them in memory.
+
+`agent-session.ts` keeps the external input hold until the native turn owns a started input, rather than releasing it at preflight disposition. Queued-input preparation uses the same hold; `external-admission.ts` exposes its in-flight work to the common activity snapshot. Actual prompt admission reuses the existing human-origin classifier for epoch origin. No connection-role authority, Stop hold, run fence or new Resume command is added here.
+
+### Why
+
+Turn settlement alone does not mean that child results, queued wakes, timers or user-input preparation have finished. A root must not publish Done while that work is still owed, and restart cannot safely replay work the model may already have acted on.
+
+### Why an extension could not handle it
+
+Native model-context consumption, input admission, JSONL writes, the restore barrier and shared client state are engine-owned.
+
+### Expected merge conflict zones
+
+`agent-session.ts`: native event subscription, settled/idle processing, prompt disposition/admission, `sendCustomMessage`, extension binding and disposal. `session-manager.ts`: header creation and synchronous persistence. Coordinate the held-notice ID wrapper with #3860 and preserve #3873's exactly-once hook.
+
 ## 2026-10-21 - Human-input seam: who typed an input (senpi#3811)
 
 ### What changed

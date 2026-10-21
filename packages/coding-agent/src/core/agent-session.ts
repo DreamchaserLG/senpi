@@ -166,6 +166,9 @@ import {
 import { ENGINE_PAUSED_ENTRY_TYPE, enginePauseSinceLastTurn, settledRepetitiveTurnPause } from "./engine-paused.ts";
 import { EngineTurnHold, engineTurnHoldHistory, engineWakeSource, type SessionHoldEvent } from "./engine-turn-hold.ts";
 import { EngineTurnInput } from "./engine-turn-input.ts";
+import { heldLifecycleNotice, messageTicket } from "./lifecycle-delivery.ts";
+import { LifecycleSessionBinding } from "./lifecycle-session-binding.ts";
+import type { ChildLifecycleReport, LifecycleApi, SessionLifecycleEvent } from "./session-lifecycle-types.ts";
 import {
 	ENGINE_TURN_LIMIT_ENTRY_TYPE,
 	ENGINE_TURN_LIMIT_EVENT,
@@ -512,6 +515,7 @@ export type AgentSessionEvent =
 	| { type: "session_tool_child"; state: "spawned" | "exited" | "respawned"; generation: number; pid: number }
 	| { type: "session_abort" }
 	| SessionHoldEvent
+	| SessionLifecycleEvent
 	| {
 			type: "resume_compaction_required";
 			projection: ModelUsabilityBudgetProjection;
@@ -1092,6 +1096,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	onSessionWorkReady?: () => void;
 	sessionTitlePrompt?: string | false;
 	onQueuedInput?: (input: PreparedClientInput) => void;
+	/** Internal: the admitted native turn now owns the input, before agent_start. */
+	onTurnAdmitted?: () => void;
 }
 
 /** Result from cycleModel() */
@@ -1245,6 +1251,7 @@ export class AgentSession {
 	private _engineTurnStarts: EngineTurnStartRecord[] = [];
 	private _engineResumeWindow: boolean;
 	private readonly _engineTurnHold: EngineTurnHold;
+	private _lifecycleBinding: LifecycleSessionBinding;
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
 	private readonly _humanInputListeners = new Set<(event: HumanInputAdmittedEvent) => void>();
@@ -1315,6 +1322,7 @@ export class AgentSession {
 	 */
 	private readonly _wakeSources = new WakeSourceTracker();
 	private _unsubscribeWakeSources: (() => void) | undefined;
+	private _unsubscribeLifecycleGoal: (() => void) | undefined;
 	private _overflowRecoveryRungs = 0;
 	private _autoCompactionSessionOverride: boolean | undefined;
 	private _compactionSkippedTooSmall = false;
@@ -1691,6 +1699,7 @@ export class AgentSession {
 			(event) => this._emit(event),
 		);
 		this._engineTurnInput = new EngineTurnInput(this._engineTurnHold);
+		this._lifecycleBinding = this._createLifecycleBinding();
 		this._autoTitleSessions = config.autoTitleSessions ?? false;
 
 		const initialModel = this.agent.state.model;
@@ -2571,6 +2580,7 @@ export class AgentSession {
 	}
 
 	private _emit(event: AgentSessionEvent): void {
+		if (event.type === "session_paused" || event.type === "session_resumed") this.refreshLifecycle();
 		this._logSessionEvent(event);
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
@@ -2986,6 +2996,8 @@ export class AgentSession {
 		}
 		if (settlementEpoch !== this._settlementEpoch) return;
 		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		await this._lifecycleBinding.refreshFacts();
+		if (settlementEpoch !== this._settlementEpoch || this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
 		if (settledRepetitiveTurnPause(this.sessionManager.getBranch())) {
 			try {
 				this._emitEntryAppended(
@@ -3006,16 +3018,25 @@ export class AgentSession {
 		this.releaseSettledSessionMemory();
 		this._deadlineTracker.disarm();
 		this._emit({ type: "agent_idle" });
+		this._lifecycleBinding.controller.idle();
 	}
 
 	private async _promptAgent(
 		messages: AgentMessage | AgentMessage[],
 		deferredTurnClaim?: DeferredTurnClaim,
 		onQueuedInput?: (input: PreparedClientInput) => void,
+		origin: "human" | "automatic" = "automatic",
+		onTurnAdmitted?: () => void,
 	): Promise<void> {
+		if (this._extensionBindingPromptReadiness === undefined) await this._lifecycleBinding.restore();
+		else await this.sessionManager.persistHeaderNow();
+		if (this._lifecycleBinding.controller.requiresHumanContinuation)
+			throw new Error("The previous run was interrupted. Human input or Resume is required before another turn.");
 		deferredTurnClaim?.resolve("started");
+		this._lifecycleBinding.prepareRun(origin);
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
 		this._isAgentRunActive = true;
+		onTurnAdmitted?.();
 		// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
 		this._deadlineTracker.arm();
 		this._handlerTurnScope += 1;
@@ -3095,6 +3116,11 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
+		if (event.type === "agent_start") this._lifecycleBinding.startRun();
+		if (event.type === "message_start") {
+			const entryId = this._lifecycleBinding.consume(event.message);
+			if (entryId) this._emitEntryAppended(entryId);
+		}
 		this._runContinuations.observe(event);
 		// Record the calls a tool made through ctx.executeTool() and their usage on its result message,
 		// synchronously so the message carries them before any listener or persistence sees it.
@@ -3528,10 +3554,10 @@ export class AgentSession {
 			this._extensionEventSignal = undefined;
 		}
 		if (event.type === "agent_end" && this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
+		if (event.type === "agent_start") await this._lifecycleBinding.refreshFacts();
 
 		// Notify all listeners
-		this._emit(
-			event.type === "agent_end"
+		const sessionEvent = event.type === "agent_end"
 				? withProviderFailure({
 						...event,
 						willRetry: agentEndWillRetry,
@@ -3542,8 +3568,9 @@ export class AgentSession {
 					})
 				: event.type === "message_update"
 					? withResolvedToolName(event, (name) => this.resolveToolCallName(name))
-					: event,
-		);
+					: event;
+		this._emit(sessionEvent);
+		if (sessionEvent.type === "agent_end") await this._lifecycleBinding.turnEnded(sessionEvent);
 		if (event.type === "agent_end") {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 		}
@@ -3560,7 +3587,7 @@ export class AgentSession {
 				// Check if this is a custom message from extensions
 				if (event.message.role === "custom") {
 					// Persist as CustomMessageEntry
-					entryId = this.sessionManager.appendCustomMessageEntry(
+					entryId = this._lifecycleBinding.consumedEntry(event.message) ?? this.sessionManager.appendCustomMessageEntry(
 						event.message.customType,
 						event.message.content,
 						event.message.display,
@@ -4273,6 +4300,9 @@ export class AgentSession {
 		this._unregisterMemoryReport();
 		this._unsubscribeWakeSources?.();
 		this._unsubscribeWakeSources = undefined;
+		this._unsubscribeLifecycleGoal?.();
+		this._unsubscribeLifecycleGoal = undefined;
+		this._lifecycleBinding.dispose();
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
 		// Nothing reads or writes this manager once its session is gone: it releases
@@ -4291,7 +4321,7 @@ export class AgentSession {
 			isStreaming: this._isAgentRunActive,
 			isBashRunning: this.isBashRunning,
 			isCompacting: this.isCompacting,
-			hasSessionWork: this._sessionWorkBarrier.hasActiveWork,
+			hasSessionWork: this._sessionWorkBarrier.hasActiveWork || this._promptStartPending || this.externalAdmission.hasInputWork,
 			hasActiveWakeSource: this._wakeSources.hasActive,
 		};
 	}
@@ -5184,10 +5214,14 @@ export class AgentSession {
 			await this._prompt(text, {
 				...options,
 				promptDisposition: (disposition) => {
-					hold.accepted();
+					if (disposition !== "started") hold.accepted();
 					if (disposition === "started" || disposition === "queued")
 						this._engineTurnInput.admit(disposition === "queued", (message) => this.agent.steer(message));
 					options?.promptDisposition?.(disposition);
+				},
+				onTurnAdmitted: () => {
+					hold.accepted();
+					options?.onTurnAdmitted?.();
 				},
 			});
 			if (this.isIdle)
@@ -5685,7 +5719,10 @@ export class AgentSession {
 		if (options?.thinkingLevel !== undefined) {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
-		await this._promptAgent(messages, undefined, options?.onQueuedInput);
+		await this._promptAgent(
+			messages, undefined, options?.onQueuedInput,
+			isHumanInput(options) ? "human" : "automatic", options?.onTurnAdmitted,
+		);
 		await this.waitForRetry();
 		await this.waitForIdle();
 		if (options?.onSessionWorkReady) {
@@ -5888,10 +5925,30 @@ export class AgentSession {
 		behavior: "steer" | "followUp",
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
-		if (options?.source !== "extension" && this._engineTurnHold.held) {
-			await this.prompt(text, { ...options, images, streamingBehavior: behavior, humanInputReported: true });
-			return "queued";
+		const hold = this.externalAdmission.beginInput();
+		try {
+			if (options?.source !== "extension" && this._engineTurnHold.held) {
+				await this.prompt(text, {
+					...options, images, streamingBehavior: behavior, humanInputReported: true,
+					promptDisposition: (disposition) => {
+						if (disposition !== "started") hold.accepted();
+					},
+					onTurnAdmitted: () => hold.accepted(),
+				});
+				return "queued";
+			}
+			return await this._admitQueuedInput(text, images, behavior, options);
+		} finally {
+			hold.end();
 		}
+	}
+
+	private async _admitQueuedInput(
+		text: string,
+		images: ImageContent[] | undefined,
+		behavior: "steer" | "followUp",
+		options?: QueuedInputOptions,
+	): Promise<QueuedInputDisposition> {
 		if (options?.source !== "extension") {
 			emitUserActivity(this, "prompt");
 			this._deadlineTracker.clearHold();
@@ -6179,23 +6236,64 @@ export class AgentSession {
 	 */
 	async sendCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; ticket?: string },
+		deferredTurnClaim?: DeferredTurnClaim,
+		releasedWake?: () => boolean,
+	): Promise<void> {
+		const obligations = this.workObligations;
+		// Normalize the legacy untyped content boundary before persisting a retry payload.
+		const deliveryMessage = { ...message, content: message.content ?? [] };
+		const ticket = options?.ticket ?? (
+			this.isStreaming || options?.triggerTurn === true || options?.deliverAs === "nextTurn"
+				? obligations.open(`delivery:${message.customType}:${randomUUID()}`, "background").ticket()
+				: undefined
+		);
+		const generation = this._userAbortGeneration;
+		if (ticket && !obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs })) return;
+		try {
+			await this.sessionManager.persistHeaderNow();
+			if (generation !== this._userAbortGeneration) {
+				if (ticket) obligations.retire(ticket);
+				deferredTurnClaim?.resolve("finished-without-start");
+				return;
+			}
+			await this._deliverCustomMessage(deliveryMessage, { ...options, ticket }, deferredTurnClaim, releasedWake);
+		} catch (error) {
+			if (ticket) obligations.failed(ticket);
+			throw error;
+		} finally {
+			if (ticket) obligations.endDelivery(ticket);
+		}
+	}
+
+	private async _deliverCustomMessage<T = unknown>(
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: {
 			triggerTurn?: boolean;
 			deliverAs?: "steer" | "followUp" | "nextTurn";
+			ticket?: string;
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 		releasedWake?: () => boolean,
 	): Promise<void> {
 		const userAbortGeneration = this._userAbortGeneration;
+		if (options?.ticket && [
+			...this.agent.peekQueuedMessages({ all: true }), ...this._pendingNextTurnMessages,
+		].some((queued) => queued.role === "custom" && messageTicket(queued) === options.ticket)) return;
 		const appMessage = {
 			role: "custom" as const,
 			customType: message.customType,
-			// Untyped extensions can pass null/missing content; normalize at ingestion.
-			content: message.content ?? [],
+			content: message.content,
 			display: message.display,
-			details: message.details,
+			details: options?.ticket
+				? {
+					...(typeof message.details === "object" && message.details !== null && !Array.isArray(message.details)
+						? message.details : message.details === undefined ? {} : { producerDetails: message.details }),
+					ticketId: options.ticket,
+				}
+				: message.details,
 			timestamp: Date.now(),
-		} satisfies CustomMessage<T>;
+		} satisfies CustomMessage;
 		if (
 			!releasedWake &&
 			!isUserDirectedTurn(message.customType) &&
@@ -6205,6 +6303,10 @@ export class AgentSession {
 			this._engineTurnHold.holdsSource(engineWakeSource(message.customType))
 		) {
 			this._engineTurnHold.note(engineWakeSource(message.customType), appMessage);
+			if (options?.ticket) {
+				const noticeId = heldLifecycleNotice(this, options.ticket);
+				if (noticeId) this.workObligations.held(options.ticket, noticeId);
+			}
 			deferredTurnClaim?.resolve("finished-without-start");
 			return;
 		}
@@ -6304,10 +6406,12 @@ export class AgentSession {
 				}
 				if (releasedWake && !releasedWake()) return;
 				if (!isUserDirectedTurn(message.customType)) this._recordEngineTurnStart(message.customType);
-				await this._promptAgent(messages, deferredTurnClaim);
+				await this._promptAgent(messages, deferredTurnClaim, undefined, releasedWake ? "human" : "automatic");
 			} else if (this.isStreaming) {
+				if (options?.ticket) this.workObligations.passive(options.ticket);
 				this._pendingCustomMessages.push(appMessage);
 			} else {
+				if (options?.ticket) this.workObligations.passive(options.ticket);
 				this._appendCustomMessage(appMessage);
 			}
 		} finally {
@@ -6339,9 +6443,11 @@ export class AgentSession {
 		}
 	}
 
-	resumeSession(): Promise<void> {
+	async resumeSession(): Promise<void> {
 		this._humanInputAdmitted("resume");
-		return this._engineTurnRelease.resume(
+		const input = this.externalAdmission.beginInput();
+		try {
+			await this._engineTurnRelease.resume(
 			this._engineTurnHold,
 			async (message, admit) => {
 				const generation = this._userAbortGeneration;
@@ -6359,10 +6465,57 @@ export class AgentSession {
 			},
 			(sources) => this._extensionRunner.emitHeldWakesReleased(sources),
 		);
+		} finally {
+			input.end();
+		}
 	}
 
 	get paused(): boolean {
 		return this._engineTurnHold.isHeld();
+	}
+
+	private _createLifecycleBinding(): LifecycleSessionBinding {
+		return new LifecycleSessionBinding(this, {
+			append: (type, data) => {
+				const startupBookkeeping = type === "session-lifecycle" && typeof data === "object" && data !== null &&
+					"epoch" in data && data.epoch === 0 && "state" in data && data.state === "done" &&
+					"humanInputRevision" in data && data.humanInputRevision === 0;
+				const id = this.sessionManager.appendCustomEntry(type, data, { startupBookkeeping });
+				this._emitEntryAppended(id);
+				return id;
+			},
+			emit: (event) => this._emit(event),
+			factsFailed: (error) => this._sessionLogger.warn("lifecycle_goal_read_failed", { error: String(error) }),
+		});
+	}
+
+	get lifecycle() {
+		this._lifecycleBinding.controller.recompute();
+		return this._lifecycleBinding.controller.ledger.snapshot;
+	}
+
+	get workObligations() {
+		return this._lifecycleBinding.controller.obligations;
+	}
+
+	get lifecycleApi(): LifecycleApi {
+		return {
+			obligations: this.workObligations,
+			reportChild: (report) => this.reportChildLifecycle(report),
+			markRunCompleted: ({ runId }) => this._lifecycleBinding.controller.markRunCompleted(runId),
+		};
+	}
+
+	reportChildLifecycle(report: ChildLifecycleReport): void {
+		this._lifecycleBinding.controller.reportChild(report);
+	}
+
+	requestSelfSettle() {
+		return this._lifecycleBinding.controller.requestSelfSettle();
+	}
+
+	refreshLifecycle(): void {
+		this._lifecycleBinding.controller.recompute();
 	}
 
 	get pausedNoticeCount(): number {
@@ -9847,6 +10000,7 @@ export class AgentSession {
 			void Promise.allSettled(bindingPromptReadiness).then(settleSessionStart);
 		}
 		await Promise.all(bindingPromptReadiness);
+		await this._lifecycleBinding.restore();
 	}
 
 	private _beginSessionStartSettlement(): () => void {
@@ -9891,6 +10045,7 @@ export class AgentSession {
 		runner.setToolHookLifecycleObserver((event) => {
 			this._emit(event);
 		});
+		runner.setLifecycleAttentionObserver(() => this.refreshLifecycle());
 		runner.setEventHandlerBudget(
 			() => ({
 				warnMs: this.settingsManager.getExtensionEventHandlerWarnMs(),
@@ -9926,14 +10081,26 @@ export class AgentSession {
 	}
 
 	private _bindExtensionCore(runner: ExtensionRunner): void {
+		if (this._lifecycleBinding.sessionId !== this.sessionId) {
+			this._lifecycleBinding.dispose();
+			this._lifecycleBinding = this._createLifecycleBinding();
+		}
 		// Activity extensions publish about work outliving a turn (background
 		// terminal jobs, monitors, holds) feeds the session-busy contract. Re-bound
 		// per runner; counts survive the swap so a reload cannot make live work
 		// look idle to an occupancy sweep.
 		this._unsubscribeWakeSources?.();
-		this._unsubscribeWakeSources = runner.onBusEvent(WAKE_SOURCE_STATE_EVENT, (data) =>
-			this._wakeSources.observe(data),
-		);
+		this._unsubscribeWakeSources = runner.onBusEvent(WAKE_SOURCE_STATE_EVENT, (data) => {
+			this._wakeSources.observe(data);
+			this._lifecycleBinding.observeWakeSource(data);
+		});
+		this._unsubscribeLifecycleGoal?.();
+		this._unsubscribeLifecycleGoal = runner.onBusEvent("goal_store_changed", (data) => {
+			if (typeof data !== "object" || data === null || !("threadId" in data) || data.threadId !== this.sessionId) return;
+			void this._lifecycleBinding.refreshFacts().catch((error: unknown) => {
+				this._sessionLogger.warn("lifecycle_goal_read_failed", { error: String(error) });
+			});
+		});
 		const getCommands = (): SlashCommandInfo[] => {
 			const extensionCommands: SlashCommandInfo[] = runner.getRegisteredCommands().map((command) => ({
 				name: command.invocationName,
@@ -10057,6 +10224,7 @@ export class AgentSession {
 					sessionManager: this.sessionManager,
 					host: () => this._controlEndpointHost,
 				}),
+				lifecycle: this.lifecycleApi,
 			},
 			{
 				offload: (id, args, options) =>

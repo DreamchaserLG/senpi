@@ -15,7 +15,7 @@ export class ConnectionQuestionBridge {
 	private readonly pending = new Map<string, Pending>();
 	private readonly resolved = new Set<string>();
 	private readonly output: (record: object) => void;
-	constructor(output: (record: object) => void) {
+	constructor(output: (record: object) => void, private readonly changed?: () => void) {
 		this.output = output;
 	}
 	pendingQuestions(): RpcQuestionUiRequest[] {
@@ -53,6 +53,7 @@ export class ConnectionQuestionBridge {
 				clearTimeout(timer);
 				opts?.signal?.removeEventListener("abort", cancel);
 				this.pending.delete(id);
+				this.changed?.();
 				this.resolved.add(id);
 				const result: QuestionResponse = {
 					status,
@@ -120,6 +121,7 @@ export class ConnectionQuestionBridge {
 				},
 			});
 			arm();
+			this.changed?.();
 			this.output(frame);
 			opts?.signal?.addEventListener("abort", cancel, { once: true });
 			if (opts?.signal?.aborted) cancel();

@@ -601,7 +601,8 @@ export class ExtensionRunner {
 	private toolHookLifecycleObserver: ExtensionToolHookLifecycleObserver | undefined;
 	private nextToolHookRunIndex = 0;
 	private uiPromptDepth = 0;
-	private activeUIPrompt: { kind: UIPromptKind; title?: string } | undefined;
+	private activeUIPrompt: { kind: UIPromptKind; title?: string; requestId: string; since: string } | undefined;
+	private lifecycleAttentionObserver: (() => void) | undefined;
 
 	constructor(
 		extensions: Extension[],
@@ -633,6 +634,7 @@ export class ExtensionRunner {
 		},
 	): void {
 		// Copy actions into the shared runtime (all extension APIs reference this)
+		if (actions.lifecycle) this.runtime.lifecycle = actions.lifecycle;
 		this.runtime.sendMessage = (message, options) => {
 			if (options?.triggerTurn === true) this.sessionStartTurns.admit(() => actions.sendMessage(message, options));
 			else actions.sendMessage(message, options);
@@ -831,6 +833,19 @@ export class ExtensionRunner {
 		this.toolHookLifecycleObserver = observer;
 	}
 
+	setLifecycleAttentionObserver(observer: () => void): void {
+		this.lifecycleAttentionObserver = observer;
+	}
+
+	getLifecycleHumanWait(): Omit<import("../session-lifecycle-types.ts").HumanWait, "originSessionId"> | undefined {
+		const prompt = this.activeUIPrompt;
+		if (this.mode === "rpc" || !prompt) return undefined;
+		return {
+			kind: prompt.kind === "confirm" ? "approval" : "question",
+			requestId: prompt.requestId, revision: 1, since: prompt.since,
+		};
+	}
+
 	private wrapUIPromptContext(ui: ExtensionUIContext): ExtensionUIContext {
 		const questionFn = ui.question;
 		return {
@@ -844,16 +859,17 @@ export class ExtensionRunner {
 			...(questionFn
 				? {
 						question: (request, opts) =>
-							this.withUIPrompt("question", request.questions[0]?.header, () => questionFn(request, opts)),
+							this.withUIPrompt("question", request.questions[0]?.header, () => questionFn(request, opts), request.requestId),
 					}
 				: {}),
 		};
 	}
 
-	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {
+	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>, requestId: string = crypto.randomUUID()): Promise<T> {
 		const outerPrompt = this.uiPromptDepth++ === 0;
 		if (outerPrompt) {
-			this.activeUIPrompt = { kind, title };
+			this.activeUIPrompt = { kind, title, requestId, since: new Date().toISOString() };
+			this.lifecycleAttentionObserver?.();
 			this.emitUIPromptEvent({ type: "ui_prompt_start", reason: "ui_prompt", kind, ...(title ? { title } : {}) });
 		}
 		const finish = () => {
@@ -861,6 +877,7 @@ export class ExtensionRunner {
 			this.uiPromptDepth = 0;
 			const prompt = this.activeUIPrompt ?? { kind, title };
 			this.activeUIPrompt = undefined;
+			this.lifecycleAttentionObserver?.();
 			this.emitUIPromptEvent({
 				type: "ui_prompt_end",
 				reason: "ui_prompt",

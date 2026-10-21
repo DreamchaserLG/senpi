@@ -17,6 +17,24 @@
 
 - `packages/coding-agent/src/core/extensions/runner.ts`: context binding. `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContextActions.questionInput`.
 
+## 2026-10-21 - Bind lifecycle custody and child reporting (senpi#3864)
+
+### What changed
+
+`types.ts`, `loader.ts`, `runner.ts` and `index.ts` expose `pi.lifecycle.obligations`, generation-fenced `reportChild`, `markRunCompleted` and the `sendMessage` ticket option. The runner's existing UI-prompt tracker supplies stable TUI attention identity and lifecycle open/close notifications.
+
+### Why
+
+Producers must transfer custody before sending a result, and the engine must fold the runner's current child state without relying on a client UI.
+
+### Why an extension could not handle it
+
+The extension facade, native delivery boundary and TUI request tracker are core bindings.
+
+### Expected merge conflict zones
+
+`types.ts`: ExtensionAPI, ExtensionActions and sendMessage options. `loader.ts`: runtime facade. `runner.ts`: bindCore and withUIPrompt.
+
 ## 2026-10-21 - Expose held-wake source admission and release (senpi#3853)
 
 ### What changed

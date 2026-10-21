@@ -4,6 +4,7 @@
 
 export type { SlashCommandInfo, SlashCommandSource } from "../slash-commands.ts";
 export type { SourceInfo } from "../source-info.ts";
+export type { LifecycleApi, ChildLifecycleReport, DeliveryTicketId, ObligationToken, WorkObligations } from "../session-lifecycle-types.ts";
 export type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 export {
 	createExtensionRuntime,

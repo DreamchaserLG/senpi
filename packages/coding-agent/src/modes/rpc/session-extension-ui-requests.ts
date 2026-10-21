@@ -11,13 +11,16 @@ export const sessionDialogRequests = new WeakMap<object, SessionExtensionUiReque
 /** Per-session extension UI request state; never share this map between bindings. */
 export class SessionExtensionUiRequests {
 	private readonly pending = new Map<string, PendingRequest>();
+	constructor(private readonly changed?: () => void) {}
 
 	set(id: string, request: PendingRequest): void {
 		this.pending.set(id, request);
+		this.changed?.();
 	}
 
 	delete(id: string): void {
 		this.pending.delete(id);
+		this.changed?.();
 	}
 
 	snapshot(): RpcExtensionUIRequest[] {
@@ -28,6 +31,7 @@ export class SessionExtensionUiRequests {
 		const request = this.pending.get(response.id);
 		if (!request) return false;
 		this.pending.delete(response.id);
+		this.changed?.();
 		request.resolve(response);
 		return true;
 	}
@@ -35,6 +39,7 @@ export class SessionExtensionUiRequests {
 	cancelAll(): void {
 		for (const [id, request] of this.pending) request.resolve({ type: "extension_ui_response", id, cancelled: true });
 		this.pending.clear();
+		this.changed?.();
 	}
 
 	close(): void {
@@ -42,5 +47,6 @@ export class SessionExtensionUiRequests {
 			request.reject(new Error("Extension UI request cancelled: session closed"));
 		}
 		this.pending.clear();
+		this.changed?.();
 	}
 }

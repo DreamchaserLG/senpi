@@ -478,6 +478,7 @@ export class RpcClient {
 
 	async openSession(options: {
 		attended?: false;
+		spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
 		/** Attach only on this generation; requires `expected_host_instance`. */
 		expectedHostInstance?: string;
 		sessionPath?: string;

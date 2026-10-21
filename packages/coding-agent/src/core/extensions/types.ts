@@ -9,6 +9,7 @@
  */
 
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
+import type { LifecycleApi } from "../session-lifecycle-types.ts";
 import type { ContextEvent } from "./context-event.ts";
 
 export type { ContextEvent } from "./context-event.ts";
@@ -2338,6 +2339,8 @@ export type ExtensionHandler<E, R = undefined> = (event: E, ctx: ExtensionContex
  * ExtensionAPI passed to extension factory functions.
  */
 export interface ExtensionAPI {
+	/** Durable engine custody and generation-fenced child/workflow reporting. */
+	readonly lifecycle: LifecycleApi;
 	// =========================================================================
 	// Session Context
 	// =========================================================================
@@ -2576,7 +2579,7 @@ export interface ExtensionAPI {
 	/** Send a custom message to the session. */
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; ticket?: string },
 	): void;
 
 	/**
@@ -3011,7 +3014,7 @@ type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
 export type SendMessageHandler = <T = unknown>(
 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; ticket?: string },
 ) => void;
 
 export type SendUserMessageHandler = (
@@ -3183,6 +3186,7 @@ export interface ExtensionRuntimeState {
  * Provided to runner.initialize(), copied into the shared runtime.
  */
 export interface ExtensionActions {
+	lifecycle?: LifecycleApi;
 	sendMessage: SendMessageHandler;
 	sendUserMessage: SendUserMessageHandler;
 	appendEntry: AppendEntryHandler;
