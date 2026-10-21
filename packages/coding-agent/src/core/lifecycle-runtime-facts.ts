@@ -10,7 +10,7 @@ const dialogOpenedAt = new WeakMap<AgentSession, Map<string, string>>();
 export function readLifecycleRuntimeFacts(session: AgentSession): LifecycleRuntimeFacts {
 	const now = new Date().toISOString();
 	const human: HumanWait[] = [];
-	const tuiWait = session.extensionRunner.getLifecycleHumanWait();
+	const tuiWait = session.extensionRunner.getLifecycleHumanWait?.();
 	if (tuiWait) human.push({ ...tuiWait, originSessionId: session.sessionId });
 	const dialogs = sessionDialogRequests.get(session)?.snapshot() ?? [];
 	const opened = dialogOpenedAt.get(session) ?? new Map<string, string>();
