@@ -25,10 +25,19 @@ const model = faux.getModel();
 await auth.modify(model.provider, async () => ({ type: "api_key", key: "faux-key" }));
 const registry = await createInMemoryModelRegistry(auth);
 registry.registerProvider(model.provider, {
-	baseUrl: model.baseUrl, apiKey: "faux-key", api: faux.api,
+	baseUrl: model.baseUrl,
+	apiKey: "faux-key",
+	api: faux.api,
 	models: faux.models.map((item) => ({
-		id: item.id, name: item.name, api: item.api, reasoning: item.reasoning,
-		input: item.input, inputLimits: item.inputLimits, cost: item.cost, contextWindow: item.contextWindow, maxTokens: item.maxTokens,
+		id: item.id,
+		name: item.name,
+		api: item.api,
+		reasoning: item.reasoning,
+		input: item.input,
+		inputLimits: item.inputLimits,
+		cost: item.cost,
+		contextWindow: item.contextWindow,
+		maxTokens: item.maxTokens,
 	})),
 });
 let effectFinished = false;
@@ -36,7 +45,9 @@ const resultWritten = Promise.withResolvers<void>();
 const done = Promise.withResolvers<void>();
 const agent = new Agent({
 	initialState: { model, systemPrompt: "Test", tools: [] },
-	getApiKey: () => "faux-key", streamFn: streamSimple, convertToLlm,
+	getApiKey: () => "faux-key",
+	streamFn: streamSimple,
+	convertToLlm,
 	onPayload: async (payload) => {
 		if (phase === "before-tool") {
 			emit("checkpoint");
@@ -51,12 +62,20 @@ const agent = new Agent({
 	},
 });
 const session = new AgentSession({
-	agent, sessionManager: manager, settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
-	modelRuntime: getModelRuntime(registry), resourceLoader: createTestResourceLoader(),
-	cwd, agentDir: join(cwd, "agent"), toolRuntime: "in-process",
+	agent,
+	sessionManager: manager,
+	settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
+	modelRuntime: getModelRuntime(registry),
+	resourceLoader: createTestResourceLoader(),
+	cwd,
+	agentDir: join(cwd, "agent"),
+	toolRuntime: "in-process",
 	baseToolsOverride: {
 		effect: {
-			name: "effect", label: "Effect", description: "Record one test effect", parameters: Type.Object({}),
+			name: "effect",
+			label: "Effect",
+			description: "Record one test effect",
+			parameters: Type.Object({}),
 			execute: async () => {
 				appendFileSync(join(cwd, "effects"), "effect\n");
 				effectFinished = true;
@@ -68,7 +87,11 @@ const session = new AgentSession({
 			},
 		},
 	},
-	sessionStartEvent: { type: "session_start", reason: reopenPath ? "resume" : "startup", attended: phase !== "reopen-unattended" },
+	sessionStartEvent: {
+		type: "session_start",
+		reason: reopenPath ? "resume" : "startup",
+		attended: phase !== "reopen-unattended",
+	},
 });
 session.subscribe((event) => {
 	if (event.type === "session_lifecycle") emit("lifecycle_event", { lifecycle: event.lifecycle });
@@ -77,10 +100,14 @@ session.subscribe((event) => {
 		resultWritten.resolve();
 });
 emit("restoring", { lifecycle: session.lifecycle });
-faux.setResponses(phase === "after-effect" || phase === "after-result" ? [
-	fauxAssistantMessage([fauxToolCall("effect", {})], { stopReason: "toolUse" }),
-	fauxAssistantMessage("Effect incorporated."),
-] : [fauxAssistantMessage("Result incorporated.")]);
+faux.setResponses(
+	phase === "after-effect" || phase === "after-result"
+		? [
+				fauxAssistantMessage([fauxToolCall("effect", {})], { stopReason: "toolUse" }),
+				fauxAssistantMessage("Effect incorporated."),
+			]
+		: [fauxAssistantMessage("Result incorporated.")],
+);
 const custody = new Map<string, { state: string }>();
 for (const entry of manager.getEntries()) {
 	if (entry.type !== "custom" || entry.customType !== "work-custody") continue;
@@ -94,10 +121,11 @@ if (reopenPath) {
 	emit("restored", { lifecycle: session.lifecycle, entries: manager.getEntries() });
 } else {
 	await manager.persistHeaderNow();
-	if (phase === "queued") manager.persistHeaderNow = async () => {
-		emit("checkpoint");
-		await stopped;
-	};
+	if (phase === "queued")
+		manager.persistHeaderNow = async () => {
+			emit("checkpoint");
+			await stopped;
+		};
 	const ticket = session.workObligations.open("result:review", "children").ticket();
 	await session.sendCustomMessage(
 		{ customType: "senpi-task.completion", content: "Review passed.", display: false },

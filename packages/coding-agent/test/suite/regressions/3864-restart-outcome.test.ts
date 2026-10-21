@@ -20,11 +20,17 @@ for (const stopReason of ["error", "aborted"] as const) {
 			a.session.dispose();
 			b = await createBoundLifecycleHarness({ siblingOf: a, sessionManager: SessionManager.open(file) });
 			expect(b.session.lifecycle).toMatchObject({
-				state: before.state, epoch: before.epoch, restoring: false, persisted: true,
-				...(stopReason === "error" ? { completionId: before.completionId, failure: before.failure }
+				state: before.state,
+				epoch: before.epoch,
+				restoring: false,
+				persisted: true,
+				...(stopReason === "error"
+					? { completionId: before.completionId, failure: before.failure }
 					: { waitingOn: { human: before.waitingOn?.human } }),
 			});
-			expect(b.events.some((event) => event.type === "session_lifecycle" && event.lifecycle.state === "done")).toBe(false);
+			expect(b.events.some((event) => event.type === "session_lifecycle" && event.lifecycle.state === "done")).toBe(
+				false,
+			);
 		} finally {
 			b?.cleanup();
 			a.cleanup();

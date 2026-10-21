@@ -166,9 +166,6 @@ import {
 import { ENGINE_PAUSED_ENTRY_TYPE, enginePauseSinceLastTurn, settledRepetitiveTurnPause } from "./engine-paused.ts";
 import { EngineTurnHold, engineTurnHoldHistory, engineWakeSource, type SessionHoldEvent } from "./engine-turn-hold.ts";
 import { EngineTurnInput } from "./engine-turn-input.ts";
-import { heldLifecycleNotice, messageTicket } from "./lifecycle-delivery.ts";
-import { LifecycleSessionBinding } from "./lifecycle-session-binding.ts";
-import type { ChildLifecycleReport, LifecycleApi, SessionLifecycleEvent } from "./session-lifecycle-types.ts";
 import {
 	ENGINE_TURN_LIMIT_ENTRY_TYPE,
 	ENGINE_TURN_LIMIT_EVENT,
@@ -278,6 +275,8 @@ import { createUserActivitySource, emitUserActivity, type UserActivityKind } fro
 import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
+import { heldLifecycleNotice, messageTicket } from "./lifecycle-delivery.ts";
+import { LifecycleSessionBinding } from "./lifecycle-session-binding.ts";
 import {
 	isManualContinueSubmission,
 	MANUAL_CONTINUE_CUSTOM_TYPE,
@@ -347,6 +346,7 @@ import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
 import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
+import type { ChildLifecycleReport, LifecycleApi, SessionLifecycleEvent } from "./session-lifecycle-types.ts";
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionProjection } from "./session-manager.ts";
 import {
@@ -2998,7 +2998,8 @@ export class AgentSession {
 		if (settlementEpoch !== this._settlementEpoch) return;
 		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
 		await this._lifecycleBinding.refreshFacts();
-		if (settlementEpoch !== this._settlementEpoch || this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		if (settlementEpoch !== this._settlementEpoch || this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork)
+			return;
 		if (settledRepetitiveTurnPause(this.sessionManager.getBranch())) {
 			try {
 				this._emitEntryAppended(
@@ -3560,7 +3561,8 @@ export class AgentSession {
 		if (event.type === "agent_start") await this._lifecycleBinding.refreshFacts();
 
 		// Notify all listeners
-		const sessionEvent = event.type === "agent_end"
+		const sessionEvent =
+			event.type === "agent_end"
 				? withProviderFailure({
 						...event,
 						willRetry: agentEndWillRetry,
@@ -3590,12 +3592,14 @@ export class AgentSession {
 				// Check if this is a custom message from extensions
 				if (event.message.role === "custom") {
 					// Persist as CustomMessageEntry
-					entryId = this._lifecycleBinding.consumedEntry(event.message) ?? this.sessionManager.appendCustomMessageEntry(
-						event.message.customType,
-						event.message.content,
-						event.message.display,
-						event.message.details,
-					);
+					entryId =
+						this._lifecycleBinding.consumedEntry(event.message) ??
+						this.sessionManager.appendCustomMessageEntry(
+							event.message.customType,
+							event.message.content,
+							event.message.display,
+							event.message.details,
+						);
 					this._incrementMessageRevision();
 					this.externalAdmission.observePersisted(event.message);
 				} else if (
@@ -4322,7 +4326,8 @@ export class AgentSession {
 			isStreaming: this._isAgentRunActive,
 			isBashRunning: this.isBashRunning,
 			isCompacting: this.isCompacting,
-			hasSessionWork: this._sessionWorkBarrier.hasActiveWork || this._promptStartPending || this.externalAdmission.hasInputWork,
+			hasSessionWork:
+				this._sessionWorkBarrier.hasActiveWork || this._promptStartPending || this.externalAdmission.hasInputWork,
 			hasActiveWakeSource: this._wakeSources.hasActive,
 		};
 	}
@@ -5934,7 +5939,10 @@ export class AgentSession {
 		try {
 			if (options?.source !== "extension" && this._engineTurnHold.held) {
 				await this.prompt(text, {
-					...options, images, streamingBehavior: behavior, humanInputReported: true,
+					...options,
+					images,
+					streamingBehavior: behavior,
+					humanInputReported: true,
 					promptDisposition: (disposition) => {
 						if (disposition !== "started") hold.accepted();
 					},
@@ -6251,11 +6259,11 @@ export class AgentSession {
 		const obligations = this.workObligations;
 		// Normalize the legacy untyped content boundary before persisting a retry payload.
 		const deliveryMessage = { ...message, content: message.content ?? [] };
-		const ticket = options?.ticket ?? (
-			this.isStreaming || options?.triggerTurn === true || options?.deliverAs === "nextTurn"
+		const ticket =
+			options?.ticket ??
+			(this.isStreaming || options?.triggerTurn === true || options?.deliverAs === "nextTurn"
 				? obligations.open(`delivery:${message.customType}:${randomUUID()}`, "background").ticket()
-				: undefined
-		);
+				: undefined);
 		const generation = this._userAbortGeneration;
 		if (ticket && !obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs })) {
 			deferredTurnClaim?.resolve("finished-without-start");
@@ -6270,7 +6278,8 @@ export class AgentSession {
 				return;
 			}
 			await this._deliverCustomMessage(deliveryMessage, { ...options, ticket }, deferredTurnClaim, releasedWake);
-			if (ticket && generation !== this._userAbortGeneration) this._retireLifecycleDelivery(ticket, options?.ticket !== undefined);
+			if (ticket && generation !== this._userAbortGeneration)
+				this._retireLifecycleDelivery(ticket, options?.ticket !== undefined);
 		} catch (error) {
 			if (ticket) obligations.failed(ticket);
 			throw error;
@@ -6283,7 +6292,9 @@ export class AgentSession {
 		for (const queued of this.agent.peekQueuedMessages({ all: true })) {
 			if (queued.role === "custom" && messageTicket(queued) === ticket) this.agent.removeQueuedMessage(queued);
 		}
-		this._pendingNextTurnMessages = this._pendingNextTurnMessages.filter((queued) => messageTicket(queued) !== ticket);
+		this._pendingNextTurnMessages = this._pendingNextTurnMessages.filter(
+			(queued) => messageTicket(queued) !== ticket,
+		);
 		if (producerOwned) this.workObligations.retire(ticket);
 		else this.workObligations.cancel(ticket);
 	}
@@ -6299,9 +6310,12 @@ export class AgentSession {
 		releasedWake?: () => boolean,
 	): Promise<void> {
 		const userAbortGeneration = this._userAbortGeneration;
-		if (options?.ticket && [
-			...this.agent.peekQueuedMessages({ all: true }), ...this._pendingNextTurnMessages,
-		].some((queued) => queued.role === "custom" && messageTicket(queued) === options.ticket)) {
+		if (
+			options?.ticket &&
+			[...this.agent.peekQueuedMessages({ all: true }), ...this._pendingNextTurnMessages].some(
+				(queued) => queued.role === "custom" && messageTicket(queued) === options.ticket,
+			)
+		) {
 			deferredTurnClaim?.resolve("delegated");
 			return;
 		}
@@ -6312,10 +6326,13 @@ export class AgentSession {
 			display: message.display,
 			details: options?.ticket
 				? {
-					...(typeof message.details === "object" && message.details !== null && !Array.isArray(message.details)
-						? message.details : message.details === undefined ? {} : { producerDetails: message.details }),
-					ticketId: options.ticket,
-				}
+						...(typeof message.details === "object" && message.details !== null && !Array.isArray(message.details)
+							? message.details
+							: message.details === undefined
+								? {}
+								: { producerDetails: message.details }),
+						ticketId: options.ticket,
+					}
 				: message.details,
 			timestamp: Date.now(),
 		} satisfies CustomMessage;
@@ -6483,23 +6500,23 @@ export class AgentSession {
 		const input = this.externalAdmission.beginInput();
 		try {
 			await this._engineTurnRelease.resume(
-			this._engineTurnHold,
-			async (message, admit) => {
-				const generation = this._userAbortGeneration;
-				await this.waitForIdle();
-				const claim = new DeferredTurnClaim();
-				await this.sendCustomMessage(message, { triggerTurn: true }, claim, admit, () => input.accepted());
-				if ((await claim.disposition) !== "started") return false;
-				await this.waitForIdle();
-				if (generation !== this._userAbortGeneration) {
-					this._engineTurnHold.invalidate();
-					this._engineTurnHold.rejectInput();
-					return false;
-				}
-				return true;
-			},
-			(sources) => this._extensionRunner.emitHeldWakesReleased(sources),
-		);
+				this._engineTurnHold,
+				async (message, admit) => {
+					const generation = this._userAbortGeneration;
+					await this.waitForIdle();
+					const claim = new DeferredTurnClaim();
+					await this.sendCustomMessage(message, { triggerTurn: true }, claim, admit, () => input.accepted());
+					if ((await claim.disposition) !== "started") return false;
+					await this.waitForIdle();
+					if (generation !== this._userAbortGeneration) {
+						this._engineTurnHold.invalidate();
+						this._engineTurnHold.rejectInput();
+						return false;
+					}
+					return true;
+				},
+				(sources) => this._extensionRunner.emitHeldWakesReleased(sources),
+			);
 		} finally {
 			input.end();
 		}
@@ -6512,9 +6529,16 @@ export class AgentSession {
 	private _createLifecycleBinding(): LifecycleSessionBinding {
 		return new LifecycleSessionBinding(this, {
 			append: (type, data) => {
-				const startupBookkeeping = type === "session-lifecycle" && typeof data === "object" && data !== null &&
-					"epoch" in data && data.epoch === 0 && "state" in data && data.state === "done" &&
-					"humanInputRevision" in data && data.humanInputRevision === 0;
+				const startupBookkeeping =
+					type === "session-lifecycle" &&
+					typeof data === "object" &&
+					data !== null &&
+					"epoch" in data &&
+					data.epoch === 0 &&
+					"state" in data &&
+					data.state === "done" &&
+					"humanInputRevision" in data &&
+					data.humanInputRevision === 0;
 				const id = this.sessionManager.appendCustomEntry(type, data, { startupBookkeeping });
 				this._emitEntryAppended(id);
 				return id;
@@ -10147,7 +10171,9 @@ export class AgentSession {
 		// per runner; counts survive the swap so a reload cannot make live work
 		// look idle to an occupancy sweep.
 		this._unsubscribeWakeSources?.();
-		this._unsubscribeWakeSources = runner.onBusEvent(WAKE_SOURCE_STATE_EVENT, (data) => this._wakeSources.observe(data));
+		this._unsubscribeWakeSources = runner.onBusEvent(WAKE_SOURCE_STATE_EVENT, (data) =>
+			this._wakeSources.observe(data),
+		);
 		this._lifecycleBinding.bindFactEvents(runner);
 		const getCommands = (): SlashCommandInfo[] => {
 			const extensionCommands: SlashCommandInfo[] = runner.getRegisteredCommands().map((command) => ({

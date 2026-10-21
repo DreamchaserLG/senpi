@@ -22,7 +22,11 @@ export interface HumanWait {
 
 export interface LifecycleWaits {
 	readonly children: number;
-	readonly background: readonly { readonly source: string; readonly activeCount: number; readonly retryAtMs?: number }[];
+	readonly background: readonly {
+		readonly source: string;
+		readonly activeCount: number;
+		readonly retryAtMs?: number;
+	}[];
 	readonly human: readonly HumanWait[];
 }
 

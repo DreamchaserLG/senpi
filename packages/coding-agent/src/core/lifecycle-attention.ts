@@ -11,7 +11,10 @@ export class LifecycleAttention {
 	private readonly open = new Map<string, HumanWait>();
 	private sequence: number;
 	private readonly sessionId: string;
-	constructor(sessionId: string, restored?: { readonly attentionSeq: number; readonly synthetic: readonly SyntheticAttention[] }) {
+	constructor(
+		sessionId: string,
+		restored?: { readonly attentionSeq: number; readonly synthetic: readonly SyntheticAttention[] },
+	) {
 		this.sessionId = sessionId;
 		this.sequence = restored?.attentionSeq ?? 0;
 		for (const occurrence of restored?.synthetic ?? []) this.open.set(occurrence.key, occurrence.wait);
@@ -58,9 +61,12 @@ export function readHumanWait(value: unknown): HumanWait | undefined {
 			return undefined;
 	}
 	if (
-		typeof value.originSessionId !== "string" || typeof value.requestId !== "string" ||
-		typeof value.revision !== "number" || typeof value.since !== "string"
-	) return undefined;
+		typeof value.originSessionId !== "string" ||
+		typeof value.requestId !== "string" ||
+		typeof value.revision !== "number" ||
+		typeof value.since !== "string"
+	)
+		return undefined;
 	return {
 		kind: value.kind,
 		originSessionId: value.originSessionId,

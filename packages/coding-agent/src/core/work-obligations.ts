@@ -1,6 +1,6 @@
-import type { SessionEntry } from "./session-manager.ts";
 import type { DeliveryTicketId, ObligationKind, ObligationToken, WorkObligations } from "./session-lifecycle-types.ts";
-import { custodyIsOpen, type CustodyPayload, readWorkCustody, type WorkCustodyRecord } from "./work-custody-record.ts";
+import type { SessionEntry } from "./session-manager.ts";
+import { type CustodyPayload, custodyIsOpen, readWorkCustody, type WorkCustodyRecord } from "./work-custody-record.ts";
 
 export class CustodyViolation extends Error {
 	readonly key: string;

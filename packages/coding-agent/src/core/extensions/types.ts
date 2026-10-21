@@ -8,8 +8,8 @@
  * - Interact with the user via UI primitives
  */
 
-import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { LifecycleApi } from "../session-lifecycle-types.ts";
+import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { ContextEvent } from "./context-event.ts";
 
 export type { ContextEvent } from "./context-event.ts";

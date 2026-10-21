@@ -1,6 +1,6 @@
+import type { TurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness.ts";
 import { readHumanWait, type SyntheticAttention } from "./lifecycle-attention.ts";
 import { readLifecycleState } from "./lifecycle-children.ts";
-import type { TurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness.ts";
 import type { LifecycleHold, LifecycleWaits, SessionLifecycle } from "./session-lifecycle-types.ts";
 import { isRecord } from "./work-custody-record.ts";
 
@@ -18,19 +18,29 @@ export interface LifecycleRecord extends SessionLifecycle {
 	readonly lastTurnEnd?: DurableTurnEnd;
 }
 
-export type DurableTurnEnd = Pick<TurnEndLivenessInput, "endedBy" | "deadlineStop" | "budgetSpent" | "providerRetryAtMs">;
+export type DurableTurnEnd = Pick<
+	TurnEndLivenessInput,
+	"endedBy" | "deadlineStop" | "budgetSpent" | "providerRetryAtMs"
+>;
 
 /** Restore the wire snapshot and its private high-water marks from owned JSONL. */
 export function readLifecycleRecord(value: unknown): LifecycleRecord | undefined {
 	if (!isRecord(value)) return undefined;
 	const state = readLifecycleState(value.state);
 	if (
-		!state || typeof value.sessionId !== "string" || typeof value.seq !== "number" || typeof value.epoch !== "number" ||
+		!state ||
+		typeof value.sessionId !== "string" ||
+		typeof value.seq !== "number" ||
+		typeof value.epoch !== "number" ||
 		(value.epochOrigin !== "human" && value.epochOrigin !== "automatic") ||
-		typeof value.humanInputRevision !== "number" || typeof value.selfSettleEligible !== "boolean" ||
-		typeof value.runPaused !== "boolean" || typeof value.since !== "string" ||
-		(value.role !== "root" && value.role !== "child") || typeof value.rootSessionId !== "string"
-	) return undefined;
+		typeof value.humanInputRevision !== "number" ||
+		typeof value.selfSettleEligible !== "boolean" ||
+		typeof value.runPaused !== "boolean" ||
+		typeof value.since !== "string" ||
+		(value.role !== "root" && value.role !== "child") ||
+		typeof value.rootSessionId !== "string"
+	)
+		return undefined;
 	const synthetic: SyntheticAttention[] = [];
 	if (Array.isArray(value.synthetic)) {
 		for (const occurrence of value.synthetic) {
@@ -75,15 +85,19 @@ export function readLifecycleRecord(value: unknown): LifecycleRecord | undefined
 		...(failure ? { failure } : {}),
 		...(lastTurnEnd ? { lastTurnEnd } : {}),
 		...(isRecord(value.settleDecision) && typeof value.settleDecision.decisionId === "string"
-			? { settleDecision: { decisionId: value.settleDecision.decisionId } } : {}),
-		...(isRecord(value.settleRequest) && typeof value.settleRequest.epoch === "number" &&
-			typeof value.settleRequest.revision === "number"
-			? { settleRequest: { epoch: value.settleRequest.epoch, revision: value.settleRequest.revision } } : {}),
+			? { settleDecision: { decisionId: value.settleDecision.decisionId } }
+			: {}),
+		...(isRecord(value.settleRequest) &&
+		typeof value.settleRequest.epoch === "number" &&
+		typeof value.settleRequest.revision === "number"
+			? { settleRequest: { epoch: value.settleRequest.epoch, revision: value.settleRequest.revision } }
+			: {}),
 	};
 }
 
 function readTurnEnd(value: unknown): DurableTurnEnd | undefined {
-	if (!isRecord(value) || typeof value.deadlineStop !== "boolean" || typeof value.budgetSpent !== "boolean") return undefined;
+	if (!isRecord(value) || typeof value.deadlineStop !== "boolean" || typeof value.budgetSpent !== "boolean")
+		return undefined;
 	switch (value.endedBy) {
 		case "clean":
 		case "user-abort":
@@ -93,7 +107,9 @@ function readTurnEnd(value: unknown): DurableTurnEnd | undefined {
 		case "provider-error":
 		case "policy-rejection":
 			return {
-				endedBy: value.endedBy, deadlineStop: value.deadlineStop, budgetSpent: value.budgetSpent,
+				endedBy: value.endedBy,
+				deadlineStop: value.deadlineStop,
+				budgetSpent: value.budgetSpent,
 				providerRetryAtMs: typeof value.providerRetryAtMs === "number" ? value.providerRetryAtMs : undefined,
 			};
 		default:
@@ -116,9 +132,10 @@ function readWaits(value: unknown): LifecycleWaits | undefined {
 	}
 	const human = Array.isArray(value.human)
 		? value.human.flatMap((request) => {
-			const wait = readHumanWait(request);
-			return wait ? [wait] : [];
-		}) : [];
+				const wait = readHumanWait(request);
+				return wait ? [wait] : [];
+			})
+		: [];
 	return { children: value.children, background, human };
 }
 

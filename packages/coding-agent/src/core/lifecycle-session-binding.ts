@@ -3,10 +3,10 @@ import type { AgentSession } from "./agent-session.ts";
 import { collectGoalLifecycleFacts, onGoalLifecycleChange } from "./extensions/builtin/goal/lifecycle-facts.ts";
 import { readGoal } from "./extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "./extensions/builtin/goal/store-ref.ts";
-import type { Goal } from "./extensions/builtin/goal/types.ts";
 import { collectTurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness-report.ts";
-import type { AgentEndEvent } from "./extensions/types.ts";
+import type { Goal } from "./extensions/builtin/goal/types.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
+import type { AgentEndEvent } from "./extensions/types.ts";
 import { consumeLifecycleDelivery, messageTicket } from "./lifecycle-delivery.ts";
 import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
 import type { LifecycleRecord } from "./lifecycle-record.ts";
@@ -44,14 +44,23 @@ export class LifecycleSessionBinding {
 		this.controller = new SessionLifecycleController({
 			sessionId: session.sessionId,
 			spawnedBy: session.sessionManager.getHeader()?.spawnedBy,
-			entries: session.sessionManager.getEntries().filter((entry) =>
-				entry.type !== "custom" ||
-				(entry.customType !== "work-custody" && entry.customType !== "child-lifecycle") ||
-				(isRecord(entry.data) && entry.data.sessionId === session.sessionId),
-			),
-			append: (record: LifecycleRecord) => { host.append("session-lifecycle", record); },
-			appendChild: (report) => { host.append("child-lifecycle", { ...report, sessionId: session.sessionId }); },
-			appendCustody: (record) => { host.append("work-custody", { ...record, sessionId: session.sessionId }); },
+			entries: session.sessionManager
+				.getEntries()
+				.filter(
+					(entry) =>
+						entry.type !== "custom" ||
+						(entry.customType !== "work-custody" && entry.customType !== "child-lifecycle") ||
+						(isRecord(entry.data) && entry.data.sessionId === session.sessionId),
+				),
+			append: (record: LifecycleRecord) => {
+				host.append("session-lifecycle", record);
+			},
+			appendChild: (report) => {
+				host.append("child-lifecycle", { ...report, sessionId: session.sessionId });
+			},
+			appendCustody: (record) => {
+				host.append("work-custody", { ...record, sessionId: session.sessionId });
+			},
 			emit: (event) => host.emit(event),
 			readRuntime: () => readLifecycleRuntimeFacts(session),
 		});
@@ -101,9 +110,11 @@ export class LifecycleSessionBinding {
 	consumedEntry(message: AgentMessage): string | undefined {
 		if (message.role !== "custom") return undefined;
 		const ticketId = messageTicket(message);
-		return ticketId ? this.session.sessionManager.getEntries().find(
-			(entry) => entry.type === "custom_message" && messageTicket(entry) === ticketId,
-		)?.id : undefined;
+		return ticketId
+			? this.session.sessionManager
+					.getEntries()
+					.find((entry) => entry.type === "custom_message" && messageTicket(entry) === ticketId)?.id
+			: undefined;
 	}
 
 	async turnEnded(event: AgentEndEvent): Promise<void> {
@@ -116,14 +127,22 @@ export class LifecycleSessionBinding {
 		const saved = this.lastEnd ? undefined : this.controller.lastTurnInput;
 		const end = this.lastEnd ?? (saved ? { type: "agent_end" as const, messages: [] } : undefined);
 		const collected = await collectGoalLifecycleFacts(this.session.sessionManager, end, changedGoal);
-		const goal = collected ? collected.goal : changedGoal === undefined
-			? await readGoal(goalStoreRef(this.session.sessionManager, this.session.cwd)) : changedGoal;
+		const goal = collected
+			? collected.goal
+			: changedGoal === undefined
+				? await readGoal(goalStoreRef(this.session.sessionManager, this.session.cwd))
+				: changedGoal;
 		if (generation !== this.refreshGeneration) return;
 		let input = collected?.input;
-		if (!input && end) {
+		// After session replacement or reload the runner is stale and its ctx throws on every read;
+		// the replacing session owns lifecycle facts from then on.
+		if (!input && end && this.session.extensionRunner.isActive) {
 			const ctx = this.session.extensionRunner.createContext();
 			input = collectTurnEndLivenessInput(ctx, end, {
-				goal, todoOutcome: undefined, deadlineStop: false, continuationPending: false,
+				goal,
+				todoOutcome: undefined,
+				deadlineStop: false,
+				continuationPending: false,
 				monitor: {
 					liveWakeSources: () => [...this.session.activeWakeSources],
 					scheduledContinuation: () => undefined,
@@ -131,11 +150,14 @@ export class LifecycleSessionBinding {
 				},
 			});
 		}
-		if (input && saved) input = {
-			...input, endedBy: saved.endedBy,
-			budgetSpent: input.budgetSpent || saved.budgetSpent, deadlineStop: input.deadlineStop || saved.deadlineStop,
-			providerRetryAtMs: input.providerRetryAtMs ?? saved.providerRetryAtMs,
-		};
+		if (input && saved)
+			input = {
+				...input,
+				endedBy: saved.endedBy,
+				budgetSpent: input.budgetSpent || saved.budgetSpent,
+				deadlineStop: input.deadlineStop || saved.deadlineStop,
+				providerRetryAtMs: input.providerRetryAtMs ?? saved.providerRetryAtMs,
+			};
 		this.controller.goalFacts(goal, input);
 	}
 
@@ -162,13 +184,22 @@ export class LifecycleSessionBinding {
 				(entry) => entry.type === "custom_message" && messageTicket(entry) === ticketId,
 			);
 			if (record.state !== "consumed" && !transcript) continue;
-			if (transcript && record.state !== "consumed") this.controller.obligations.consumed(ticketId, {
-				runId: record.runId ?? this.controller.ledger.runId ?? crypto.randomUUID(),
-				transcriptEntryId: transcript.id,
-			});
+			if (transcript && record.state !== "consumed")
+				this.controller.obligations.consumed(ticketId, {
+					runId: record.runId ?? this.controller.ledger.runId ?? crypto.randomUUID(),
+					transcriptEntryId: transcript.id,
+				});
 			this.controller.ledger.interrupted = true;
-			if (!entries.some((entry) => entry.type === "custom" && entry.customType === "interrupted-run" &&
-				isRecord(entry.data) && entry.data.ticketId === ticketId)) this.hostAppendInterruption(ticketId, record.runId);
+			if (
+				!entries.some(
+					(entry) =>
+						entry.type === "custom" &&
+						entry.customType === "interrupted-run" &&
+						isRecord(entry.data) &&
+						entry.data.ticketId === ticketId,
+				)
+			)
+				this.hostAppendInterruption(ticketId, record.runId);
 			this.recordInterruptedTools(transcript?.id ?? record.transcriptEntryId);
 		}
 		this.restored = true;
@@ -176,7 +207,9 @@ export class LifecycleSessionBinding {
 		for (const record of this.controller.obligations.active) {
 			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;
 			await this.session.sendCustomMessage(record.payload.message, {
-				triggerTurn: true, deliverAs: record.payload.deliverAs, ticket: record.ticketId,
+				triggerTurn: true,
+				deliverAs: record.payload.deliverAs,
+				ticket: record.ticketId,
 			});
 		}
 	}
@@ -193,18 +226,32 @@ export class LifecycleSessionBinding {
 				for (const part of entry.message.content) if (part.type === "toolCall") pending.set(part.id, part);
 			} else if (entry.message.role === "toolResult") pending.delete(entry.message.toolCallId);
 		}
-		for (const call of pending.values()) this.session.sessionManager.appendMessage({
-			role: "toolResult", toolCallId: call.id, toolName: call.name,
-			content: [{ type: "text", text: "INTERRUPTED: the consuming run ended before this tool result was recorded. Side effects may be partial. The tool was not re-run." }],
-			details: { interrupted: { reason: "host_restart" } },
-			isError: true, timestamp: Date.now(),
-		});
-		if (pending.size > 0) this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
+		for (const call of pending.values())
+			this.session.sessionManager.appendMessage({
+				role: "toolResult",
+				toolCallId: call.id,
+				toolName: call.name,
+				content: [
+					{
+						type: "text",
+						text: "INTERRUPTED: the consuming run ended before this tool result was recorded. Side effects may be partial. The tool was not re-run.",
+					},
+				],
+				details: { interrupted: { reason: "host_restart" } },
+				isError: true,
+				timestamp: Date.now(),
+			});
+		if (pending.size > 0)
+			this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
 	}
 
 	private hostAppendInterruption(ticketId: string, runId: string | undefined): void {
 		this.session.sessionManager.appendCustomEntry("interrupted-run", {
-			ticketId, runId, status: "INTERRUPTED", reason: "host_restart", at: new Date().toISOString(),
+			ticketId,
+			runId,
+			status: "INTERRUPTED",
+			reason: "host_restart",
+			at: new Date().toISOString(),
 		});
 	}
 
@@ -212,7 +259,9 @@ export class LifecycleSessionBinding {
 		if (!isRecord(data) || typeof data.source !== "string" || typeof data.activeCount !== "number") return;
 		if (!Number.isFinite(data.activeCount)) return;
 		this.controller.obligations.syncSource(
-			data.source, data.kind === "children" ? "children" : "background", data.activeCount,
+			data.source,
+			data.kind === "children" ? "children" : "background",
+			data.activeCount,
 		);
 	}
 

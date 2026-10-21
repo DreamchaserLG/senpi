@@ -2,10 +2,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it } from "vitest";
 import { WAKE_SOURCE_STATE_EVENT } from "../../../src/core/extensions/builtin/monitor-state-event.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
-import {
-	ConnectionQuestionBridge,
-	sessionQuestionBridges,
-} from "../../../src/modes/rpc/connection-question-bridge.ts";
+import { ConnectionQuestionBridge, sessionQuestionBridges } from "../../../src/modes/rpc/connection-question-bridge.ts";
 import type { Harness } from "../harness.ts";
 import { createLifecycleHarness, runToAgentIdle } from "../lifecycle-test-harness.ts";
 

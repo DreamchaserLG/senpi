@@ -58,8 +58,12 @@ it("admits a local blocking question answer before its promise resumes", async (
 	const question = fake.createExtensionUIContext().question;
 	if (!question) throw new Error("Expected the question UI");
 	const answer = question({
-		requestId: "review", waitForAnswer: true, timeoutMs: 60_000,
-		questions: [{ id: "review", header: "Review", question: "Approve?", options: [{ label: "Approve" }], multiSelect: false }],
+		requestId: "review",
+		waitForAnswer: true,
+		timeoutMs: 60_000,
+		questions: [
+			{ id: "review", header: "Review", question: "Approve?", options: [{ label: "Approve" }], multiSelect: false },
+		],
 	});
 	const overlay = fake.ui.getFocusedComponent();
 	if (!(overlay instanceof AskUserQuestionComponent)) throw new Error("Expected the real question overlay");

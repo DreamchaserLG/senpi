@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
-import { SessionManager } from "../../../src/core/session-manager.ts";
 import type { LifecycleApi } from "../../../src/core/session-lifecycle-types.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 // senpi#3864: task identity and lifecycle generations fence every child report.
@@ -12,9 +12,15 @@ afterEach(() => {
 it("ignores a stale child generation without replacing live custody", async () => {
 	// Given the current child generation is still running.
 	let api: LifecycleApi | undefined;
-	const h = await createHarness({ extensionFactories: [(pi) => {
-		pi.on("session_start", () => { api = pi.lifecycle; });
-	}] });
+	const h = await createHarness({
+		extensionFactories: [
+			(pi) => {
+				pi.on("session_start", () => {
+					api = pi.lifecycle;
+				});
+			},
+		],
+	});
 	harnesses.push(h);
 	await h.session.bindExtensions({ mode: "rpc" });
 	if (!api) throw new Error("pi.lifecycle must be bound before session_start");

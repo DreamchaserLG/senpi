@@ -21,8 +21,12 @@ it.each([
 
 		// When the runner writes the authoritative terminal result.
 		h.session.reportChildLifecycle({
-			taskId: "review", childSessionId: h.session.sessionId,
-			runEpoch: 1, generation: 1, state, terminal,
+			taskId: "review",
+			childSessionId: h.session.sessionId,
+			runEpoch: 1,
+			generation: 1,
+			state,
+			terminal,
 		});
 
 		// Then local producer cleanup cannot keep a terminal child alive.

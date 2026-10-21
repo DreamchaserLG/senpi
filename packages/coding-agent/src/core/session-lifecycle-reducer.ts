@@ -1,4 +1,10 @@
-import type { ChildLifecycleReport, LifecycleHold, LifecycleWaits, SessionLifecycle, SessionLifecycleState } from "./session-lifecycle-types.ts";
+import type {
+	ChildLifecycleReport,
+	LifecycleHold,
+	LifecycleWaits,
+	SessionLifecycle,
+	SessionLifecycleState,
+} from "./session-lifecycle-types.ts";
 
 export interface LifecycleFacts {
 	readonly role: "root" | "child";

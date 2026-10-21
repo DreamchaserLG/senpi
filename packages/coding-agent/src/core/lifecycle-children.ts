@@ -1,5 +1,5 @@
-import type { SessionEntry } from "./session-manager.ts";
 import type { ChildLifecycleReport, LifecycleWaits, SessionLifecycleState } from "./session-lifecycle-types.ts";
+import type { SessionEntry } from "./session-manager.ts";
 import { isRecord } from "./work-custody-record.ts";
 
 export interface ChildLifecycleStore {
@@ -38,9 +38,11 @@ export class LifecycleChildren {
 	private accept(report: ChildLifecycleReport, persist: boolean): boolean {
 		const previous = this.records.get(report.taskId);
 		if (
-			previous && (report.runEpoch < previous.runEpoch ||
+			previous &&
+			(report.runEpoch < previous.runEpoch ||
 				(report.runEpoch === previous.runEpoch && report.generation <= previous.generation))
-		) return false;
+		)
+			return false;
 		// A new run epoch replaces the entire old report, including terminal state.
 		// Human waits remain runner-owned until an explicit child-to-human bridge exists.
 		const accepted: ChildLifecycleReport = {
@@ -74,21 +76,30 @@ function readChildReport(value: unknown): ChildLifecycleReport | undefined {
 	if (!isRecord(value)) return undefined;
 	const state = readLifecycleState(value.state);
 	if (
-		!state || typeof value.taskId !== "string" || typeof value.childSessionId !== "string" ||
-		typeof value.runEpoch !== "number" || !Number.isSafeInteger(value.runEpoch) || value.runEpoch < 0 ||
-		typeof value.generation !== "number" || !Number.isSafeInteger(value.generation) || value.generation < 0
-	) return undefined;
+		!state ||
+		typeof value.taskId !== "string" ||
+		typeof value.childSessionId !== "string" ||
+		typeof value.runEpoch !== "number" ||
+		!Number.isSafeInteger(value.runEpoch) ||
+		value.runEpoch < 0 ||
+		typeof value.generation !== "number" ||
+		!Number.isSafeInteger(value.generation) ||
+		value.generation < 0
+	)
+		return undefined;
 	const terminal = readTerminal(value.terminal);
 	let waitingOn: LifecycleWaits | undefined;
 	if (isRecord(value.waitingOn) && typeof value.waitingOn.children === "number") {
 		const background: LifecycleWaits["background"][number][] = [];
-		if (Array.isArray(value.waitingOn.background)) for (const item of value.waitingOn.background) {
-			if (!isRecord(item) || typeof item.source !== "string" || typeof item.activeCount !== "number") continue;
-			background.push({
-				source: item.source, activeCount: item.activeCount,
-				...(typeof item.retryAtMs === "number" ? { retryAtMs: item.retryAtMs } : {}),
-			});
-		}
+		if (Array.isArray(value.waitingOn.background))
+			for (const item of value.waitingOn.background) {
+				if (!isRecord(item) || typeof item.source !== "string" || typeof item.activeCount !== "number") continue;
+				background.push({
+					source: item.source,
+					activeCount: item.activeCount,
+					...(typeof item.retryAtMs === "number" ? { retryAtMs: item.retryAtMs } : {}),
+				});
+			}
 		waitingOn = { children: value.waitingOn.children, background, human: [] };
 	}
 	return {

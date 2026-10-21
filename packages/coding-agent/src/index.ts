@@ -27,22 +27,6 @@ export {
 	type SessionStats,
 } from "./core/agent-session.ts";
 export { type OAuthCredential, readStoredCredential } from "./core/auth-storage.ts";
-export type {
-	ChildLifecycleReport,
-	DeliveryTicketId,
-	HumanWait,
-	LifecycleApi,
-	LifecycleHold,
-	LifecycleWaits,
-	ObligationKind,
-	ObligationToken,
-	SelfSettleResult,
-	SessionLifecycle,
-	SessionLifecycleEvent,
-	SessionLifecycleState,
-	SpawnedBy,
-	WorkObligations,
-} from "./core/session-lifecycle-types.ts";
 // Compaction
 export {
 	type BranchPreparation,
@@ -356,6 +340,22 @@ export {
 	createWriteTool,
 	type PromptTemplate,
 } from "./core/sdk.ts";
+export type {
+	ChildLifecycleReport,
+	DeliveryTicketId,
+	HumanWait,
+	LifecycleApi,
+	LifecycleHold,
+	LifecycleWaits,
+	ObligationKind,
+	ObligationToken,
+	SelfSettleResult,
+	SessionLifecycle,
+	SessionLifecycleEvent,
+	SessionLifecycleState,
+	SpawnedBy,
+	WorkObligations,
+} from "./core/session-lifecycle-types.ts";
 export {
 	type BranchSummaryEntry,
 	buildContextEntries,

@@ -1,6 +1,6 @@
+import type { AgentEndEvent } from "../../types.ts";
 import type { TurnEndLivenessInput } from "./turn-end-liveness.ts";
 import type { Goal } from "./types.ts";
-import type { AgentEndEvent } from "../../types.ts";
 
 export interface GoalLifecycleFacts {
 	readonly goal: Goal | null;
@@ -31,6 +31,10 @@ export function registerGoalLifecycleCollector(owner: object, collect: Collector
 	};
 }
 
-export function collectGoalLifecycleFacts(owner: object, restoredEnd?: AgentEndEvent, goal?: Goal | null): Promise<GoalLifecycleFacts | undefined> {
+export function collectGoalLifecycleFacts(
+	owner: object,
+	restoredEnd?: AgentEndEvent,
+	goal?: Goal | null,
+): Promise<GoalLifecycleFacts | undefined> {
 	return collectors.get(owner)?.(restoredEnd, goal) ?? Promise.resolve(undefined);
 }

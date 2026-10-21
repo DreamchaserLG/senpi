@@ -11,14 +11,18 @@ it("keeps the restore barrier armed until the last session_start handler re-regi
 	const release = Promise.withResolvers<void>();
 	const timeout = AbortSignal.timeout(10_000);
 	timeout.addEventListener("abort", () => entered.reject(timeout.reason), { once: true });
-	const fixture = await createIdentityHarness({ extensionFactories: [(pi) => {
-		pi.on("session_start", async () => {
-			if (!block) return;
-			entered.resolve();
-			await release.promise;
-			pi.events.emit("wake_source_state", { source: "restored-monitor", kind: "background", activeCount: 1 });
-		});
-	}] });
+	const fixture = await createIdentityHarness({
+		extensionFactories: [
+			(pi) => {
+				pi.on("session_start", async () => {
+					if (!block) return;
+					entered.resolve();
+					await release.promise;
+					pi.events.emit("wake_source_state", { source: "restored-monitor", kind: "background", activeCount: 1 });
+				});
+			},
+		],
+	});
 	let binding: Promise<void> | undefined;
 	try {
 		await fixture.session.bindExtensions({ mode: "rpc" });
@@ -30,7 +34,9 @@ it("keeps the restore barrier armed until the last session_start handler re-regi
 		const completionId = fixture.session.lifecycle.completionId;
 		await fixture.openSettled();
 		const events: AgentSessionEvent[] = [];
-		fixture.session.subscribe((event) => { events.push(event); });
+		fixture.session.subscribe((event) => {
+			events.push(event);
+		});
 		block = true;
 		binding = fixture.session.bindExtensions({ mode: "rpc" });
 		void binding.catch(entered.reject);
@@ -40,7 +46,9 @@ it("keeps the restore barrier armed until the last session_start handler re-regi
 		release.resolve();
 		await binding;
 		expect(fixture.session.lifecycle).toMatchObject({ restoring: false, state: "waiting_background" });
-		expect(events.some((event) => event.type === "session_lifecycle" && event.lifecycle.state === "done")).toBe(false);
+		expect(events.some((event) => event.type === "session_lifecycle" && event.lifecycle.state === "done")).toBe(
+			false,
+		);
 	} finally {
 		release.resolve();
 		try {

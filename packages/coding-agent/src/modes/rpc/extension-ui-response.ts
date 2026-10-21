@@ -46,7 +46,10 @@ export type ExtensionUiResponseReply = {
 } & ({ readonly success: true } | { readonly success: false; readonly error: string });
 
 type QuestionAnswers = {
-	respond(response: RpcExtensionUIResponse, beforeAnswer?: () => void): boolean | "question_incomplete" | "question_already_resolved";
+	respond(
+		response: RpcExtensionUIResponse,
+		beforeAnswer?: () => void,
+	): boolean | "question_incomplete" | "question_already_resolved";
 };
 type DialogAnswers = { resolve(response: RpcExtensionUIResponse, beforeAnswer?: () => void): boolean };
 
@@ -57,13 +60,19 @@ type DialogAnswers = { resolve(response: RpcExtensionUIResponse, beforeAnswer?: 
  */
 export function settleExtensionUiResponse(
 	response: RpcExtensionUIResponse,
-	targets: { readonly questions: QuestionAnswers; readonly dialogs: DialogAnswers; readonly routed: boolean; readonly beforeAnswer?: () => void },
+	targets: {
+		readonly questions: QuestionAnswers;
+		readonly dialogs: DialogAnswers;
+		readonly routed: boolean;
+		readonly beforeAnswer?: () => void;
+	},
 ): ExtensionUiResponseReply | undefined {
 	const requestId = answeredUiRequestId(response) ?? response.id;
 	const answer = requestId === response.id ? response : { ...response, id: requestId };
 	const question = targets.questions.respond(answer, targets.beforeAnswer);
 	if (typeof question === "string") return refused(response.id, question);
-	if (question || targets.dialogs.resolve(answer, targets.beforeAnswer)) return { ...reply(response.id), success: true };
+	if (question || targets.dialogs.resolve(answer, targets.beforeAnswer))
+		return { ...reply(response.id), success: true };
 	// A routed binding owns exactly one session's request map: an unmatched response is a protocol
 	// error for its sender, never a cross-session match.
 	return targets.routed ? refused(response.id, "unknown_extension_ui_request") : undefined;

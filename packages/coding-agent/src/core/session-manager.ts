@@ -1704,8 +1704,11 @@ export class SessionManager {
 
 		// Entries stay in memory only until the branch holds a user or assistant message; then all are
 		// written (#10000: the prompt reaches disk even if the first turn never completes).
-		const durableLifecycle = entry.type === "custom" &&
-			(entry.customType === "session-lifecycle" || entry.customType === "work-custody" || entry.customType === "child-lifecycle");
+		const durableLifecycle =
+			entry.type === "custom" &&
+			(entry.customType === "session-lifecycle" ||
+				entry.customType === "work-custody" ||
+				entry.customType === "child-lifecycle");
 		if (!isConversationEntry(entry) && !durableLifecycle && !this._hasConversation()) return;
 
 		// An asynchronous header write owns the file until it finishes, and appends this entry.

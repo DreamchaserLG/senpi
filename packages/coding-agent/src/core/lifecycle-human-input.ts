@@ -9,9 +9,14 @@ export interface HumanInputAdmission {
  * One integration seam for #3811's admission hook.
  * Never infer origin from a role=user message or a generic RPC input.
  */
-export function bindLifecycleHumanInput(session: AgentSession, listener: (event: HumanInputAdmission) => void): () => void {
-	return session.onHumanInputAdmitted((event) => listener({
-		kind: event.kind,
-		at: new Date(event.at).toISOString(),
-	}));
+export function bindLifecycleHumanInput(
+	session: AgentSession,
+	listener: (event: HumanInputAdmission) => void,
+): () => void {
+	return session.onHumanInputAdmitted((event) =>
+		listener({
+			kind: event.kind,
+			at: new Date(event.at).toISOString(),
+		}),
+	);
 }

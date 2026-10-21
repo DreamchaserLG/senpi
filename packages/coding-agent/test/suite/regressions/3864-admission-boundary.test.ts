@@ -12,17 +12,23 @@ it("cannot seal between a human prompt's started disposition and its native turn
 		await runToAgentIdle(h, () => h.session.prompt("Complete the work."));
 		const epoch = h.session.lifecycle.epoch;
 		let admitted = false;
-		await runToAgentIdle(h, () => h.session.prompt("Incorporate the review.", {
-			promptDisposition: (disposition) => {
-				if (disposition !== "started") return;
-				admitted = true;
-				child.close("cancelled");
-				expect(h.events.some((event) => event.type === "session_lifecycle" && event.lifecycle.state === "done")).toBe(false);
-			},
-		}));
+		await runToAgentIdle(h, () =>
+			h.session.prompt("Incorporate the review.", {
+				promptDisposition: (disposition) => {
+					if (disposition !== "started") return;
+					admitted = true;
+					child.close("cancelled");
+					expect(
+						h.events.some((event) => event.type === "session_lifecycle" && event.lifecycle.state === "done"),
+					).toBe(false);
+				},
+			}),
+		);
 		expect(admitted).toBe(true);
 		expect(h.session.lifecycle).toMatchObject({ state: "done", epoch, epochOrigin: "human", humanInputRevision: 2 });
-		expect(h.events.filter((event) => event.type === "session_lifecycle" && event.lifecycle.state === "done")).toHaveLength(1);
+		expect(
+			h.events.filter((event) => event.type === "session_lifecycle" && event.lifecycle.state === "done"),
+		).toHaveLength(1);
 	} finally {
 		h.cleanup();
 	}

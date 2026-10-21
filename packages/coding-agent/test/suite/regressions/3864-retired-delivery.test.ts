@@ -7,7 +7,9 @@ for (const producerOwned of [false, true]) {
 		const h = await createBoundLifecycleHarness({ persistSession: true });
 		try {
 			expect(h.session.workObligations).toBeDefined();
-			const ticket = producerOwned ? h.session.workObligations.open("result:review", "children").ticket() : undefined;
+			const ticket = producerOwned
+				? h.session.workObligations.open("result:review", "children").ticket()
+				: undefined;
 			const delivery = h.session.sendCustomMessage(
 				{ customType: "senpi-task.completion", content: "Review passed.", display: false },
 				{ triggerTurn: true, ...(ticket ? { ticket } : {}) },
@@ -18,12 +20,16 @@ for (const producerOwned of [false, true]) {
 			await delivery;
 			expect(h.events.some((event) => event.type === "agent_start")).toBe(false);
 			expect(h.session.workObligations.activeCount).toBe(producerOwned ? 1 : 0);
-			const records = h.sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "work-custody");
-			expect(records).toContainEqual(expect.objectContaining({
-				data: expect.objectContaining(producerOwned
-					? { ticketId: ticket, state: "open", delivery: "retired" }
-					: { state: "cancelled" }),
-			}));
+			const records = h.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "custom" && entry.customType === "work-custody");
+			expect(records).toContainEqual(
+				expect.objectContaining({
+					data: expect.objectContaining(
+						producerOwned ? { ticketId: ticket, state: "open", delivery: "retired" } : { state: "cancelled" },
+					),
+				}),
+			);
 			expect(h.agent.peekQueuedMessages({ all: true })).toHaveLength(0);
 		} finally {
 			h.cleanup();

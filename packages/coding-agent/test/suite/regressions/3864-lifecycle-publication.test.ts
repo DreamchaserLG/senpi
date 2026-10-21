@@ -58,10 +58,12 @@ it("opens the next epoch when an automatic wake follows a sealed reply", async (
 	const sealedEpoch = h.session.lifecycle.epoch;
 
 	// When an automatic delivery starts another turn.
-	await runToAgentIdle(h, () => h.session.sendCustomMessage(
-		{ customType: "senpi-monitor:notification", content: "Changed", display: false },
-		{ triggerTurn: true },
-	));
+	await runToAgentIdle(h, () =>
+		h.session.sendCustomMessage(
+			{ customType: "senpi-monitor:notification", content: "Changed", display: false },
+			{ triggerTurn: true },
+		),
+	);
 
 	// Then its distinct epoch is automatic, although its message entered the model.
 	expect(h.session.lifecycle).toMatchObject({

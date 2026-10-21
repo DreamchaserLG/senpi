@@ -19,7 +19,10 @@
 
 /** Live counts of extension-published wake sources, keyed by source name. */
 export class WakeSourceTracker {
-	private readonly counts = new Map<string, { readonly activeCount: number; readonly kind: "children" | "background" }>();
+	private readonly counts = new Map<
+		string,
+		{ readonly activeCount: number; readonly kind: "children" | "background" }
+	>();
 
 	/**
 	 * Folds one `wake_source_state` payload in. Unknown shapes are ignored: a
@@ -31,10 +34,11 @@ export class WakeSourceTracker {
 		const { source, activeCount } = data;
 		if (typeof source !== "string" || source.length === 0) return;
 		if (typeof activeCount !== "number" || !Number.isFinite(activeCount)) return;
-		if (activeCount > 0) this.counts.set(source, {
-			activeCount,
-			kind: "kind" in data && data.kind === "children" ? "children" : "background",
-		});
+		if (activeCount > 0)
+			this.counts.set(source, {
+				activeCount,
+				kind: "kind" in data && data.kind === "children" ? "children" : "background",
+			});
 		else this.counts.delete(source);
 	}
 

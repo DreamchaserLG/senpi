@@ -11,18 +11,26 @@ it("keeps a continuation scheduled at agent_settled running until its final repl
 	timeout.addEventListener("abort", () => entered.reject(timeout.reason), { once: true });
 	let requests = 0;
 	let continued = false;
-	const h = await createHarness({ persistSession: true, extensionFactories: [(pi) => {
-		pi.on("agent_settled", () => {
-			if (continued) return;
-			continued = true;
-			pi.sendMessage({ customType: "goal-continuation", content: "Finish the remaining work.", display: false }, { triggerTurn: true });
-		});
-		pi.on("before_provider_request", async () => {
-			if (++requests !== 2) return;
-			entered.resolve();
-			await release.promise;
-		});
-	}] });
+	const h = await createHarness({
+		persistSession: true,
+		extensionFactories: [
+			(pi) => {
+				pi.on("agent_settled", () => {
+					if (continued) return;
+					continued = true;
+					pi.sendMessage(
+						{ customType: "goal-continuation", content: "Finish the remaining work.", display: false },
+						{ triggerTurn: true },
+					);
+				});
+				pi.on("before_provider_request", async () => {
+					if (++requests !== 2) return;
+					entered.resolve();
+					await release.promise;
+				});
+			},
+		],
+	});
 	let run: Promise<void> | undefined;
 	try {
 		expect(h.session.lifecycle).toBeDefined();
@@ -33,11 +41,15 @@ it("keeps a continuation scheduled at agent_settled running until its final repl
 		void run.catch(entered.reject);
 		await entered.promise;
 		expect(h.session.lifecycle).toMatchObject({ state: "running" });
-		expect(h.events.filter((event) => event.type === "session_lifecycle" && event.lifecycle.state === "done")).toHaveLength(0);
+		expect(
+			h.events.filter((event) => event.type === "session_lifecycle" && event.lifecycle.state === "done"),
+		).toHaveLength(0);
 		release.resolve();
 		await run;
 		await idle;
-		expect(h.events.filter((event) => event.type === "session_lifecycle" && event.lifecycle.state === "done")).toHaveLength(1);
+		expect(
+			h.events.filter((event) => event.type === "session_lifecycle" && event.lifecycle.state === "done"),
+		).toHaveLength(1);
 	} finally {
 		release.resolve();
 		try {

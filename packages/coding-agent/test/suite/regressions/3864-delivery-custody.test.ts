@@ -3,7 +3,11 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, expect, it } from "vitest";
 import type { Harness } from "../harness.ts";
-import { createBoundLifecycleHarness as createHarness, nextSessionEvent, runToAgentIdle } from "../lifecycle-test-harness.ts";
+import {
+	createBoundLifecycleHarness as createHarness,
+	nextSessionEvent,
+	runToAgentIdle,
+} from "../lifecycle-test-harness.ts";
 
 // senpi#3864: a ticket's work stays owned until its model-consuming run idles.
 const harnesses: Harness[] = [];
@@ -23,10 +27,12 @@ it("consumes a queued wake into a new turn before sealing root work", async () =
 	h.setResponses([fauxAssistantMessage("The review is incorporated.")]);
 
 	// When the engine delivers and consumes the result.
-	await runToAgentIdle(h, () => h.session.sendCustomMessage(
-		{ customType: "senpi-task.completion", content: "Review passed.", display: false },
-		{ triggerTurn: true, ticket },
-	));
+	await runToAgentIdle(h, () =>
+		h.session.sendCustomMessage(
+			{ customType: "senpi-task.completion", content: "Review passed.", display: false },
+			{ triggerTurn: true, ticket },
+		),
+	);
 
 	// Then custody records the consuming run and only its idle settles the work.
 	const records = h.sessionManager

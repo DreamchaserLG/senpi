@@ -17,8 +17,8 @@ import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
 import { GoalDirectInputLifecycle } from "./direct-input-lifecycle.ts";
 import { GoalElapsedTicker } from "./elapsed-ticker.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
-import { GOAL_STALE_STOP_NOTICE, isResumeOfStoppedGoal, queueGoalContinuation } from "./lifecycle-helpers.ts";
 import { goalLifecycleChanged, registerGoalLifecycleCollector } from "./lifecycle-facts.ts";
+import { GOAL_STALE_STOP_NOTICE, isResumeOfStoppedGoal, queueGoalContinuation } from "./lifecycle-helpers.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
 import { registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
@@ -150,18 +150,27 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		activeContext = ctx;
 		monitorContinuation.start(ctx);
 		retireLifecycleCollector?.();
-		retireLifecycleCollector = registerGoalLifecycleCollector(ctx.sessionManager, async (restoredEnd, changedGoal) => {
-			const goal = changedGoal === undefined ? await readGoal(goalStoreRef(ctx)) : changedGoal;
-			const end = lastAgentEnd ?? restoredEnd;
-			return {
-				goal,
-				...(end ? { input: collectTurnEndLivenessInput(ctx, end, {
-					goal, todoOutcome: lastTodoOutcome,
-					deadlineStop: deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) !== undefined,
-					continuationPending, monitor: monitorContinuation,
-				}) } : {}),
-			};
-		});
+		retireLifecycleCollector = registerGoalLifecycleCollector(
+			ctx.sessionManager,
+			async (restoredEnd, changedGoal) => {
+				const goal = changedGoal === undefined ? await readGoal(goalStoreRef(ctx)) : changedGoal;
+				const end = lastAgentEnd ?? restoredEnd;
+				return {
+					goal,
+					...(end
+						? {
+								input: collectTurnEndLivenessInput(ctx, end, {
+									goal,
+									todoOutcome: lastTodoOutcome,
+									deadlineStop: deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) !== undefined,
+									continuationPending,
+									monitor: monitorContinuation,
+								}),
+							}
+						: {}),
+				};
+			},
+		);
 		directInputLifecycle.reset();
 		todoOwedBackstop.resetChain();
 		const ref = goalStoreRef(ctx);

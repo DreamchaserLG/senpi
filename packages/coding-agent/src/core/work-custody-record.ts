@@ -81,12 +81,16 @@ function readPayload(value: unknown): CustodyPayload | undefined {
 }
 
 function isMessageContent(value: unknown): value is CustomMessage["content"] {
-	return typeof value === "string" || (Array.isArray(value) && value.every((part: unknown) =>
-		isRecord(part) && (
-			(part.type === "text" && typeof part.text === "string") ||
-			(part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string")
-		),
-	));
+	return (
+		typeof value === "string" ||
+		(Array.isArray(value) &&
+			value.every(
+				(part: unknown) =>
+					isRecord(part) &&
+					((part.type === "text" && typeof part.text === "string") ||
+						(part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string")),
+			))
+	);
 }
 
 export function custodyIsOpen(record: WorkCustodyRecord): boolean {

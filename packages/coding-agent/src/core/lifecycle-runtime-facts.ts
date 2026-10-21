@@ -1,6 +1,6 @@
-import type { AgentSession } from "./agent-session.ts";
 import { sessionQuestionBridges } from "../modes/rpc/connection-question-bridge.ts";
 import { sessionDialogRequests } from "../modes/rpc/session-extension-ui-requests.ts";
+import type { AgentSession } from "./agent-session.ts";
 import type { LifecycleRuntimeFacts } from "./session-lifecycle.ts";
 import type { HumanWait, LifecycleHold } from "./session-lifecycle-types.ts";
 
@@ -47,7 +47,10 @@ export function readLifecycleRuntimeFacts(session: AgentSession): LifecycleRunti
 		}
 	});
 	return {
-		activity: session.activitySnapshot, pendingMessages: session.pendingMessageCount, holds, human,
+		activity: session.activitySnapshot,
+		pendingMessages: session.pendingMessageCount,
+		holds,
+		human,
 		inputAdmissionPending: session.externalAdmission.hasInputWork,
 	};
 }

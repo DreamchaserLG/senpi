@@ -1,8 +1,16 @@
 import { LifecycleAttention } from "./lifecycle-attention.ts";
 import { type DurableTurnEnd, type LifecycleRecord, readLifecycleRecord } from "./lifecycle-record.ts";
-import type { SessionEntry } from "./session-manager.ts";
 import { lifecycleTerminal } from "./session-lifecycle-reducer.ts";
-import type { LifecycleHold, LifecycleWaits, SelfSettleResult, SessionLifecycle, SessionLifecycleEvent, SessionLifecycleState, SpawnedBy } from "./session-lifecycle-types.ts";
+import type {
+	LifecycleHold,
+	LifecycleWaits,
+	SelfSettleResult,
+	SessionLifecycle,
+	SessionLifecycleEvent,
+	SessionLifecycleState,
+	SpawnedBy,
+} from "./session-lifecycle-types.ts";
+import type { SessionEntry } from "./session-manager.ts";
 
 export interface LifecyclePersistence {
 	readonly sessionId: string;
@@ -36,15 +44,23 @@ export class LifecycleLedger {
 			if (parsed?.sessionId === persistence.sessionId && (!restored || parsed.seq > restored.seq)) restored = parsed;
 		}
 		const spawnedBy = persistence.spawnedBy;
-		this.current = restored ? wireSnapshot(restored) : {
-			state: "done", seq: 0, epoch: 0, epochOrigin: "automatic",
-			humanInputRevision: 0, selfSettleEligible: true,
-			restoring: true, persisted: false, runPaused: false,
-			since: new Date().toISOString(),
-			role: spawnedBy ? "child" : "root",
-			rootSessionId: spawnedBy?.rootSessionId ?? persistence.sessionId,
-			...(spawnedBy ? { parentSessionId: spawnedBy.parentSessionId, taskId: spawnedBy.taskId } : {}),
-		};
+		this.current = restored
+			? wireSnapshot(restored)
+			: {
+					state: "done",
+					seq: 0,
+					epoch: 0,
+					epochOrigin: "automatic",
+					humanInputRevision: 0,
+					selfSettleEligible: true,
+					restoring: true,
+					persisted: false,
+					runPaused: false,
+					since: new Date().toISOString(),
+					role: spawnedBy ? "child" : "root",
+					rootSessionId: spawnedBy?.rootSessionId ?? persistence.sessionId,
+					...(spawnedBy ? { parentSessionId: spawnedBy.parentSessionId, taskId: spawnedBy.taskId } : {}),
+				};
 		this.attention = new LifecycleAttention(persistence.sessionId, restored);
 		this.sealed = restored?.epochSealed ?? false;
 		this.runId = restored?.runId;
@@ -93,9 +109,17 @@ export class LifecycleLedger {
 		this.request = undefined;
 		this.goalCompleted = undefined;
 		this.runCompleted = undefined;
-		const { completionId: _id, completion: _completion, failure: _failure, settleDecision: _decision, ...current } = this.current;
+		const {
+			completionId: _id,
+			completion: _completion,
+			failure: _failure,
+			settleDecision: _decision,
+			...current
+		} = this.current;
 		this.current = {
-			...current, epoch: current.epoch + 1, epochOrigin: origin,
+			...current,
+			epoch: current.epoch + 1,
+			epochOrigin: origin,
 			selfSettleEligible: !this.admissionWriteFailed,
 		};
 	}
@@ -133,26 +157,52 @@ export class LifecycleLedger {
 	}): void {
 		if (input.holds.length > 0 || input.state === "failed") this.request = undefined;
 		const terminal = input.state === "done" || input.state === "failed";
-		const { completionId: _id, completion: _completion, failure: _failure, settleDecision: _decision, ...base } = this.current;
+		const {
+			completionId: _id,
+			completion: _completion,
+			failure: _failure,
+			settleDecision: _decision,
+			...base
+		} = this.current;
 		const now = new Date().toISOString();
-		const standingRequest = this.request?.epoch === base.epoch && this.request.revision === base.humanInputRevision &&
-			base.selfSettleEligible && input.holds.length === 0;
-		const completion = input.state === "done" && base.epoch > 0 ? (
-			this.goalCompleted ? { kind: "goal" as const, at: now, goalId: this.goalCompleted } :
-			this.runCompleted ? { kind: "run" as const, at: now, runId: this.runCompleted } :
-			{ kind: standingRequest ? "agent" as const : "reply" as const, at: now }
-		) : undefined;
+		const standingRequest =
+			this.request?.epoch === base.epoch &&
+			this.request.revision === base.humanInputRevision &&
+			base.selfSettleEligible &&
+			input.holds.length === 0;
+		const completion =
+			input.state === "done" && base.epoch > 0
+				? this.goalCompleted
+					? { kind: "goal" as const, at: now, goalId: this.goalCompleted }
+					: this.runCompleted
+						? { kind: "run" as const, at: now, runId: this.runCompleted }
+						: { kind: standingRequest ? ("agent" as const) : ("reply" as const), at: now }
+				: undefined;
 		const next: SessionLifecycle = {
-			...base, state: input.state, waitingOn: input.waits, holds: input.holds,
+			...base,
+			state: input.state,
+			waitingOn: input.waits,
+			holds: input.holds,
 			runPaused: input.holds.some((hold) => hold.kind === "run_fence"),
 			since: input.state === this.current.state ? this.current.since : now,
 			...(terminal && base.epoch > 0 ? { completionId: `${base.rootSessionId}:${base.epoch}` } : {}),
-			...(completion ? { completion: this.current.state === "done" && this.sealed ? this.current.completion ?? completion : completion } : {}),
+			...(completion
+				? {
+						completion:
+							this.current.state === "done" && this.sealed
+								? (this.current.completion ?? completion)
+								: completion,
+					}
+				: {}),
 			...(input.state === "failed" && input.failure ? { failure: input.failure } : {}),
-			...(input.state === "done" && standingRequest ? {
-				settleDecision: this.current.settleDecision ?? { decisionId: crypto.randomUUID() },
-			} : {}),
-			...(input.state === "done" && this.sealed && this.current.settleDecision ? { settleDecision: this.current.settleDecision } : {}),
+			...(input.state === "done" && standingRequest
+				? {
+						settleDecision: this.current.settleDecision ?? { decisionId: crypto.randomUUID() },
+					}
+				: {}),
+			...(input.state === "done" && this.sealed && this.current.settleDecision
+				? { settleDecision: this.current.settleDecision }
+				: {}),
 		};
 		if (terminal && base.epoch > 0) this.sealed = true;
 		if (this.current.restoring) {
@@ -171,8 +221,11 @@ export class LifecycleLedger {
 	private write(snapshot: SessionLifecycle, emit: boolean): boolean {
 		const next = { ...snapshot, seq: this.current.seq + 1, persisted: true };
 		const record: LifecycleRecord = {
-			...next, sessionId: this.persistence.sessionId, attentionSeq: this.attention.attentionSeq,
-			synthetic: this.attention.synthetic, epochSealed: this.sealed,
+			...next,
+			sessionId: this.persistence.sessionId,
+			attentionSeq: this.attention.attentionSeq,
+			synthetic: this.attention.synthetic,
+			epochSealed: this.sealed,
 			runActive: this.runActive,
 			interrupted: this.interrupted,
 			...(this.lastTurnEnd ? { lastTurnEnd: this.lastTurnEnd } : {}),
@@ -189,27 +242,42 @@ export class LifecycleLedger {
 			this.current = { ...next, persisted: false, selfSettleEligible: false };
 		}
 		if (emit && !this.current.restoring)
-			this.persistence.emit({ type: "session_lifecycle", sessionId: this.persistence.sessionId, lifecycle: this.current });
+			this.persistence.emit({
+				type: "session_lifecycle",
+				sessionId: this.persistence.sessionId,
+				lifecycle: this.current,
+			});
 		return this.current.persisted;
 	}
 }
 
 function equivalent(previous: SessionLifecycle, next: SessionLifecycle): boolean {
-	return previous.state === next.state && previous.epoch === next.epoch &&
-		previous.humanInputRevision === next.humanInputRevision && previous.runPaused === next.runPaused &&
+	return (
+		previous.state === next.state &&
+		previous.epoch === next.epoch &&
+		previous.humanInputRevision === next.humanInputRevision &&
+		previous.runPaused === next.runPaused &&
 		previous.selfSettleEligible === next.selfSettleEligible &&
 		JSON.stringify(previous.waitingOn) === JSON.stringify(next.waitingOn) &&
 		JSON.stringify(previous.holds) === JSON.stringify(next.holds) &&
-		JSON.stringify(previous.failure) === JSON.stringify(next.failure);
+		JSON.stringify(previous.failure) === JSON.stringify(next.failure)
+	);
 }
 
 function wireSnapshot(record: LifecycleRecord): SessionLifecycle {
 	const {
 		sessionId: _sessionId,
-		interrupted: _interrupted, completedGoalId: _goal, completedRunId: _completedRun,
+		interrupted: _interrupted,
+		completedGoalId: _goal,
+		completedRunId: _completedRun,
 		lastTurnEnd: _lastTurnEnd,
-		attentionSeq: _attentionSeq, synthetic: _synthetic, epochSealed: _sealed,
-		settleRequest: _request, runId: _runId, runActive: _runActive, ...snapshot
+		attentionSeq: _attentionSeq,
+		synthetic: _synthetic,
+		epochSealed: _sealed,
+		settleRequest: _request,
+		runId: _runId,
+		runActive: _runActive,
+		...snapshot
 	} = record;
 	return snapshot;
 }

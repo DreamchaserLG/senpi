@@ -844,7 +844,9 @@ export class ExtensionRunner {
 		if (this.mode === "rpc" || !prompt) return undefined;
 		return {
 			kind: prompt.kind === "confirm" ? "approval" : "question",
-			requestId: prompt.requestId, revision: 1, since: prompt.since,
+			requestId: prompt.requestId,
+			revision: 1,
+			since: prompt.since,
 		};
 	}
 
@@ -861,13 +863,23 @@ export class ExtensionRunner {
 			...(questionFn
 				? {
 						question: (request, opts) =>
-							this.withUIPrompt("question", request.questions[0]?.header, () => questionFn(request, opts), request.requestId),
+							this.withUIPrompt(
+								"question",
+								request.questions[0]?.header,
+								() => questionFn(request, opts),
+								request.requestId,
+							),
 					}
 				: {}),
 		};
 	}
 
-	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>, requestId: string = crypto.randomUUID()): Promise<T> {
+	private withUIPrompt<T>(
+		kind: UIPromptKind,
+		title: string | undefined,
+		run: () => Promise<T>,
+		requestId: string = crypto.randomUUID(),
+	): Promise<T> {
 		const outerPrompt = this.uiPromptDepth++ === 0;
 		if (outerPrompt) {
 			this.activeUIPrompt = { kind, title, requestId, since: new Date().toISOString() };

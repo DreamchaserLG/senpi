@@ -888,12 +888,19 @@ export class SessionCommandRouter {
 		try {
 			await assertSessionNotHeld(command.sessionPath);
 			const ancestry = command.spawnedBy;
-			if (ancestry !== undefined && (
-				typeof ancestry !== "object" || ancestry === null || Array.isArray(ancestry) ||
-				typeof ancestry.parentSessionId !== "string" || ancestry.parentSessionId.length === 0 ||
-				typeof ancestry.rootSessionId !== "string" || ancestry.rootSessionId.length === 0 ||
-				typeof ancestry.taskId !== "string" || ancestry.taskId.length === 0
-			)) return error(command.id, "open_session", "invalid_spawned_by");
+			if (
+				ancestry !== undefined &&
+				(typeof ancestry !== "object" ||
+					ancestry === null ||
+					Array.isArray(ancestry) ||
+					typeof ancestry.parentSessionId !== "string" ||
+					ancestry.parentSessionId.length === 0 ||
+					typeof ancestry.rootSessionId !== "string" ||
+					ancestry.rootSessionId.length === 0 ||
+					typeof ancestry.taskId !== "string" ||
+					ancestry.taskId.length === 0)
+			)
+				return error(command.id, "open_session", "invalid_spawned_by");
 			opened = await this.registry.openSession(
 				{
 					cwd: command.cwd ?? this.defaults.cwd,

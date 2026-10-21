@@ -11,45 +11,48 @@ afterEach(() => {
 	for (const h of harnesses.splice(0).reverse()) h.cleanup();
 });
 
-it.each(["agent", "run"] as const)("seals a standing request independently of its %s completion label", async (kind) => {
-	// Given an agent request recorded in an admitted root epoch.
-	const h = await createHarness({ persistSession: true });
-	harnesses.push(h);
-	expect(h.session.requestSelfSettle).toBeTypeOf("function");
-	let recorded = false;
-	const unsubscribe = h.session.subscribe((event) => {
-		if (event.type !== "agent_start") return;
-		recorded = h.session.requestSelfSettle().recorded;
-		if (kind === "run") h.session.lifecycleApi.markRunCompleted({ runId: "workflow:review" });
-	});
-	h.setResponses([fauxAssistantMessage("Finished.")]);
+it.each(["agent", "run"] as const)(
+	"seals a standing request independently of its %s completion label",
+	async (kind) => {
+		// Given an agent request recorded in an admitted root epoch.
+		const h = await createHarness({ persistSession: true });
+		harnesses.push(h);
+		expect(h.session.requestSelfSettle).toBeTypeOf("function");
+		let recorded = false;
+		const unsubscribe = h.session.subscribe((event) => {
+			if (event.type !== "agent_start") return;
+			recorded = h.session.requestSelfSettle().recorded;
+			if (kind === "run") h.session.lifecycleApi.markRunCompleted({ runId: "workflow:review" });
+		});
+		h.setResponses([fauxAssistantMessage("Finished.")]);
 
-	// When all root work ends.
-	try {
-		await runToAgentIdle(h, () => h.session.prompt("Complete the change"));
-	} finally {
-		unsubscribe();
-	}
+		// When all root work ends.
+		try {
+			await runToAgentIdle(h, () => h.session.prompt("Complete the change"));
+		} finally {
+			unsubscribe();
+		}
 
-	// Then the seal, not a label guessed by a client, carries the decision.
-	expect(recorded).toBe(true);
-	expect(h.session.lifecycle).toMatchObject({
-		state: "done",
-		persisted: true,
-		completion: { kind },
-		settleDecision: { decisionId: expect.any(String) },
-	});
-	expect(h.sessionManager.getEntries()).toContainEqual(
-		expect.objectContaining({
-			type: "custom",
-			customType: "session-lifecycle",
-			data: expect.objectContaining({
-				state: "done",
-				settleDecision: h.session.lifecycle.settleDecision,
+		// Then the seal, not a label guessed by a client, carries the decision.
+		expect(recorded).toBe(true);
+		expect(h.session.lifecycle).toMatchObject({
+			state: "done",
+			persisted: true,
+			completion: { kind },
+			settleDecision: { decisionId: expect.any(String) },
+		});
+		expect(h.sessionManager.getEntries()).toContainEqual(
+			expect.objectContaining({
+				type: "custom",
+				customType: "session-lifecycle",
+				data: expect.objectContaining({
+					state: "done",
+					settleDecision: h.session.lifecycle.settleDecision,
+				}),
 			}),
-		}),
-	);
-});
+		);
+	},
+);
 
 it("keeps the standing request until the final child wake has been consumed", async () => {
 	// Given an agent intent in an epoch whose final child still owns work.
@@ -68,17 +71,26 @@ it("keeps the standing request until the final child wake has been consumed", as
 	const ticket = child.transfer("omo-wake-queue:review").ticket();
 
 	// When the result is consumed and its automatic reply finishes the same epoch.
-	await runToAgentIdle(h, () => h.session.sendCustomMessage(
-		{ customType: "senpi-task.completion", content: "Review passed.", display: false },
-		{ triggerTurn: true, ticket },
-	));
+	await runToAgentIdle(h, () =>
+		h.session.sendCustomMessage(
+			{ customType: "senpi-task.completion", content: "Review passed.", display: false },
+			{ triggerTurn: true, ticket },
+		),
+	);
 
 	// Then the original request, not a new request in the wake, authorizes one seal.
 	expect(h.session.lifecycle).toMatchObject({
-		state: "done", epoch, persisted: true, settleDecision: { decisionId: expect.any(String) },
+		state: "done",
+		epoch,
+		persisted: true,
+		settleDecision: { decisionId: expect.any(String) },
 	});
-	expect(h.events.filter((event) => event.type === "session_lifecycle" &&
-		event.lifecycle.state === "done" && event.lifecycle.epoch === epoch)).toHaveLength(1);
+	expect(
+		h.events.filter(
+			(event) =>
+				event.type === "session_lifecycle" && event.lifecycle.state === "done" && event.lifecycle.epoch === epoch,
+		),
+	).toHaveLength(1);
 });
 
 it("never restores an intent overtaken by a human revision whose write failed", async () => {
@@ -110,10 +122,12 @@ it("never restores an intent overtaken by a human revision whose write failed", 
 	b.setResponses([fauxAssistantMessage("Review incorporated.")]);
 
 	// When automatic work later finishes that recovered epoch.
-	await runToAgentIdle(b, () => b.session.sendCustomMessage(
-		{ customType: "senpi-task.completion", content: "Review passed.", display: false },
-		{ triggerTurn: true, ticket },
-	));
+	await runToAgentIdle(b, () =>
+		b.session.sendCustomMessage(
+			{ customType: "senpi-task.completion", content: "Review passed.", display: false },
+			{ triggerTurn: true, ticket },
+		),
+	);
 
 	// Then an unsaved intervening human input cannot leave an authoritative intent.
 	expect(b.session.lifecycle).toMatchObject({ state: "done", persisted: true, selfSettleEligible: false });

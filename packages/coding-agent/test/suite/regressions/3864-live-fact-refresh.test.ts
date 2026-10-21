@@ -12,8 +12,9 @@ it("seals work after the final live source drains following a turn", async () =>
 		h.setResponses([fauxAssistantMessage("Waiting for the monitor.")]);
 		await runToAgentIdle(h, () => h.session.prompt("Watch for the result."));
 		expect(h.session.lifecycle.state).toBe("waiting_background");
-		const done = nextSessionEvent(h, (event) =>
-			event.type === "session_lifecycle" && event.lifecycle.state === "done",
+		const done = nextSessionEvent(
+			h,
+			(event) => event.type === "session_lifecycle" && event.lifecycle.state === "done",
 		);
 
 		// When the same live registry closes the last source.

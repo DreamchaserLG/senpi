@@ -1,12 +1,18 @@
-import type { Goal } from "./extensions/builtin/goal/types.ts";
 import { effectiveWakes, type TurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness.ts";
+import type { Goal } from "./extensions/builtin/goal/types.ts";
 import { LifecycleChildren } from "./lifecycle-children.ts";
 import { LifecycleLedger, type LifecyclePersistence } from "./lifecycle-ledger.ts";
 import type { SessionActivitySnapshot } from "./session-activity.ts";
 import { lifecycleState, lifecycleTerminal } from "./session-lifecycle-reducer.ts";
-import type { ChildLifecycleReport, HumanWait, LifecycleHold, LifecycleWaits, SessionLifecycle } from "./session-lifecycle-types.ts";
-import { SessionWorkObligations } from "./work-obligations.ts";
+import type {
+	ChildLifecycleReport,
+	HumanWait,
+	LifecycleHold,
+	LifecycleWaits,
+	SessionLifecycle,
+} from "./session-lifecycle-types.ts";
 import type { WorkCustodyRecord } from "./work-custody-record.ts";
+import { SessionWorkObligations } from "./work-obligations.ts";
 
 export interface LifecycleRuntimeFacts {
 	readonly activity: SessionActivitySnapshot;
@@ -40,11 +46,18 @@ export class SessionLifecycleController {
 	constructor(options: SessionLifecycleOptions) {
 		this.options = options;
 		this.ledger = new LifecycleLedger(options);
-		if (this.ledger.lastTurnEnd) this.liveness = {
-			...this.ledger.lastTurnEnd,
-			isChildSession: this.ledger.snapshot.role === "child", mode: "rpc", ledgerHold: undefined,
-			willRetry: false, continuationQueued: undefined, goalStopped: false, openWork: { kind: "none" }, expectations: [],
-		};
+		if (this.ledger.lastTurnEnd)
+			this.liveness = {
+				...this.ledger.lastTurnEnd,
+				isChildSession: this.ledger.snapshot.role === "child",
+				mode: "rpc",
+				ledgerHold: undefined,
+				willRetry: false,
+				continuationQueued: undefined,
+				goalStopped: false,
+				openWork: { kind: "none" },
+				expectations: [],
+			};
 		this.obligations = new SessionWorkObligations({
 			entries: options.entries,
 			append: (record) => options.appendCustody(record),
@@ -54,14 +67,15 @@ export class SessionLifecycleController {
 			entries: options.entries,
 			append: (report) => options.appendChild(report),
 			changed: () => {
-				this.ownTask = this.children.reports.find((report) =>
-					report.childSessionId === options.sessionId && report.taskId === options.spawnedBy?.taskId,
+				this.ownTask = this.children.reports.find(
+					(report) => report.childSessionId === options.sessionId && report.taskId === options.spawnedBy?.taskId,
 				);
 				this.recompute();
 			},
 		});
 		for (const report of this.children.reports) {
-			if (report.childSessionId === options.sessionId && report.taskId === options.spawnedBy?.taskId) this.ownTask = report;
+			if (report.childSessionId === options.sessionId && report.taskId === options.spawnedBy?.taskId)
+				this.ownTask = report;
 		}
 	}
 
@@ -93,7 +107,8 @@ export class SessionLifecycleController {
 
 	admissionSettled(): void {
 		this.admittingHuman = false;
-		if (!this.ledger.runActive && !this.ledger.interrupted && this.options.readRuntime().pendingMessages === 0) this.pendingHuman = false;
+		if (!this.ledger.runActive && !this.ledger.interrupted && this.options.readRuntime().pendingMessages === 0)
+			this.pendingHuman = false;
 		this.recompute();
 	}
 
@@ -121,10 +136,13 @@ export class SessionLifecycleController {
 
 	goalFacts(goal: Goal | null, input?: TurnEndLivenessInput): void {
 		this.liveness = input;
-		if (input) this.ledger.lastTurnEnd = {
-			endedBy: input.endedBy, budgetSpent: input.budgetSpent, deadlineStop: input.deadlineStop,
-			providerRetryAtMs: input.providerRetryAtMs,
-		};
+		if (input)
+			this.ledger.lastTurnEnd = {
+				endedBy: input.endedBy,
+				budgetSpent: input.budgetSpent,
+				deadlineStop: input.deadlineStop,
+				providerRetryAtMs: input.providerRetryAtMs,
+			};
 		this.goalChanged(goal);
 	}
 
@@ -139,10 +157,13 @@ export class SessionLifecycleController {
 	}
 
 	requestSelfSettle() {
-		if (this.admittingHuman || this.options.readRuntime().inputAdmissionPending) return {
-			recorded: false, reason: "not_eligible" as const,
-			epoch: this.ledger.snapshot.epoch, humanInputRevision: this.ledger.snapshot.humanInputRevision,
-		};
+		if (this.admittingHuman || this.options.readRuntime().inputAdmissionPending)
+			return {
+				recorded: false,
+				reason: "not_eligible" as const,
+				epoch: this.ledger.snapshot.epoch,
+				humanInputRevision: this.ledger.snapshot.humanInputRevision,
+			};
 		this.recompute();
 		return this.ledger.requestSelfSettle();
 	}
@@ -178,9 +199,12 @@ export class SessionLifecycleController {
 		const background: LifecycleWaits["background"][number][] = active
 			.filter((record) => record.kind === "background")
 			.map((record) => ({ source: record.source ?? record.key, activeCount: record.activeCount ?? 1 }));
-		const children = Math.max(childRecords, active
-			.filter((record) => record.kind === "children")
-			.reduce((sum, record) => sum + (record.activeCount ?? 1), 0));
+		const children = Math.max(
+			childRecords,
+			active
+				.filter((record) => record.kind === "children")
+				.reduce((sum, record) => sum + (record.activeCount ?? 1), 0),
+		);
 		const input = this.liveness;
 		let continuationQueued = input?.willRetry === true || input?.continuationQueued !== undefined;
 		let questionToUser = false;
@@ -195,12 +219,14 @@ export class SessionLifecycleController {
 					break;
 				case "armed-timer":
 					if (expectation.timer === "userGrace") continuationQueued = true;
-					else background.push({
-						source: expectation.timer === "providerRetry" ? "provider-retry" : "goal-monitor",
-						activeCount: 1,
-						...(expectation.timer === "providerRetry" && input?.providerRetryAtMs !== undefined
-							? { retryAtMs: input.providerRetryAtMs } : {}),
-					});
+					else
+						background.push({
+							source: expectation.timer === "providerRetry" ? "provider-retry" : "goal-monitor",
+							activeCount: 1,
+							...(expectation.timer === "providerRetry" && input?.providerRetryAtMs !== undefined
+								? { retryAtMs: input.providerRetryAtMs }
+								: {}),
+						});
 					break;
 				case "recovery-staged":
 					background.push({ source: "staged-recovery", activeCount: 1 });
@@ -225,36 +251,82 @@ export class SessionLifecycleController {
 			if (this.goal?.status === "blocked") synthetic.push({ key: `goal:${this.goal.id}`, kind: "goal_blocked" });
 			else if (this.goal && (this.goal.status === "paused" || this.goal.continuationStoppedAt !== undefined))
 				synthetic.push({ key: `goal:${this.goal.id}`, kind: "goal_paused" });
-			if (this.ledger.interrupted) synthetic.push({ key: `interrupted:${this.ledger.snapshot.epoch}`, kind: "interrupted_run" });
-			const noWake = children === 0 && background.length === 0 && !continuationQueued && runtime.pendingMessages === 0;
-			if (input && noWake && input.endedBy !== "provider-error" && input.endedBy !== "policy-rejection" &&
-				(input.deadlineStop || input.budgetSpent || input.endedBy === "unknown-abort" ||
-					input.endedBy === "system-abort" || input.endedBy === "provider-abort" ||
-					((input.openWork.kind === "active-goal" ? this.goal?.status === "active" : input.openWork.kind !== "none") && !input.goalStopped)))
+			if (this.ledger.interrupted)
+				synthetic.push({ key: `interrupted:${this.ledger.snapshot.epoch}`, kind: "interrupted_run" });
+			const noWake =
+				children === 0 && background.length === 0 && !continuationQueued && runtime.pendingMessages === 0;
+			if (
+				input &&
+				noWake &&
+				input.endedBy !== "provider-error" &&
+				input.endedBy !== "policy-rejection" &&
+				(input.deadlineStop ||
+					input.budgetSpent ||
+					input.endedBy === "unknown-abort" ||
+					input.endedBy === "system-abort" ||
+					input.endedBy === "provider-abort" ||
+					((input.openWork.kind === "active-goal"
+						? this.goal?.status === "active"
+						: input.openWork.kind !== "none") &&
+						!input.goalStopped))
+			)
 				synthetic.push({ key: `stall:${this.ledger.snapshot.epoch}`, kind: "stalled" });
-			else if (noWake && this.goal?.status === "active" && !this.ledger.runActive &&
-				!runtime.activity.isStreaming && !runtime.activity.hasSessionWork && !runtime.activity.isCompacting && !runtime.activity.isBashRunning &&
-				this.goal.continuationStoppedAt === undefined)
+			else if (
+				noWake &&
+				this.goal?.status === "active" &&
+				!this.ledger.runActive &&
+				!runtime.activity.isStreaming &&
+				!runtime.activity.hasSessionWork &&
+				!runtime.activity.isCompacting &&
+				!runtime.activity.isBashRunning &&
+				this.goal.continuationStoppedAt === undefined
+			)
 				synthetic.push({ key: `stall:${this.ledger.snapshot.epoch}`, kind: "stalled" });
 		}
 		const human = root ? [...runtime.human, ...this.ledger.attention.reconcile(synthetic)] : [];
-		const running = this.ledger.runActive || runtime.activity.isStreaming || runtime.activity.isCompacting ||
-			runtime.activity.isBashRunning || runtime.activity.hasSessionWork || runtime.pendingMessages > 0 || continuationQueued;
-		const failure: SessionLifecycle["failure"] = input &&
-			(input.endedBy === "provider-error" || input.endedBy === "policy-rejection") && !continuationQueued && background.length === 0
-			? { reason: "provider_error", ...(input.providerRetryAtMs === undefined ? {} : { retryAtMs: input.providerRetryAtMs }) }
-			: this.ownTask?.terminal === "error" || this.ownTask?.terminal === "lost" || this.ownTask?.terminal === "interrupted"
-				? { reason: this.ownTask.terminal === "error" ? "task_error" : this.ownTask.terminal,
-					taskId: this.ownTask.taskId, runEpoch: this.ownTask.runEpoch } : undefined;
+		const running =
+			this.ledger.runActive ||
+			runtime.activity.isStreaming ||
+			runtime.activity.isCompacting ||
+			runtime.activity.isBashRunning ||
+			runtime.activity.hasSessionWork ||
+			runtime.pendingMessages > 0 ||
+			continuationQueued;
+		const failure: SessionLifecycle["failure"] =
+			input &&
+			(input.endedBy === "provider-error" || input.endedBy === "policy-rejection") &&
+			!continuationQueued &&
+			background.length === 0
+				? {
+						reason: "provider_error",
+						...(input.providerRetryAtMs === undefined ? {} : { retryAtMs: input.providerRetryAtMs }),
+					}
+				: this.ownTask?.terminal === "error" ||
+						this.ownTask?.terminal === "lost" ||
+						this.ownTask?.terminal === "interrupted"
+					? {
+							reason: this.ownTask.terminal === "error" ? "task_error" : this.ownTask.terminal,
+							taskId: this.ownTask.taskId,
+							runEpoch: this.ownTask.runEpoch,
+						}
+					: undefined;
 		const waits: LifecycleWaits = { children, background, human };
 		const state = lifecycleState({
-			role: this.ledger.snapshot.role, terminal: this.ownTask?.terminal,
-			holds: runtime.holds, waits, running, failure,
+			role: this.ledger.snapshot.role,
+			terminal: this.ownTask?.terminal,
+			holds: runtime.holds,
+			waits,
+			running,
+			failure,
 		});
 		// A terminal task record owns a child's outcome, even if its local
 		// producer registry has not drained after the runner stopped it.
-		if (lifecycleTerminal(state) && this.ownTask?.terminal === undefined &&
-			(!this.idleBoundaryPassed || active.length > 0)) return;
+		if (
+			lifecycleTerminal(state) &&
+			this.ownTask?.terminal === undefined &&
+			(!this.idleBoundaryPassed || active.length > 0)
+		)
+			return;
 		this.ledger.update({ state, waits, holds: runtime.holds, failure });
 	}
 }
