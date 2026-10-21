@@ -1,3 +1,21 @@
+## 2026-10-21 - Keep final provider admission synchronous (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts` restores lifecycle during guarded prompt and trigger-turn preflight, before the final acceptance and run-admission boundary.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`: `_promptAgent` yielded for restoration after the prompt had reported `started` and released its start claim. Queue-transfer callers could observe an idle session after acceptance, or join a claim whose provider run had not actually started. Restoration remains required, but final admission no longer yields before setting the active-run flag and arming deadlines.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`: prompt disposition, start-claim release and native provider admission are engine-owned ordering guarantees.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: `_promptAgent`, `_prompt` preflight and `_sendCustomMessage` trigger-turn preflight. Existing queue-ownership and fake-clock deadline/retry tests remain unchanged.
+
 ## 2026-10-21 - Avoid asynchronous missing-goal reads before run admission (senpi#3864)
 
 ### What changed

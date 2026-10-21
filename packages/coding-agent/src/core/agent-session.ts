@@ -3039,8 +3039,6 @@ export class AgentSession {
 			readonly onTurnAdmitted?: () => void;
 		},
 	): Promise<void> {
-		if (this._extensionBindingPromptReadiness === undefined && !this._lifecycleBinding.isRestored)
-			await this._lifecycleBinding.restore();
 		if (this._lifecycleBinding.controller.requiresHumanContinuation)
 			throw new Error("The previous run was interrupted. Human input or Resume is required before another turn.");
 		deferredTurnClaim?.resolve("started");
@@ -5676,6 +5674,8 @@ export class AgentSession {
 			// Flush any pending bash messages before the new prompt
 			this._flushPendingBashMessages();
 
+			if (this._extensionBindingPromptReadiness === undefined && !this._lifecycleBinding.isRestored)
+				await this._lifecycleBinding.restore();
 			await this._assertModelReadyForTurn();
 
 			// The user's new prompt is sent below, so do not call agent.continue() here.
@@ -6435,6 +6435,8 @@ export class AgentSession {
 				};
 				this._triggerTurnAdmissionAbortGeneration = userAbortGeneration;
 				try {
+					if (this._extensionBindingPromptReadiness === undefined && !this._lifecycleBinding.isRestored)
+						await this._lifecycleBinding.restore();
 					await this._assertModelReadyForTurn();
 					await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 					this._refreshToolDeclarationsForModel();
