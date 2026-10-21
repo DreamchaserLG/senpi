@@ -277,6 +277,7 @@ import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputOriginOf } from "./input-origin.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
 import { heldLifecycleNotice, messageTicket } from "./lifecycle-delivery.ts";
+import { lifecycleEditLeaf } from "./lifecycle-edit-leaf.ts";
 import { LifecycleSessionBinding } from "./lifecycle-session-binding.ts";
 import {
 	isManualContinueSubmission,
@@ -12094,7 +12095,7 @@ export class AgentSession {
 			throw new SessionStreamingError();
 		}
 		// Stale tokens fail before the unchanged short-circuit: a stale window never learns "unchanged".
-		assertExpectedLeaf(options.expectedLeafId, this.sessionManager.getLeafId());
+		assertExpectedLeaf(options.expectedLeafId, lifecycleEditLeaf(this.sessionManager, options.expectedLeafId));
 		const targetEntry = this.sessionManager.getEntry(entryId);
 		if (!targetEntry) {
 			throw new AssistantEditError("not-found", `Entry ${entryId} not found`);
@@ -12124,7 +12125,7 @@ export class AgentSession {
 		}
 		// Stale tokens fail before the unchanged short-circuit: a stale window never learns "unchanged".
 		// `_navigateTree` re-checks the same token; nothing awaits in between, so the two agree.
-		assertExpectedUserLeaf(options.expectedLeafId, this.sessionManager.getLeafId());
+		assertExpectedUserLeaf(options.expectedLeafId, lifecycleEditLeaf(this.sessionManager, options.expectedLeafId));
 		const targetEntry = this.sessionManager.getEntry(entryId);
 		if (!targetEntry) {
 			throw new UserEditError("not-found", `Entry ${entryId} not found`);
@@ -12156,7 +12157,7 @@ export class AgentSession {
 
 		const oldLeafId = this.sessionManager.getLeafId();
 		// Stale tokens fail even for a would-be no-op, before any extension hears about the navigation.
-		assertExpectedLeaf(options.expectedLeafId, oldLeafId);
+		assertExpectedLeaf(options.expectedLeafId, lifecycleEditLeaf(this.sessionManager, options.expectedLeafId));
 
 		// Model required for summarization
 		if (options.summarize && !this.model) {

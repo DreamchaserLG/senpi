@@ -1,3 +1,21 @@
+## 2026-10-21 - Preserve guarded edits across lifecycle bookkeeping (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts` checks assistant edits, user edits, and tree navigation against the captured leaf through intervening lifecycle bookkeeping only. Ordinary custom entries and messages still invalidate the token.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`: the human-admission hook persists a lifecycle revision before dispatching an extension command. That append advanced the current leaf and rejected the command's otherwise-current optimistic edit token.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`: the engine owns human admission, lifecycle persistence, and the shared pre-navigation guards.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: guarded edits and `_navigateTree`; `lifecycle-edit-leaf.ts`: lifecycle-only ancestor traversal.
+
 ## 2026-10-21 - Refresh lifecycle facts after extension rebind (senpi#3864)
 
 ### What changed

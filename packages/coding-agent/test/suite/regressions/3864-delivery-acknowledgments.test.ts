@@ -86,7 +86,7 @@ it("queues a next-turn ticket once and consumes it once in the admitted run", as
 		const message = { customType: "senpi-task.completion", content: "Review passed.", display: false };
 		await h.session.sendCustomMessage(message, { deliverAs: "nextTurn", ticket });
 		await h.session.sendCustomMessage(message, { deliverAs: "nextTurn", ticket });
-		expect(h.session.pendingMessageCount).toBe(1);
+		expect(h.session.workObligations.activeCount).toBe(1);
 		h.setResponses([fauxAssistantMessage("Review incorporated.")]);
 		await runToAgentIdle(h, () => h.session.prompt("Incorporate it."));
 		const entries = h.sessionManager.getEntries();
