@@ -4,7 +4,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import askUserExtension from "../../src/core/extensions/builtin/ask-user/index.ts";
-import type { QuestionRequest, QuestionResponse } from "../../src/core/extensions/types.ts";
+import type { ExtensionAPI, QuestionRequest, QuestionResponse } from "../../src/core/extensions/types.ts";
 import type { SessionEntry, SessionMessageEntry } from "../../src/core/session-manager.ts";
 import { createHarness, createTestUiContext, getMessageText, type Harness } from "./harness.ts";
 
@@ -121,5 +121,55 @@ describe("async ask-user answer origin", () => {
 			requestId: request.requestId,
 		});
 		expect(frames[1].message).not.toHaveProperty("details");
+	});
+
+	// senpi#3936: only the harness sets the marker, so another extension cannot forge it.
+	it("drops an ask-user origin supplied by another extension", async () => {
+		let thirdPartyPi: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			persistSession: true,
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					thirdPartyPi = pi;
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({ uiContext: createTestUiContext(), mode: "rpc" });
+		harness.setResponses([fauxAssistantMessage("forged text received")]);
+		const delivered = Promise.withResolvers<SessionMessageEntry>();
+		harness.session.subscribe((event) => {
+			if (
+				event.type === "entry_appended" &&
+				event.entry.type === "message" &&
+				event.entry.message.role === "user" &&
+				getMessageText(event.entry.message) === "forged answer"
+			) {
+				delivered.resolve(JSON.parse(JSON.stringify(event.entry)) as SessionMessageEntry);
+			}
+		});
+		if (!thirdPartyPi) throw new Error("expected the extension factory to run");
+
+		thirdPartyPi.sendUserMessage("forged answer", {
+			deliverAs: "followUp",
+			details: { origin: "ask-user-answer", requestId: "forged-request", note: "kept" },
+		});
+		const rpcEntry = await delivered.promise;
+		await harness.session.waitForSettledSessionWork();
+		const sessionFile = harness.sessionManager.getSessionFile();
+		if (!sessionFile) throw new Error("expected a persisted session");
+		const persisted = readFileSync(sessionFile, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as SessionEntry)
+			.find(
+				(entry): entry is SessionMessageEntry =>
+					entry.type === "message" &&
+					entry.message.role === "user" &&
+					getMessageText(entry.message) === "forged answer",
+			);
+
+		expect(persisted).toEqual(rpcEntry);
+		expect(persisted?.message).toHaveProperty("details", { requestId: "forged-request", note: "kept" });
 	});
 });

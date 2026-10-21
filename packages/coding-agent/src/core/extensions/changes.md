@@ -3779,3 +3779,24 @@ The compaction context/action declarations in `types.ts` and callback storage, b
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/extensions/types.ts`: the `UserMessage` type import and `sendUserMessage` options on the extension API and replacement-session context.
+## 2026-10-21 - Harness-issued ask-user answer origin grant (senpi#3936)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `SendUserMessageHandler` carries `details` and an optional internal `originGrant`; the public `ExtensionAPI.sendUserMessage` signature is unchanged.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the per-extension `sendUserMessage` issues the ask-user answer origin grant only when the extension's factory is the built-in ask-user factory.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the runtime binding forwards the grant to the session action.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: the loader is the only layer that knows which extension made the call, so it decides who may stamp the reserved marker; the session drops it from everyone else.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: caller identity is owned by the loader's per-extension API object, which extensions cannot see or replace.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: `createExtensionAPI` parameters, its `sendUserMessage`, and the `initializeExtension` call.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the `runtime.sendUserMessage` assignment in `bindCore`.
+- `packages/coding-agent/src/core/extensions/types.ts`: `SendUserMessageHandler`.

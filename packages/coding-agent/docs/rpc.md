@@ -4281,6 +4281,8 @@ The field is preserved from the session JSONL, in `entry_appended` and entry-his
 responses, for both idle follow-up and running steering delivery. It also appears on
 the corresponding `message_start` / `message_end` message.
 
+The marker is reserved for the harness: it is set only on the built-in ask-user answer
+path, and an extension that passes the same origin to `sendUserMessage` has it dropped.
 Clients may use this marker to group or hide the engine's answer frame without hiding
 ordinary user text. Do not infer origin from `[Answer to question ...]` prose: a user
 can type that text, and ordinary prompts have no marker. Older session entries may

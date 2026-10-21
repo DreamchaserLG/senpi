@@ -403,6 +403,7 @@ import {
 } from "./turn-deadline.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
+import { persistedUserMessageDetails, type UserMessageOriginGrant } from "./user-message-origin.ts";
 import { joinUserTextBlocks, keepsTextBlocksVerbatim, userMessageText, userTextContent } from "./user-text-blocks.ts";
 import {
 	findLatestResponse,
@@ -6394,7 +6395,9 @@ export class AgentSession {
 			details?: UserMessage["details"];
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
+		originGrant?: UserMessageOriginGrant,
 	): Promise<void> {
+		const details = persistedUserMessageDetails(options?.details, originGrant);
 		const bindingPromptReadiness = this._extensionBindingPromptReadiness;
 		let resolveBindingPromptReadiness: (() => void) | undefined;
 		if (bindingPromptReadiness) {
@@ -6445,7 +6448,7 @@ export class AgentSession {
 				streamingBehavior: options?.deliverAs,
 				images,
 				textBlocks,
-				details: options?.details,
+				details,
 				source: "extension",
 				promptDisposition: (nextDisposition) => {
 					disposition = nextDisposition;
@@ -6465,9 +6468,9 @@ export class AgentSession {
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
 				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images, { textBlocks, details: options?.details });
+					await this._queueSteer(text, images, { textBlocks, details });
 				} else {
-					await this._queueFollowUp(text, images, { textBlocks, details: options?.details });
+					await this._queueFollowUp(text, images, { textBlocks, details });
 				}
 			}
 			throw error;
@@ -9841,7 +9844,7 @@ export class AgentSession {
 					if (this._agentSettledDelivery.defer(send)) return;
 					send();
 				},
-				sendUserMessage: (content, options) => {
+				sendUserMessage: (content, options, originGrant) => {
 					const reportError = (err: unknown) => {
 						if (err instanceof ModelNotReadyError) {
 							this._noticeProviderRequired(err.message);
@@ -9857,12 +9860,12 @@ export class AgentSession {
 					// turn claim so agent_idle is not emitted before its deferred agent_start.
 					if (
 						this._agentSettledDelivery.deferTriggerTurn((claim) => {
-							this.sendUserMessage(content, options, claim).catch(reportError);
+							this.sendUserMessage(content, options, claim, originGrant).catch(reportError);
 						})
 					) {
 						return;
 					}
-					this.sendUserMessage(content, options).catch(reportError);
+					this.sendUserMessage(content, options, undefined, originGrant).catch(reportError);
 				},
 				appendEntry: (customType, data, options) => {
 					const entryId = this.sessionManager.appendCustomEntry(customType, data, options);
