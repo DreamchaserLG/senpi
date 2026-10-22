@@ -17,6 +17,7 @@ import {
 	runAgentLoopContinue,
 } from "./agent-loop.ts";
 import { ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
+import { isLocalFailure, localFailurePort } from "./local-failure.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AfterToolCallContext,
@@ -675,7 +676,7 @@ export class Agent {
 	 */
 	private async takeQueuedMessages(queue: "steering" | "followUp"): Promise<AgentMessage[]> {
 		const pendingQueue = queue === "steering" ? this.steeringQueue : this.followUpQueue;
-		const port = this.queuedInputPort;
+		const port = this.queuedInputPort && localFailurePort(this.queuedInputPort);
 		if (!port) return pendingQueue.drain();
 		let generation = pendingQueue.getClearGeneration();
 		const messages = await port.claim(queue, () => {
@@ -742,7 +743,7 @@ export class Agent {
 		let steeringQueueGeneration = this.steeringQueue.getClearGeneration();
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 		const finishTurn = this.finishTurn;
-		const queuedInputPort = this.queuedInputPort;
+		const queuedInputPort = this.queuedInputPort && localFailurePort(this.queuedInputPort);
 		const giveBack = (queue: "steering" | "followUp", messages: AgentMessage[]): QueuedGiveBack =>
 			this.giveBack(queue, messages, queue === "steering" ? steeringQueueGeneration : followUpQueueGeneration);
 		const reasoning = (this._state.reasoningBaseline as ThinkingLevel | undefined) ?? this._state.thinkingLevel;
@@ -905,6 +906,7 @@ export class Agent {
 			errorMessage: error instanceof Error ? error.message : String(error),
 			...(providerDiagnostic === undefined ? {} : { providerDiagnostic }),
 			...(error instanceof ProviderRetryWatchdogAbortError ? { abortSource: "provider" as const } : {}),
+			...(!aborted && isLocalFailure(error) ? { failureSource: "local" as const } : {}),
 			timestamp: Date.now(),
 		} satisfies AgentMessage;
 		await this.processEvents({ type: "message_start", message: failureMessage });

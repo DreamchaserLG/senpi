@@ -13,6 +13,7 @@ import type { SessionWorkerClient } from "./session-worker-client.ts";
 
 /** The immutable flags selected when a routing session is opened. */
 export interface RpcSessionLaunchProfile extends AgentSessionLaunchProfile {
+	attended?: false;
 	sessionPath?: string;
 	/**
 	 * Durable session id chosen by the caller, applied ONLY when this open creates the session.

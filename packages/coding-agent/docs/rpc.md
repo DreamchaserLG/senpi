@@ -1,5 +1,88 @@
 # RPC Mode
 
+RPC mode enables headless operation of the coding agent via a JSON protocol over stdin/stdout. This is useful for embedding the agent in other applications, IDEs, or custom UIs.
+
+**Note for Node.js/TypeScript users**: If you're building a Node.js application, consider using `AgentSession` directly from `@code-yeongyu/senpi` instead of spawning a subprocess. See [`src/core/agent-session.ts`](../src/core/agent-session.ts) for the API. For a subprocess-based TypeScript client, see [`src/modes/rpc/rpc-client.ts`](../src/modes/rpc/rpc-client.ts).
+
+## Unattended opens and Resume
+
+`open_session` accepts optional `"attended": false` (other supplied values are
+rejected with `invalid_launch_profile`). A host handover reopen always sets it;
+CLI commands reopening parked paths, including `host session state`, `read`,
+and `wait`, also set it. Engine-originated wakes make zero provider calls while
+held. Attaching a client does not release the hold.
+
+Real prompt, steer, follow-up, or question input releases it. The user's message
+starts one turn with the latest coalesced non-goal context before that message;
+the goal revalidates and may continue afterwards.
+
+#### resume_session
+
+An explicit Resume (the user's Resume action) instead is:
+
+```json
+{"id":"resume","type":"resume_session","sessionId":"rpc-1"}
+```
+
+```json
+{"id":"resume","type":"response","command":"resume_session","success":true}
+```
+
+It runs at most one turn per held source, sequentially through `agent_end`,
+regardless of follow-up queue mode, with the current goal last. Held counts and
+latest payloads survive another restart. Each wake has a persisted `session-notice`
+entry (`noticeId`, `producer`, `pauseSeq`, `at`, source payload, `heldCount`,
+`text`, and `action: "resume_session"`). Delivery coalesces
+by source; it never drains a backlog. `session-notices-consumed` atomically records
+the held-to-released transition by notice ID at final provider admission.
+Repeated releases and restart replay cannot deliver an already released ID.
+`session-hold` entries record hold additions and releases. Refused admission
+retains notice custody; an admitted turn is never replayed, even if later aborted.
+Acknowledgements list only the notice IDs present in the delivered snapshot.
+Wakes arriving during unattended Resume delivery remain in custody for the next
+release. Human input establishes attendance immediately, including during a
+release turn; subsequent wakes keep normal attended delivery and never re-hold.
+A refused released wake stays solely in notice custody, not also in the native
+steering or follow-up queue.
+
+The command response acknowledges release admission, not completion of all turns.
+Observe session events for progress and `agent_idle` for settlement. Hosts advertise
+`resume_session` and `attended` in `get_protocol_info.capabilities`; classic RPC
+advertises `resume_session` only because it does not accept `open_session`.
+
+`get_state` and `open_session.state` include:
+
+```typescript
+paused: boolean;
+pausedNoticeCount: number;
+holds: { kind: "unattended"; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+```
+
+`since` is an ISO timestamp. This is the shared engine hold ledger; this release
+keys each record by `key` (defaulting to its kind) and preserves opaque `data`
+through a restart. Persisted additions carry `key`/`data`, and release entries list `keys`. It
+implements only `unattended`. Consumers must distinguish kinds rather than infer
+them from the notification text. A first hold emits `session_paused` with `kind`,
+`pauseSeq`, `at`, `noticeCount`, and `persisted`. Releasing emits
+`session_resumed { cause: "input" | "resume_session", pauseSeq, at }`.
+The ordinary extension UI `notify` event shows the paused count and Resume
+instruction too. Attachment lifecycle extension events remain distinct from
+these engine pause events: attachment never releases any ledger hold.
+Notices name the held sources and are suppressed after human input releases them.
+Pause and resume wire events go only to connections attached to that session.
+
+`open_session.context.task_status`, updated through `set_session_context`, is the task owner's lifecycle label.
+Handover parks with `completed`, `cancelled`, `error`, `failed`, `lost`, or
+`interrupted` are removed with a stderr diagnostic instead of being reopened.
+Other context keys remain opaque.
+
+Automatic turn admission is also bounded independently of the hold. On unattended resume,
+`engineTurns.maxPerResumeWindow` defaults to 8, counting engine starts in loaded
+history since the last real input. A real input ends that resume window. The
+normal `engineTurns.maxPerUserInput` default stays 150. Only admitted new engine
+turns count, not wakes steered into running work or pending compaction; a limit emits the existing engine-paused
+notice and record. Setting either cap to 0 disables that particular cap.
+
 When the last client disconnects from a retained in-process session, extensions receive
 `session_parked`; the first reattachment to that still-open session emits
 `session_resumed`. File-monitor polling and prompt-cache keepalive pause between these
@@ -8,10 +91,6 @@ hooks are not the `session_parked` wire record emitted when eviction or handoff 
 a runtime. Worker-runtime sessions currently do not dispatch the extension hooks.
 
 The shared Unix socket host keeps its ownership state in a PER-SOCKET daemon directory, `<agentDir>/rpc-host-daemon/<sha256(canonical socket)[:16]>/` (see [Daemon state directory](#daemon-state-directory-layout-2)). Clients attach to a compatible existing host regardless of which client surface started it; only incompatible unmanaged owners are refused.
-
-RPC mode enables headless operation of the coding agent via a JSON protocol over stdin/stdout. This is useful for embedding the agent in other applications, IDEs, or custom UIs.
-
-**Note for Node.js/TypeScript users**: If you're building a Node.js application, consider using `AgentSession` directly from `@code-yeongyu/senpi` instead of spawning a subprocess. See [`src/core/agent-session.ts`](../src/core/agent-session.ts) for the API. For a subprocess-based TypeScript client, see [`src/modes/rpc/rpc-client.ts`](../src/modes/rpc/rpc-client.ts).
 
 ## Eval cell control
 

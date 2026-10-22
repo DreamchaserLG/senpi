@@ -538,6 +538,10 @@ export interface ExtensionContext {
 	thinkingLevel?: ThinkingLevel;
 	/** Whether the agent is idle (not streaming) */
 	isIdle(): boolean;
+	/** Whether automatic turns are held until real input or an explicit Resume. */
+	engineTurnsHeld?(): boolean;
+	/** Note a source-owned wake without rendering or charging its continuation. */
+	noteHeldWake?(source: string): void;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
@@ -1260,7 +1264,20 @@ export interface SessionStartEvent {
 	initialModelProvenance?: InitialModelProvenance;
 	/** Previously active session file. Present for "new", "resume", and "fork". */
 	previousSessionFile?: string;
+	/**
+	 * `false` when no client is attached to this start (a host reopening a parked session). Engine-originated
+	 * turns are held until real input or an explicit Resume (senpi#3853). Attaching releases nothing.
+	 */
+	attended?: boolean;
 }
+
+/** Sources released by real input or an explicit Resume; goal handlers revalidate current state. */
+export interface HeldWakesReleasedEvent {
+	type: "held_wakes_released";
+	sources: Record<string, number>;
+}
+
+export type HeldWakesReleasedEventResult = undefined;
 
 /** Fired when the current session metadata changes. */
 export interface SessionInfoChangedEvent {
@@ -1435,6 +1452,7 @@ export interface SessionTreeEvent {
 
 export type SessionEvent =
 	| SessionStartEvent
+	| HeldWakesReleasedEvent
 	| SessionInfoChangedEvent
 	| SessionParkedEvent
 	| SessionResumedEvent
@@ -2355,6 +2373,10 @@ export interface ExtensionAPI {
 		handler: ExtensionHandler<ResourcesDiscoverEvent, ResourcesDiscoverResult>,
 	): () => void;
 	on(event: "session_start", handler: ExtensionHandler<SessionStartEvent>): () => void;
+	on(
+		event: "held_wakes_released",
+		handler: ExtensionHandler<HeldWakesReleasedEvent, HeldWakesReleasedEventResult>,
+	): () => void;
 	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): () => void;
 	on(event: "session_parked", handler: ExtensionHandler<SessionParkedEvent>): () => void;
 	on(event: "session_resumed", handler: ExtensionHandler<SessionResumedEvent>): () => void;
@@ -3211,6 +3233,10 @@ export interface ExtensionContextActions {
 	getScopedModels: () => readonly ScopedModel[];
 	getAgentDir?: () => string;
 	isIdle: () => boolean;
+	engineTurnsHeld?: () => boolean;
+	noteHeldWake?: (source: string) => void;
+	/** Internal delivery for a human-settled builtin question, never exposed on ExtensionAPI. */
+	questionInput?: () => void;
 	isProjectTrusted: () => boolean;
 	getSignal: () => AbortSignal | undefined;
 	abort: (source?: "user" | "system") => void;

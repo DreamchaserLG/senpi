@@ -27,6 +27,10 @@ export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
 export const CONTINUE_FROM_LEAF_CAPABILITY = "continue_from_leaf";
 /** HOST capability: the shared router guards foreign holders at every writing RPC admission. */
 export const SESSION_HELD_CAPABILITY = "session_held";
+/** Host supports explicit held-wake release; its command reply acknowledges admission. */
+export const RESUME_SESSION_CAPABILITY = "resume_session";
+/** Host honors open_session.attended:false instead of silently starting unattended work. */
+export const ATTENDED_CAPABILITY = "attended";
 /**
  * Opt-in: the host replaces inline image bytes inside tool results with `image_ref`
  * placeholders for this connection; the client fetches a block on demand with `get_media`.

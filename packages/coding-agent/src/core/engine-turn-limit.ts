@@ -4,6 +4,7 @@ import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
 export const MAX_ENGINE_TURNS_PER_USER_INPUT = 150;
+export const MAX_ENGINE_TURNS_PER_RESUME_WINDOW = 8;
 export const MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW = 12;
 export const ENGINE_TURN_WINDOW_MS = 60_000;
 
@@ -12,12 +13,13 @@ export const ENGINE_TURN_START_ENTRY_TYPE = "engine-turn-start";
 export const ENGINE_TURN_LIMIT_ENTRY_TYPE = "engine-turn-limit";
 export const ENGINE_TURN_LIMIT_EVENT = "engine:turn-limit";
 
-export type EngineTurnStopReason = "per-user-input" | "tool-free-rate";
+export type EngineTurnStopReason = "per-user-input" | "tool-free-rate" | "resume-window";
 
 /** A limit of 0 turns that limit off. */
 export interface EngineTurnLimits {
 	readonly maxPerUserInput: number;
 	readonly maxToolFreePerMinute: number;
+	readonly maxPerResumeWindow?: number;
 }
 
 /** An engine turn this process started since the user's last message, kept even when the session file refuses writes. */
@@ -33,6 +35,9 @@ export interface EngineTurnStop {
 }
 
 export function engineTurnLimitNotice(stop: EngineTurnStop): string {
+	if (stop.reason === "resume-window") {
+		return `Paused: the agent started ${stop.sinceUserInput} turns on its own in this resume window. Send any message to continue.`;
+	}
 	return stop.reason === "per-user-input"
 		? `Paused: the agent started ${stop.sinceUserInput} turns on its own since your last message. Send any message to continue.`
 		: `Paused: the agent started ${stop.toolFreeInWindow} turns on its own in the last minute without doing any work. Send any message to continue.`;
@@ -108,6 +113,10 @@ export function engineTurnStop(
 		toolFreeInWindow,
 		inProcess.filter((record) => !record.toolUsed && now - record.at < ENGINE_TURN_WINDOW_MS).length,
 	);
+	const resumeLimit = limits.maxPerResumeWindow ?? 0;
+	if (resumeLimit > 0 && sinceUserInput >= resumeLimit) {
+		return { reason: "resume-window", sinceUserInput, toolFreeInWindow };
+	}
 	if (limits.maxPerUserInput > 0 && sinceUserInput >= limits.maxPerUserInput) {
 		return { reason: "per-user-input", sinceUserInput, toolFreeInWindow };
 	}

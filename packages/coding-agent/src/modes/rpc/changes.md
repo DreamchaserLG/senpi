@@ -1,3 +1,43 @@
+## 2026-10-21 - Admit Resume promptly and preserve park context patches (senpi#3853)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`: explicit `resume_session` command and pause-state/event contract; its response acknowledges release admission, while execution reports through events.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: advertise `resume_session` and host `attended` support and answer Resume without waiting for provider turns.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, `packages/coding-agent/src/modes/rpc/host-handover-parked-open.ts`, `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`: retain the context overlay written by `set_session_context`, drop terminal parks before opening, and restore nonterminal overlays.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: pause and resume records go only to attached session connections, including workers.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`: a release longer than the normal request deadline timed out despite successful admission.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: open-time context does not include the task owner's later terminal patch, so terminal tasks were reopened.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: command responses, advertised protocol support, handover records and connection subscriptions belong to the host.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `resumeSession`. `packages/coding-agent/src/modes/rpc/rpc-types.ts`: command, response and event unions. `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: terminal-task check before opening a park.
+
+## 2026-10-21 - Unattended reopen and shared session pause protocol (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`, `packages/coding-agent/src/modes/rpc/host-session-runner.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `packages/coding-agent/src/modes/rpc/session-registry-opening.ts`, `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: Validates and propagates attended:false, uses it for host and CLI parked reopens, exposes resume_session plus paused/pausedNoticeCount/holds and session_paused/session_resumed events, and drops terminal task_status parks.
+
+### Why
+
+`packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`, `packages/coding-agent/src/modes/rpc/host-session-runner.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `packages/coding-agent/src/modes/rpc/session-registry-opening.ts`, `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: Inspection and host restarts previously resumed background work, and completed task parks were resurrected.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`, `packages/coding-agent/src/modes/rpc/host-session-runner.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `packages/coding-agent/src/modes/rpc/session-registry-opening.ts`, `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: Open routing, worker launch profiles, protocol state, and handover custody are RPC host responsibilities.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`, `packages/coding-agent/src/modes/rpc/host-session-runner.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `packages/coding-agent/src/modes/rpc/session-registry-opening.ts`, `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: Open command validation and launch construction, command/state unions, shared state projection, event fanout, CLI reopen, and terminal park filtering.
+
 ## 2026-10-19 - An idle host stops waking five-plus times a second (senpi#3738)
 
 ### What changed

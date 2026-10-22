@@ -33,6 +33,9 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 	const projectTrusted = new ProjectTrustStore(session.agentDir).get(cwd) === true;
 	const lastProviderDiagnostic = sanitizeProviderDiagnostic(session.agent.state.providerDiagnostic);
 	return {
+		paused: session.paused ?? false,
+		pausedNoticeCount: session.pausedNoticeCount ?? 0,
+		holds: session.holds ?? [],
 		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
 		pendingDialogs: sessionDialogRequests.get(session)?.snapshot() ?? [],
 		model: session.model,

@@ -632,6 +632,7 @@ export class SessionCommandRouter {
 				...parkedEntryFromProfile(
 					{
 						sessionPath: retained.sessionPath,
+						contextOverlay: retained.contextOverlay,
 						...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
 					},
 					retained.profile,
@@ -809,13 +810,21 @@ export class SessionCommandRouter {
 	 * the failure response otherwise, exactly as an open does.
 	 */
 	reopenParked(entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
-		return this.open(parkedOpenCommand(entry), undefined, { reply: false, defaults: false });
+		return this.open({ ...parkedOpenCommand(entry), attended: false }, undefined, {
+			reply: false,
+			defaults: false,
+			contextOverlay: entry.contextOverlay,
+		});
 	}
 
 	private async open(
 		command: Extract<RpcCommand, { type: "open_session" }>,
 		owner?: string,
-		options?: { readonly reply?: boolean; readonly defaults?: boolean },
+		options?: {
+			readonly reply?: boolean;
+			readonly defaults?: boolean;
+			readonly contextOverlay?: HandoverParkedEntry["contextOverlay"];
+		},
 	): Promise<RpcResponse | undefined> {
 		// A parked session's reopen replays what its park recorded; a field it left empty stays empty
 		// rather than taking THIS host's default (senpi#3376 review).
@@ -844,6 +853,12 @@ export class SessionCommandRouter {
 		// registry, the runtime and the extensions downstream receive values already
 		// proven to satisfy every documented cap.
 		const kindError = sessionKindError(command.kind);
+		if (command.attended !== undefined && command.attended !== false)
+			return error(
+				command.id,
+				"open_session",
+				`${RPC_ERROR_INVALID_LAUNCH_PROFILE}: attended must be false or omitted`,
+			);
 		if (kindError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_SESSION_KIND}: ${kindError}`);
 		const contextError = sessionContextError(command.context);
 		if (contextError)
@@ -875,6 +890,7 @@ export class SessionCommandRouter {
 			opened = await this.registry.openSession(
 				{
 					cwd: command.cwd ?? this.defaults.cwd,
+					...(command.attended === false ? { attended: false as const } : {}),
 					sessionPath: command.sessionPath,
 					holderEndpoint: {
 						host_instance: instanceId,
@@ -907,6 +923,7 @@ export class SessionCommandRouter {
 			);
 			const openedSession = opened;
 			const entry = this.registry.getForCommand(openedSession.sessionId, "open_session");
+			if (!opened.attached && options?.contextOverlay !== undefined) entry.contextOverlay = options.contextOverlay;
 			const state = entry.worker?.snapshot?.state;
 			// The runtime has now published its own lease. Recheck before attaching or replying,
 			// so an opener racing the initial lookup is rolled back rather than admitted.

@@ -1,3 +1,58 @@
+## 2026-10-21 - Deterministic discovered extension registration (omo#10775)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts` sorts directory entries by name before discovering extension entrypoints. Explicit configured path and package-manifest order remain intact.
+
+### Why
+
+- Filesystem enumeration order must not decide the registration order of prompt-contributing handlers.
+
+### Why an extension could not handle it
+
+- Discovery runs before extension handlers are registered.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: LOW, `discoverExtensionsInDir`, immediately after the directory read.
+
+## 2026-10-21 - Preserve human-answer delivery while releasing holds (senpi#3853)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`, `packages/coding-agent/src/core/extensions/types.ts`: the context-keyed question capability only establishes attendance and releases hold custody; answers still use the existing `pi.sendUserMessage` path and extension input source.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: signal human attendance before delivering an answer through the current extension API, including after reload.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/runner.ts`, `packages/coding-agent/src/core/extensions/types.ts`: replacing answer delivery bypassed replacement-runner observers and invoked interactive-only hooks in attended sessions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/runner.ts`, `packages/coding-agent/src/core/extensions/types.ts`: context capability identity and hold admission are engine-owned; extensions retain their established message delivery API.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: context binding. `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContextActions.questionInput`.
+
+## 2026-10-21 - Expose held-wake source admission and release (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/runner.ts`: Adds optional engineTurnsHeld()/noteHeldWake(source) context actions and held_wakes_released { sources }; contexts also receive the internal question-input capability without exposing human-origin assertions on sendUserMessage.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/runner.ts`: Goal continuations must check the hold before charging or rendering, then revalidate current state after release.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/runner.ts`: The context and event contracts and their core bindings are upstream runtime surfaces.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/runner.ts`: ExtensionContext, ExtensionContextActions, SessionEvent, event overloads, bindCore, createContext, and emit helpers.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

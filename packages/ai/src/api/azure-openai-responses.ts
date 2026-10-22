@@ -18,7 +18,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
-import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import { deriveOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
@@ -320,7 +320,7 @@ function buildParams(
 		stream: true,
 		...((options?.cacheRetention ?? model.cacheRetention) === "none"
 			? {}
-			: { prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId) }),
+			: { prompt_cache_key: deriveOpenAIPromptCacheKey(model.id, context) }),
 		store: false,
 	};
 

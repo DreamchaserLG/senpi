@@ -477,6 +477,7 @@ export class RpcClient {
 	}
 
 	async openSession(options: {
+		attended?: false;
 		/** Attach only on this generation; requires `expected_host_instance`. */
 		expectedHostInstance?: string;
 		sessionPath?: string;
@@ -516,6 +517,10 @@ export class RpcClient {
 
 	async sendExtensionUIResponse(response: RpcExtensionUIResponse): Promise<void> {
 		await this.send(response, true, undefined, false);
+	}
+
+	async resumeSession(): Promise<void> {
+		await this.send({ type: "resume_session" });
 	}
 
 	/** Draft update for an open `question` request; fire-and-forget like the response. */
