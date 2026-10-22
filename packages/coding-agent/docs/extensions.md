@@ -467,6 +467,46 @@ See [Session Format](session-format.md) for session storage internals and the Se
 
 Fired when a session is started, loaded, or reloaded.
 
+`event.attended === false` marks an unattended open. Automatic turns are held until
+real user input or explicit Resume, not attachment. `ctx.engineTurnsHeld()` reads
+that gate. A source that charges or renders before sending must check it first
+and call `ctx.noteHeldWake("goal")` (or its own source key) instead of charging.
+Source-only notices are consumed on release and reported through
+`held_wakes_released`; they never require a model payload to clear the hold.
+
+#### held_wakes_released
+
+`pi.on("held_wakes_released", (event, ctx) => ...)` receives
+`event.sources: Record<string, number>` after a hold is released. Re-read current
+source state before scheduling work. The goal builtin queues one fresh
+continuation only if the current goal remains active; held goal text is never
+replayed. For user input, other sources are coalesced into that input's context
+before its message, and this event follows the user turn. Explicit Resume runs
+one turn per non-goal source sequentially, then releases the goal last.
+
+The core backstop groups `goal-continuation` as `goal`, `senpi-monitor:*` as
+`monitor`, and `senpi-codemode:*` as `codemode`; other custom types keep their own
+key. It persists counts and only the latest payload per source. A monitor release
+includes the held count and latest event text.
+
+The shared internal ledger exposes `SessionHold { kind, key, since, data?,
+sourceCounts }`. Only `kind: "unattended"` is implemented here.
+`addHold(kind, { key?, data? })` defaults the identity key to the kind and preserves
+opaque metadata. Multiple keys of one kind remain independent records.
+`releaseAll("input" | "resume_session")` releases every current key; attachment
+does not release any. Persisted `session-hold` additions carry `key` and `data`,
+and release entries carry `keys`. Restart restores both identity and metadata.
+
+`getHold(key)` returns the current keyed record, or `undefined`.
+`release(keys, cause)` releases only the named keys and emits `session_resumed`
+only when the final active record goes. `releaseAll(cause)` delegates to that
+operation. The cause union remains `"input" | "resume_session"`.
+`engine-turn-hold-notices.ts` owns notice persistence, coalescing, counts, and
+consumption; the ledger delegates to that one custody path.
+Each delivered snapshot acknowledges its own notice IDs. New wakes arriving
+during delivery stay held for the next release, including newer wakes from the
+same source. The goal-release event waits until that non-goal custody is empty.
+
 ```typescript
 pi.on("session_start", async (event, ctx) => {
   // event.reason - "startup" | "reload" | "new" | "resume" | "fork"

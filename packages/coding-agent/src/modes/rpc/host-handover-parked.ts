@@ -30,6 +30,7 @@ import {
 	sessionPromptSurfaceError,
 	sessionRetryFallbackError,
 } from "./rpc-input-validation.ts";
+import { applyContextPatch, type SessionContextOverlay } from "./session-context-patch.ts";
 
 export interface HandoverParkedEntry {
 	readonly sessionPath: string;
@@ -54,6 +55,7 @@ export interface HandoverParkedEntry {
 	 */
 	readonly sessionKind?: SessionKind;
 	readonly sessionContext?: SessionContext;
+	readonly contextOverlay?: SessionContextOverlay;
 	readonly autoTitle?: boolean;
 	readonly retryFallback?: SessionRetryFallbackProfile;
 	/**
@@ -94,6 +96,7 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 		sessionBrowserEngineError(record.browserEngine) === undefined &&
 		sessionKindError(record.sessionKind) === undefined &&
 		sessionContextError(record.sessionContext) === undefined &&
+		(record.contextOverlay === undefined || !("refusal" in applyContextPatch(undefined, record.contextOverlay))) &&
 		sessionAutoTitleError(record.autoTitle) === undefined &&
 		sessionRetryFallbackError(record.retryFallback) === undefined &&
 		(record.model === undefined ||

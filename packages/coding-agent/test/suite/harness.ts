@@ -16,11 +16,13 @@ import type {
 	ToolResultMessage,
 } from "@earendil-works/pi-ai/compat";
 import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
+import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
 import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
 import type { ToolRuntimeKind } from "../../src/cli/tool-runtime.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
+import type { SessionStartEvent } from "../../src/core/extensions/types.ts";
 import { convertToLlmForTransport } from "../../src/core/messages.ts";
 import type { ModelRegistry } from "../../src/core/model-registry.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
@@ -140,7 +142,7 @@ export interface HarnessOptions {
 	fileSettings?: boolean;
 	settingsFileName?: "settings.json" | "settings.jsonc";
 	settingsContent?: string;
-	retryProfile?: import("@earendil-works/pi-ai/utils/retry-profile/types").RetryPolicyProfile;
+	retryProfile?: RetryPolicyProfile;
 	evalOnlyToolNames?: string[];
 	/** Send the senpi#2093 environment-context message. Off by default so transcript-pinning tests stay exact. */
 	environmentContext?: boolean;
@@ -156,6 +158,7 @@ export interface HarnessOptions {
 	cwd?: string;
 	/** Tool runtime for the session (senpi#3566); absent means `in-process`. */
 	toolRuntime?: ToolRuntimeKind;
+	sessionStartEvent?: SessionStartEvent;
 }
 
 export interface Harness {
@@ -326,6 +329,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		retryRandom: options.retryRandom ?? (() => 0.5),
 		environmentContext: options.environmentContext ?? false,
 		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
+		...(options.sessionStartEvent !== undefined ? { sessionStartEvent: options.sessionStartEvent } : {}),
 	});
 
 	const events: AgentSessionEvent[] = [];

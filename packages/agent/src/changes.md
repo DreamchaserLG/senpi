@@ -1,3 +1,21 @@
+## 2026-10-21 - A run that failed in the queued-input port is marked local (senpi#3866)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `takeQueuedMessages` and `createLoopConfig` call the owner's `queuedInputPort` through `localFailurePort` (new `packages/agent/src/local-failure.ts`), which remembers every error the port's `claim`, `release` or `commitConsumption` raised. `handleRunFailure` stamps the failure message of a run that ended on such an error with `failureSource: "local"` (not on an abort).
+
+### Why
+
+- `packages/agent/src/agent.ts`: on Windows the coding-agent's pending-input journal failed its fsync with EPERM inside `commitConsumption`. `handleRunFailure` turned it into an ordinary `stopReason: "error"` message stamped with the current model, and the session took it for a model hard error and walked its whole fallback chain (omo#10781). The port is local bookkeeping, never a provider request, so its failures say so.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent.ts`: the failure message is built inside the agent from the thrown error; only the agent knows the error came from the port.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent.ts`, the import block, the `port` line in `takeQueuedMessages`, the `queuedInputPort` line in `createLoopConfig`, and the spread list of `handleRunFailure`'s failure message.
+
 ## 2026-10-17 - Queued input's consumption is committed before a provider sees it (senpi#3549)
 
 ### What changed

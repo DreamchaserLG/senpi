@@ -670,7 +670,27 @@ const XAI_BUILTIN_EXCLUDED_MODEL_IDS = new Set([
 // Documented per-model xAI reasoning specifications. Grok 4.6 exposes low/medium/high/xhigh;
 // the fixed-reasoning Grok 4.20 variant exposes only `high`. Models without an entry fall back
 // to `applyThinkingLevelMetadata()`'s "no verified effort options" defaults.
+// Grok 4.3 and 4.5 are pinned here rather than taken from models.dev: xAI's reasoning guide documents `xhigh` only on
+// grok-4.6 and later (grok-4.5 treats it as `high`), so neither model offers `xhigh` until xAI's API is verified to accept it.
 const XAI_THINKING_LEVEL_MAPS: Record<string, NonNullable<Model<"openai-responses">["thinkingLevelMap"]>> = {
+	"grok-4.3": {
+		off: "none",
+		minimal: null,
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: null,
+		max: null,
+	},
+	"grok-4.5": {
+		off: null,
+		minimal: null,
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: null,
+		max: null,
+	},
 	"grok-4.6": {
 		off: null,
 		minimal: null,
@@ -740,6 +760,50 @@ const modelsDevReasoningOptions = new Map<string, ModelsDevReasoningOption[]>();
 
 function getModelKey(model: Pick<Model<Api>, "provider" | "id">): string {
 	return `${model.provider}:${model.id}`;
+}
+
+// OpenGateway enriches `x-ai/<id>` from models.dev too: drop the efforts the xAI pin rejects so both routes agree.
+function withXaiThinkingPin<T extends { reasoning_options?: ModelsDevReasoningOption[] }>(id: string, source: T): T {
+	const pin = XAI_THINKING_LEVEL_MAPS[id.replace(/^x-ai\//, "")];
+	if (!pin || source.reasoning_options === undefined) return source;
+	const allowed = (value: string | null): boolean =>
+		value === null || value === "default" || (value === "none" ? pin.off !== null : pin[value as keyof typeof pin] != null);
+	return {
+		...source,
+		reasoning_options: source.reasoning_options.map((option) =>
+			option.type === "effort" ? { ...option, values: option.values.filter(allowed) } : option,
+		),
+	};
+}
+
+// models.dev marks a model `deprecated` while the provider still serves it. A deprecated row the previous
+// generated catalog already shipped stays, labeled `deprecated: true`, so nobody loses a working model; a
+// deprecated row the catalog did not ship is skipped as before, and a row gone from models.dev drops out.
+const deprecatedUpstreamModels = new Set<string>();
+const previouslyShippedModels = readPreviouslyShippedModelKeys();
+function readPreviouslyShippedModelKeys(): Set<string> {
+	const keys = new Set<string>();
+	const dataDir = join(packageRoot, "src/providers/data");
+	if (!existsSync(dataDir)) return keys;
+	for (const file of readdirSync(dataDir)) {
+		if (!file.endsWith(".json") || file === MODEL_DATA_MANIFEST_FILE) continue;
+		const groups = JSON.parse(readFileSync(join(dataDir, file), "utf8")) as Record<string, Record<string, { id?: unknown; provider?: unknown }>>;
+		for (const rows of Object.values(groups)) {
+			for (const row of Object.values(rows)) {
+				if (typeof row.id === "string" && typeof row.provider === "string") keys.add(`${row.provider}:${row.id}`);
+			}
+		}
+	}
+	return keys;
+}
+function keepDeprecatedUpstream(provider: string, modelId: string): boolean {
+	const key = `${provider}:${modelId}`;
+	if (!previouslyShippedModels.has(key)) return false;
+	deprecatedUpstreamModels.add(key);
+	return true;
+}
+function applyDeprecatedUpstreamMetadata(model: Model<Api>): void {
+	if (deprecatedUpstreamModels.has(`${model.provider}:${model.id}`)) model.deprecated = true;
 }
 
 function recordModelsDevReasoningOptions(provider: string, id: string, sourceModel: ModelsDevModel): void {
@@ -1941,7 +2005,7 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 	const models: Model<Api>[] = [];
 
 	for (const [modelId, model] of Object.entries(provider.models)) {
-		if (model.status === "deprecated") continue;
+		if (model.status === "deprecated" && !keepDeprecatedUpstream("baseten", modelId)) continue;
 
 		const reasoning = model.reasoning === true;
 		const reasoningOptions = model.reasoning_options ?? [];
@@ -2452,7 +2516,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
-				recordModelsDevReasoningOptions("xai", modelId, m);
+				if (!thinkingLevelMap) recordModelsDevReasoningOptions("xai", modelId, m);
 			}
 		}
 
@@ -2643,7 +2707,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(togetherProvider.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("together", modelId)) continue;
 
 				const reasoning = m.reasoning === true;
 				const thinkingLevelMap = getTogetherThinkingLevelMap(modelId, reasoning);
@@ -2677,7 +2741,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.venice.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("venice", modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -2720,7 +2784,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data[variant.key].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream(variant.provider, modelId)) continue;
 
 				const npm = m.provider?.npm;
 				let api: Api;
@@ -2823,7 +2887,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data["github-copilot"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("github-copilot", modelId)) continue;
 
 				// Claude 4.x and 5.x models route to Anthropic Messages API
 				const isCopilotClaude = /^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/.test(modelId);
@@ -3004,12 +3068,16 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl,
 					reasoning: isKimiK3 || m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
-					cost: {
-						input: m.cost?.input || (isKimiK3 ? KIMI_K3_COST.input : 0),
-						output: m.cost?.output || (isKimiK3 ? KIMI_K3_COST.output : 0),
-						cacheRead: m.cost?.cache_read || (isKimiK3 ? KIMI_K3_COST.cacheRead : 0),
-						cacheWrite: m.cost?.cache_write || (isKimiK3 ? KIMI_K3_COST.cacheWrite : 0),
-					},
+					// Kimi K3 always bills at the official USD list price: models.dev carries a
+					// currency-converted price for moonshotai-cn (2.9879/14.9395) that drifts daily.
+					cost: isKimiK3
+						? { ...KIMI_K3_COST }
+						: {
+								input: m.cost?.input || 0,
+								output: m.cost?.output || 0,
+								cacheRead: m.cost?.cache_read || 0,
+								cacheWrite: m.cost?.cache_write || 0,
+							},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 					compat,
@@ -3053,7 +3121,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(providerModels)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream(provider, modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -3358,7 +3426,7 @@ async function generateModels() {
 	const aiGatewayCatalog = await fetchAiGatewayModels();
 	const radiusModels = await fetchRadiusModels();
 	const openGatewayModels = await fetchOpenGatewayModels(
-		(id, source) => recordModelsDevReasoningOptions("opengateway", id, source),
+		(id, source) => recordModelsDevReasoningOptions("opengateway", id, withXaiThinkingPin(id, source)),
 		{ strict: generatorOptions.strict },
 	);
 
@@ -4256,6 +4324,7 @@ async function generateModels() {
 	allModels.push(...azureOpenAiModels);
 
 	for (const model of allModels) {
+		applyDeprecatedUpstreamMetadata(model);
 		applyOpenAiInputCap(model);
 		applyOpenAICompletionsCompatMetadata(model);
 		applyAnthropicMessagesCompatMetadata(model);

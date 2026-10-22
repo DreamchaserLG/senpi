@@ -864,7 +864,13 @@ const importNodeOnlyApi = (specifier: string): Promise<typeof import("jiti/stati
 async function createExtensionModuleImporter(): Promise<ExtensionModuleImporter> {
 	if (usesNativeBunImports) {
 		const { createBunExtensionImporter } = await import("./bun-extension-importer.ts");
-		return createBunExtensionImporter(VIRTUAL_MODULES);
+		return createBunExtensionImporter(
+			VIRTUAL_MODULES,
+			{},
+			{
+				preparedCache: { dir: path.join(getAgentDir(), "cache", "extension-modules"), release: VERSION },
+			},
+		);
 	}
 	const { createJiti } = await importNodeOnlyApi("jiti/static");
 	return createJiti(import.meta.url, {
@@ -1136,7 +1142,9 @@ function discoverExtensionsInDir(dir: string): string[] {
 	const discovered: string[] = [];
 
 	try {
-		const entries = fs.readdirSync(dir, { withFileTypes: true });
+		const entries = fs
+			.readdirSync(dir, { withFileTypes: true })
+			.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
 		for (const entry of entries) {
 			const entryPath = path.join(dir, entry.name);

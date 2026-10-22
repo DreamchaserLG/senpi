@@ -20,11 +20,11 @@ import { type AuthenticatedAttemptInput, createAttemptMessages, type RetainableA
 import { recoverAuthBlockedSlots } from "./auth-block-recovery.ts";
 import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvironment } from "./auth-environment.ts";
 import { writeConfigDirCredential } from "./config-dir-credentials.ts";
-import { classifySdkError, sdkAssistantFailure, sdkResultFailure } from "./errors.ts";
+import { asksLegacyLongContext } from "./context-window.ts";
 import { runFailover } from "./failover.ts";
 import { markLongContextRefused } from "./long-context.ts";
+import { classifyForRequest, retryAtStandardWindowOnce, sdkFailure, visibleSdkMessage } from "./long-context-retry.ts";
 import { isGrantRejected, refreshFailure } from "./refresh-failure.ts";
-import { refusalError } from "./refusal.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenInjection } from "./settings.ts";
 
@@ -216,62 +216,6 @@ async function prepareSlot(
 	return { env: { ...childEnvironment, CLAUDE_CONFIG_DIR: directory }, credentialDigest };
 }
 
-function sdkFailure(message: SDKMessage): unknown | undefined {
-	const refusal = refusalError(message);
-	if (refusal) return refusal;
-	if (message.type === "assistant") return sdkAssistantFailure(message);
-	if (message.type === "result") return sdkResultFailure(message);
-	return undefined;
-}
-
-function visibleSdkMessage(message: SDKMessage): boolean {
-	if (message.type !== "stream_event") return false;
-	return /^(?:content_block_start|content_block_delta|content_block_stop)$/.test(message.event.type);
-}
-
-/**
- * The ambient lane has no account failover, so a refused 1M window is retried here: once, and only
- * before anything visible streamed. Messages pass through as they arrive (system/init, api_retry and
- * refusals keep their order and timing); the refused attempt is closed before the retry starts, after
- * the refusal is recorded so the rebuilt options ask for the standard window (senpi#3408).
- */
-async function* retryAtStandardWindowOnce(
-	attempt: () => Promise<AsyncIterable<SDKMessage>>,
-): AsyncGenerator<SDKMessage> {
-	const first = (await attempt())[Symbol.asyncIterator]();
-	let refused = false;
-	let finished = false;
-	try {
-		let visible = false;
-		for (;;) {
-			const next = await first.next();
-			if (next.done) {
-				finished = true;
-				return;
-			}
-			const failure = visible ? undefined : sdkFailure(next.value);
-			if (failure !== undefined && classifySdkError(failure).kind === "long_context_unavailable") {
-				refused = true;
-				break;
-			}
-			visible ||= visibleSdkMessage(next.value);
-			yield next.value;
-		}
-	} finally {
-		// Closes the first query on every exit (refusal, consumer return, error) before any retry spawns.
-		if (!finished) {
-			try {
-				await first.return?.();
-			} catch {
-				// Closing the first query must never replace the error (or the refusal) that ended it.
-			}
-		}
-	}
-	if (!refused) return;
-	markLongContextRefused();
-	yield* await attempt();
-}
-
 /** Resolves managed OAuth immediately before each subprocess spawn and retries only pre-delta failures. */
 export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncGenerator<SDKMessage> {
 	const signal = input.signal ?? new AbortController().signal;
@@ -283,12 +227,14 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			if (name.startsWith("SENPI_")) delete ambientEnvironment[name];
 		}
 		// Lane-owned variables from buildOptions (the compaction-owner overlay) win over the host.
+		let askedLegacyLongContext = false;
 		const ambientAttempt = async () => {
 			const options = input.buildOptions("ambient");
+			askedLegacyLongContext = asksLegacyLongContext(options.model);
 			options.env = { ...ambientEnvironment, ...options.env };
 			return createAttemptMessages(input, { accountName: "ambient", accounts: [], authLane: "ambient", options });
 		};
-		yield* retryAtStandardWindowOnce(ambientAttempt);
+		yield* retryAtStandardWindowOnce(ambientAttempt, () => askedLegacyLongContext);
 		return;
 	}
 	pool.accounts = await recoverAuthBlockedSlots({
@@ -303,6 +249,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		now: activeBoundary.now(),
 		transientError: (error) => (error instanceof CredentialStoreBusyError ? error : refreshFailure(error)),
 	});
+	let askedLegacyLongContext = false;
 	yield* runFailover({
 		accounts: pool.accounts,
 		accountFallback: input.providerSettings.accountFallback,
@@ -323,6 +270,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			}),
 		runAttempt: async (slot) => {
 			const options = input.buildOptions(pool.lane);
+			askedLegacyLongContext = asksLegacyLongContext(options.model);
 			const accounts = pool.accounts.map((account) => ({ ...account }));
 			const prepared = await prepareSlot(pool, slot, signal);
 			options.env = { ...prepared.env, ...options.env };
@@ -334,7 +282,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 				credentialDigest: prepared.credentialDigest,
 			});
 		},
-		classify: classifySdkError,
+		classify: (error) => classifyForRequest(error, askedLegacyLongContext),
 		...(input.sessionId === undefined ? {} : { sessionKey: input.sessionId }),
 		onLongContextRefused: () => markLongContextRefused(),
 		store: pool.store,

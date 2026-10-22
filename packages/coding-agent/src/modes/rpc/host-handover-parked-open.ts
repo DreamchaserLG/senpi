@@ -8,6 +8,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { HandoverParkedEntry } from "./host-handover-parked.ts";
 import type { RpcCommand } from "./rpc-types.ts";
+import type { SessionContextOverlay } from "./session-context-patch.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry-types.ts";
 
 type OpenSessionCommand = Extract<RpcCommand, { type: "open_session" }>;
@@ -29,7 +30,11 @@ const thinkingLevelOf = (value: string | undefined): ThinkingLevel | undefined =
  * in on open: they describe this generation and are stripped, so the successor merges its own.
  */
 export function parkedEntryFromProfile(
-	session: { readonly sessionPath: string; readonly durableSessionId?: string },
+	session: {
+		readonly sessionPath: string;
+		readonly durableSessionId?: string;
+		readonly contextOverlay?: SessionContextOverlay;
+	},
 	profile: RpcSessionLaunchProfile | undefined,
 	hostContextKeys: readonly string[],
 ): HandoverParkedEntry {
@@ -41,6 +46,7 @@ export function parkedEntryFromProfile(
 		sessionPath: session.sessionPath,
 		...(session.durableSessionId !== undefined ? { durableSessionId: session.durableSessionId } : {}),
 		retainOnDisconnect: true,
+		...(session.contextOverlay !== undefined ? { contextOverlay: session.contextOverlay } : {}),
 		...(profile?.cwd !== undefined ? { cwd: profile.cwd } : {}),
 		...(profile?.creationModel !== undefined ? { model: profile.creationModel } : {}),
 		...(profile?.initialThinkingLevel !== undefined ? { thinkingLevel: profile.initialThinkingLevel } : {}),

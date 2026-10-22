@@ -146,6 +146,9 @@ export function configFingerprint(
 			// A refused 1M window must restart the resident process at the standard one (senpi#3408). Only
 			// the refusal state is hashed: a live model switch reaches the process through setModel.
 			longContextRefused: !longContextAvailable(),
+			// Claude Code reads its window once at spawn, so a switch to a model planned at another window
+			// restarts the resident process at that window instead of keeping the old one (senpi#3801).
+			contextWindow: options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
 			extraArgs: options.extraArgs,
 			pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
 			includePartialMessages: options.includePartialMessages,

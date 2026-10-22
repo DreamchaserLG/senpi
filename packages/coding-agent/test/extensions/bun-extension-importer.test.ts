@@ -105,6 +105,56 @@ assert.equal(after(), "after");
 		);
 	});
 
+	// senpi#3716 host-start latency: a fresh host must reuse the prepared source a previous process wrote, without
+	// transpiling, and must still honour per-generation isolation and today's module resolution.
+	it("serves unchanged sources from the prepared-source cache across processes and revalidates resolution", () => {
+		// Given: an extension with a local helper and a package dependency, and a cache directory.
+		const root = fixture(
+			'import { value } from "./helper.ts"; import { dep } from "dep"; export default () => [value, dep];',
+		);
+		writeFileSync(join(root, "helper.ts"), 'export const value: string = "helper";\n');
+		packageFixture(root, "dep", 'export const dep = "first";');
+		writeFileSync(join(root, "node_modules", "dep", "second.js"), 'export const dep = "second";');
+		const cache = (session: string) => `
+const cacheDir = join(root, "prepared-cache");
+${session}`;
+		// When: one process fills the cache, and later processes load with transpiling disabled.
+		run(
+			root,
+			cache(`
+const importer = await createBunExtensionImporter({}, {}, { preparedCache: { dir: cacheDir, release: "test" } });
+assert.deepEqual((await importer.import(entry, { default: true }))(), ["helper", "first"]);
+`),
+		);
+		run(
+			root,
+			cache(`
+Bun.Transpiler = class { constructor() { throw new Error("transpiled despite a valid cache entry"); } };
+const first = await createBunExtensionImporter({}, {}, { preparedCache: { dir: cacheDir, release: "test" } });
+const second = await createBunExtensionImporter({}, {}, { preparedCache: { dir: cacheDir, release: "test" } });
+const one = await first.import(entry, { default: true });
+const two = await second.import(entry, { default: true });
+// Then: both generations load from the cache, each with its own module graph.
+assert.deepEqual(one(), ["helper", "first"]);
+assert.deepEqual(two(), ["helper", "first"]);
+assert.notEqual(one, two);
+`),
+		);
+		// When: the package now resolves elsewhere while the extension source stays byte-identical.
+		writeFileSync(
+			join(root, "node_modules", "dep", "package.json"),
+			JSON.stringify({ type: "module", exports: "./second.js" }),
+		);
+		run(
+			root,
+			cache(`
+const importer = await createBunExtensionImporter({}, {}, { preparedCache: { dir: cacheDir, release: "test" } });
+// Then: the stale entry is not trusted; the edge resolves to the new target.
+assert.deepEqual((await importer.import(entry, { default: true }))(), ["helper", "second"]);
+`),
+		);
+	});
+
 	it("shares static and computed dynamic relative imports within a generation", () => {
 		// Given: the dynamic specifier cannot be statically rewritten by a bundler.
 		const root = fixture(`import * as helper from "./helper.ts";

@@ -16,6 +16,24 @@ Both callers are core startup / RPC host code.
 
 - LOW: the `utils/paths.ts` import line and the former `resolveCliPaths` definition after `buildSessionOptions`.
 
+## 2026-10-18 - A session is found by the id its file name carries (oh-my-openagent#7471)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `resolveSessionPath` matches the header id first, then the id the file name carries, then an id prefix, for both the project and the global listing. `findLocalSessionByExactId` (`--session-id`) also matches the id the file name carries, so it opens that session instead of creating a second file under the same id.
+
+### Why
+
+A session file named `<timestamp>_<id>.jsonl` whose header carried a different id could not be opened with `--session <id>`, though the file name (and the resume hint printed from it) named that id; `--session-id <id>` then created a second session under the same id.
+
+### Why an extension could not handle it
+
+Session creation and `--session` resolution run in core before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `main.ts`: `resolveSessionPath`, `findLocalSessionByExactId` and the import line.
+
 ## 2026-10-19 - Print mode stops waiting for a silent stdin pipe (senpi#3715)
 
 ### What changed
@@ -645,6 +663,7 @@ The service contract and client mapping own the metadata before dispatch.
 ### Expected merge conflict zones
 
 - LOW: the shell-utilities export block in `index.ts`.
+
 ## 2026-09-30 - Legacy tool warnings require a legacy tool entry point (senpi#2451)
 
 ### What changed
@@ -781,6 +800,7 @@ Exclusion is a repository-level decision about which upstream files exist at all
 ### Expected merge conflict zones
 
 Every upstream release that touches these paths re-adds or modifies them: re-run `git rm -rqf --ignore-unmatch $(cat .github/agent/upstream-exclusions.txt)` after the merge and extend the list (with a dated block here) when upstream adds a new file to an excluded feature.
+
 ## 2026-09-30 - Print mode selects its answer after deferred turns settle (#1431)
 
 ### What changed
@@ -5151,6 +5171,7 @@ The runtime factory builds the session before any extension is loaded.
 ### Expected merge conflict zones
 
 The `promptSurface: launchProfile?.promptSurface` line in the session creation call.
+
 ## 2026-10-11 - Print account limits through the shared formatter (senpi#3131)
 
 ### What changed

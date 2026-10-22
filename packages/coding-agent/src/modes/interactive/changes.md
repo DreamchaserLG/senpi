@@ -1,3 +1,21 @@
+## 2026-10-21 - The resume picker's search finds a session by the id its file name carries (oh-my-openagent#7471)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/session-selector-search.ts`: `getSessionSearchText` adds the id the file name carries (`sessionFileNameId`) when it differs from the header id.
+
+### Why
+
+A session whose file name carries one id and whose header records another was absent from the picker when searched by the id the resume hint printed.
+
+### Why an extension could not handle it
+
+The picker's search text is built in the host component; extensions cannot extend it.
+
+### Expected merge conflict zones
+
+- LOW: `getSessionSearchText` and the `session-manager.ts` import line.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

@@ -1,3 +1,21 @@
+## 2026-10-21 - Distinguish human question answers from automatic timeouts (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: Routes actual answered/comment-submitted outcomes through the engine-owned question-input capability; automatic outcomes keep sendUserMessage and remain held.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: A question timeout must not release an unattended hold, while a real answer must.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: The builtin owns the canonical outcome and sends the answer for every surface; generic extensions cannot assert a human origin.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: deliverAnswer; the rest of question persistence and formatting is unchanged.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

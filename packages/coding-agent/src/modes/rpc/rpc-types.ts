@@ -75,6 +75,7 @@ type RpcSessionCommand =
 			deliverAs?: "steer" | "followUp" | "nextTurn";
 	  }
 	| { id?: string; type: "continue_from_leaf" }
+	| { id?: string; type: "resume_session" }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }
 	| ({
@@ -504,6 +505,8 @@ export type RpcCommand =
 	| {
 			id?: string;
 			type: "open_session";
+			/** An observational/unattended open; attaching never releases an existing hold. */
+			attended?: false;
 			/**
 			 * Attach only to an existing session on this host generation. Requires
 			 * `expected_host_instance`; mismatch returns `owner_changed`, a released
@@ -788,6 +791,9 @@ export interface RpcSessionModelEntry {
 }
 
 export interface RpcSessionState {
+	paused: boolean;
+	pausedNoticeCount: number;
+	holds: { kind: "unattended"; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
 	model?: Model<any>;
 	/**
 	 * Model switch held until the next compaction, or `null` when no switch is held.
@@ -1121,6 +1127,7 @@ export type RpcResponse =
 			data: { model: Model<any>; thinkingLevel: ThinkingLevel; isScoped: boolean } | null;
 	  }
 	| { id?: string; type: "response"; command: "continue_from_leaf"; success: true }
+	| { id?: string; type: "response"; command: "resume_session"; success: true }
 	| {
 			id?: string;
 			type: "response";

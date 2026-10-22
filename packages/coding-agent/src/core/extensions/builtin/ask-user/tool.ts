@@ -1,3 +1,4 @@
+import { releaseQuestionInput } from "../../../question-input.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
@@ -70,9 +71,10 @@ export function deliverAnswer(
 	variant: "codex" | "claude",
 ): void {
 	if (response.status === "cancelled") return;
-	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions, request.required === true), {
-		deliverAs: ctx.isIdle() ? "followUp" : "steer",
-	});
+	const content = formatUserMessage(response, request.requestId, request.questions, request.required === true);
+	const options = { deliverAs: ctx.isIdle() ? ("followUp" as const) : ("steer" as const) };
+	if (response.status === "answered" || response.status === "comment-submitted") releaseQuestionInput(ctx);
+	pi.sendUserMessage(content, options);
 	void emitAskUserNotification(pi, ctx, request, response, variant);
 }
 function emitWake(pi: Pick<ExtensionAPI, "events">, sessionId: string) {

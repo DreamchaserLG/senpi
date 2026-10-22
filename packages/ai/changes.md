@@ -2015,3 +2015,68 @@ Upstream manifest edits at the next sync.
 ### Expected merge conflict zones
 
 - LOW: the Kimi K3 cost constants when upstream reprices Kimi models.
+
+## 2026-10-20 - Pin Kimi K3 pricing and Grok 4.3/4.5 efforts against live catalog drift
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the Moonshot variant loop gives `kimi-k3` the official `KIMI_K3_COST` on `moonshotai` and `moonshotai-cn` instead of preferring the models.dev cost; other Moonshot rows keep the models.dev cost. `XAI_THINKING_LEVEL_MAPS` gains explicit `grok-4.3` (`off: "none"`, low/medium/high) and `grok-4.5` (low/medium/high) entries without `xhigh`; models.dev reasoning options are no longer recorded for xAI models with a pin, and `withXaiThinkingPin` drops the same efforts from OpenGateway's `x-ai/<id>` enrichment.
+- The catalog was regenerated with `--strict` (every provider). Besides the pins, it carries this upstream drift:
+  - Removed: Mistral `open-mistral-7b`, `open-mixtral-8x22b`, `open-mixtral-8x7b` (deprecated upstream) and Venice `zai-org-glm-4.7-flash`.
+  - Added: `deepseek-v4.1-flash-1017` on `alibaba-token-plan`, `qwen-token-plan`, `cloudflare-workers-ai` and `cloudflare-ai-gateway`; Venice `mercury-3`.
+  - Lower `maxTokens`: Together `Qwen/Qwen3.6-Plus` 500000 -> 65536 and `Qwen/Qwen3.7-Max` 500000 -> 131072; Vercel AI Gateway `deepseek/deepseek-v4.1-flash` 1048576 -> 32768; OpenRouter `qwen/qwen3.5-397b-a17b` and `qwen/qwen3.8-27b` 235929 -> 65536, `deepseek/deepseek-chat` 16384 -> 16000, `z-ai/glm-5` 131072 -> 128000.
+  - Thinking levels: Cloudflare Workers AI `@cf/google/gemma-4-26b-a4b-it` loses its map (no `off: "none"`), and `@cf/nvidia/nemotron-3-120b-a12b` drops `medium`.
+  - Prices: `moonshotai-cn` non-K3 rows and one more Chinese provider take the day's currency-converted models.dev prices.
+  - More prices: OpenGateway `deepseek/deepseek-v4.1-flash-ultrafast` input rises 0.03 -> 0.15 and `z-ai/glm-5.3-flash-ultrafast` 0.015 -> 0.105 per 1M tokens. Mistral `ministral-3b-latest` 0.04 -> 0.1, `ministral-8b-latest` 0.1 -> 0.15 and `voxtral-small-latest` output 0.3 -> 0.4. About a dozen OpenRouter rows move with upstream, and OpenRouter `cloudflare/clef` goes 0.042 -> 0.24 with context 16384 -> 65536.
+  - Lower context windows: OpenRouter `deepseek/deepseek-chat` 163840 -> 128000 and `z-ai/glm-5` 202752 -> 198000.
+  - Compat: Amazon Bedrock `gpt-5.6-sol` and `gpt-5.6-terra` rows in the `us` and `in` regions gain `supportsStrictMode`.
+
+### Why
+
+- The release job regenerates the catalog live. models.dev now lists `moonshotai-cn` Kimi K3 at a converted price that moves daily, and lists `xhigh` for Grok 4.3 and 4.5, while xAI's reasoning guide documents `xhigh` only on grok-4.6 and later (grok-4.5 treats it as `high`). Both broke tests and failed the 2026.10.20-1 release; capabilities now come from the explicit pins, not from models.dev alone.
+
+### Why an extension could not handle it
+
+- Built-in model prices and reasoning efforts are catalog data generated in this package; nothing at runtime can correct them.
+
+### Expected merge conflict zones
+
+- LOW: the Moonshot variant `cost` block and `XAI_THINKING_LEVEL_MAPS` when upstream changes how Moonshot prices or xAI efforts are sourced.
+
+## 2026-10-21 - Upstream-deprecated models stay in the catalog, labeled
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the six provider loops that skipped a models.dev row with `status: "deprecated"` (baseten, together, venice, opencode/opencode-go, github-copilot, and the xiaomi family) keep it when the previous generated catalog (the committed `src/providers/data`) already shipped it (`keepDeprecatedUpstream`), and skip it as before otherwise; a post-pass (`applyDeprecatedUpstreamMetadata`) sets `deprecated: true` on the kept rows. A row that models.dev no longer lists still disappears, and a deprecated row the catalog never shipped is not added. The catalog was regenerated with `--strict`.
+- `packages/ai/src/model.ts`: `Model` gains the optional `deprecated` flag.
+
+### Why
+
+- models.dev marks a model deprecated while the provider still serves it. Dropping those rows removed working models (GitHub Copilot Claude Opus 4.7, GPT-5.5, GPT-5.4; Baseten Kimi K2.x) from users mid-release and broke the 2026.10.21-1 release run's live catalog regeneration. Keeping them labeled lets the UI mark them and fallback prefer current models; not re-adding long-dropped deprecated rows keeps the pickers clean.
+
+### Why an extension could not handle it
+
+- The built-in catalog is generated in this package; nothing at runtime can restore rows the generator dropped.
+
+### Expected merge conflict zones
+
+- LOW: the deprecated-status checks in the provider loops of `generate-models.ts` when upstream adds or reshapes provider loops.
+
+## 2026-10-21 - Correction: what the deprecated label does today, and the drift the refresh carries
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: no code change; this entry corrects the 2026-10-21 "Upstream-deprecated models stay in the catalog, labeled" entry above. Its "Why" says the label lets the UI mark deprecated models and lets fallback prefer current models; nothing reads `Model.deprecated` yet (tracked in #3895). What the change does today: a model models.dev marks deprecated stays in the catalog, labeled `deprecated: true`, instead of disappearing, so it keeps working.
+- The same catalog refresh also takes models.dev's current thinking levels and compat for existing models, not only prices and limits (for example Baseten Nemotron 3 Ultra's `off` value becomes `none`, and Baseten DeepSeek-V4-Pro's supported levels change).
+
+### Why
+
+- Tracker entries are append-only, and release notes state only what ships; this keeps the record accurate without rewriting the earlier entry.
+
+### Why an extension could not handle it
+
+- Same as the entry above: the bundled catalog is generated in this package.
+
+### Expected merge conflict zones
+
+- None beyond the entry above.

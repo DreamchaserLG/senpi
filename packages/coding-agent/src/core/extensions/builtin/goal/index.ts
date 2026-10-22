@@ -201,6 +201,14 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 	});
 
+	pi.on("held_wakes_released", async (event, ctx) => {
+		if (!event.sources.goal) return;
+		const goal = await readGoal(goalStoreRef(ctx));
+		if (goal?.status !== "active") return;
+		monitorContinuation.noteContinuationStarted();
+		await queueGoalContinuationForCurrentSession(pi, ctx, goal);
+	});
+
 	pi.on("session_tree", async (_event, ctx) => {
 		ctx.ui.setStatus("todo-waiting", undefined);
 		todoOwedBackstop.resetChain();

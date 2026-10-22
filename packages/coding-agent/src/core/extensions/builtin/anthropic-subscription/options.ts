@@ -9,8 +9,8 @@ import {
 	PROJECT_RULES_REGION_START_MARKER,
 	PROJECT_RULES_START_MARKER,
 } from "../rules/rules/constants.ts";
+import { plannedContextWindow, sdkModelId } from "./context-window.ts";
 import { presetAppendDeprecationGuidance } from "./guidance.ts";
-import { longContextAvailable } from "./long-context.ts";
 import type { EffortLevel, Options, SettingSource, ThinkingConfig } from "./sdk-boundary.ts";
 import {
 	type AnthropicSubscriptionProviderSettings,
@@ -36,22 +36,6 @@ export interface AnthropicSubscriptionQueryOptionsInput {
 	readonly pathToClaudeCodeExecutable?: string;
 	readonly sessionId?: string;
 	readonly onGuidance?: (text: string) => void;
-}
-
-/** Claude Code's default window when a request does not ask for the long context (its `A68`). */
-export const CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW = 200_000;
-
-/**
- * The model id Claude Code is given. A subscription (OAuth) session ignores `options.betas` ("Custom
- * betas are only available for API key users"); the `[1m]` suffix is Claude Code's own way to ask for
- * the 1M window, and it then sends `context-1m-2025-08-07` on the wire. A model above the default
- * window gets the suffix while the account has not refused it, so the window senpi plans against is
- * the window the request gets (senpi#3408).
- */
-export function sdkModelId(model: Pick<Model<Api>, "id" | "contextWindow">): string {
-	return model.contextWindow > CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW && longContextAvailable()
-		? `${model.id}[1m]`
-		: model.id;
 }
 
 const ADAPTIVE_THINKING_MODEL_MARKERS = [
@@ -285,7 +269,14 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 	// Claude Code's per-turn token-budget reminder changes the prompt every turn and defeats
 	// prompt-cache reuse; senpi's compaction carries its own budget reminder. The auth lane
 	// layers this over the subprocess environment it builds.
-	if (senpiOwnsCompaction) queryOptions.env = { CLAUDE_CODE_TOTAL_TOKENS_REMINDER: "off" };
+	// With DISABLE_COMPACT set, Claude Code takes CLAUDE_CODE_MAX_CONTEXT_TOKENS over every model rule of
+	// its own, so it plans the window senpi plans (senpi#3801), and its native compaction stays off.
+	if (senpiOwnsCompaction)
+		queryOptions.env = {
+			CLAUDE_CODE_TOTAL_TOKENS_REMINDER: "off",
+			CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(plannedContextWindow(input.model)),
+			DISABLE_COMPACT: "1",
+		};
 	if (input.pathToClaudeCodeExecutable) queryOptions.pathToClaudeCodeExecutable = input.pathToClaudeCodeExecutable;
 	if (toolLessRequest) queryOptions.maxTurns = 1;
 	if (strictMcpConfig) queryOptions.extraArgs = { "strict-mcp-config": null };

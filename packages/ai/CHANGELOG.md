@@ -6,13 +6,51 @@
 
 ### Added
 
+- `AssistantMessage.failureSource?: "local"` marks a failure raised by local code rather than a provider, so retry and model fallback can skip it ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
+
 ### Changed
+
+### Fixed
+
+- Responses prompt-cache keys now follow the model, instructions, and tool schemas instead of session ids across OpenAI, ChatGPT subscription, and Azure. New sessions and task children with identical prefixes share cache affinity, and Responses tools render in deterministic name order ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).
+
+### Removed
+
+## [2026.10.21-1] - 2026-10-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Models that models.dev marks deprecated stay available and are labeled `deprecated` instead of disappearing from the bundled catalog: GitHub Copilot Claude Opus 4.7, GPT-5.5 and GPT-5.4, Baseten's Kimi K2 models and others keep working. A model models.dev no longer lists is still removed, and models the catalog had already dropped are not brought back.
+- The advertised Claude Code fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to Claude Code 2.1.306 ([#3854](https://github.com/code-yeongyu/senpi/issues/3854)).
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`amazon-bedrock`, `huggingface`, `opencode`, `opengateway`, `openrouter`, `venice`).
+
+### Fixed
+
+### Removed
+
+## [2026.10.20-1] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- OpenGateway's DeepSeek V4.1 Flash Ultrafast now costs about 5x more per input token ($0.03 -> $0.15 per 1M) and GLM-5.3 Flash Ultrafast about 7x more ($0.015 -> $0.105), following the gateway's prices; OpenRouter DeepSeek Chat and GLM-5 have smaller context windows (128,000 and 198,000 tokens); Mistral Ministral 3B, Ministral 8B and Voxtral Small and about a dozen OpenRouter models follow upstream prices ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
+- The bundled model catalog is refreshed: `deepseek-v4.1-flash-1017` appears on the Alibaba and Qwen token plans and Cloudflare, Venice adds `mercury-3`, several models report lower maximum output tokens (Together Qwen3.6-Plus and Qwen3.7-Max, Vercel AI Gateway DeepSeek V4.1 Flash, OpenRouter Qwen3.5 397B, Qwen3.8 27B, DeepSeek Chat and GLM-5), Cloudflare Workers AI Gemma 4 26B and Nemotron 3 120B change their thinking levels, and Amazon Bedrock GPT-5.6 Sol and Terra support strict tool schemas in the US and India regions ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
 
 ### Fixed
 
 - A ChatGPT subscription failure now carries a `providerDiagnostic` in every shape the backend reports it (an HTTP error, an in-stream `error` event, a `response.failed` event): a usage limit is `quota` and a rate limit `rate_limit`, each with the new optional `resetsAt` (epoch ms) when the backend names the reset, and an unrecognized failure keeps the provider's own lowercase error type as its `code` instead of reading "no code" ([#3771](https://github.com/code-yeongyu/senpi/issues/3771)).
 
 ### Removed
+
+- Mistral `open-mistral-7b`, `open-mixtral-8x22b` and `open-mixtral-8x7b` (deprecated upstream) and Venice `zai-org-glm-4.7-flash` leave the bundled catalog ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
 
 ## [2026.10.19-2] - 2026-10-20
 

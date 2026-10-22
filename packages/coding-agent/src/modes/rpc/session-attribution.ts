@@ -31,6 +31,22 @@ const attributionStore = new AsyncLocalStorage<SessionAttribution>();
 let sequence = 0;
 /** Attributed work that is still running, keyed by its sequence number (ascending). */
 const openActivities = new Map<number, SessionAttribution>();
+/** Called synchronously when attributed work starts, before it can block the loop. */
+const activityStartListeners = new Set<() => void>();
+
+/**
+ * Subscribe to the start of attributed work (senpi#3738): the loop-lag watchdog slows its tick while the
+ * host is idle and uses this to return to its fast tick before the work that could stall the loop runs.
+ */
+export function onSessionActivityStart(listener: () => void): () => void {
+	activityStartListeners.add(listener);
+	return () => activityStartListeners.delete(listener);
+}
+
+function notifyActivityStarted(): void {
+	for (const listener of activityStartListeners) listener();
+}
+
 /** The most recent synchronous activity that has finished. */
 let lastFinished: { readonly sequence: number; readonly attribution: SessionAttribution } | undefined;
 
@@ -47,6 +63,7 @@ let lastFinished: { readonly sequence: number; readonly attribution: SessionAttr
 export function runWithSessionAttribution<T>(attribution: SessionAttribution, task: () => T): T {
 	const mark = ++sequence;
 	openActivities.set(mark, attribution);
+	notifyActivityStarted();
 	const finish = (): void => {
 		if (!openActivities.delete(mark)) return;
 		lastFinished = { sequence: ++sequence, attribution };
@@ -85,6 +102,7 @@ export function openSessionAttributionSpan(attribution: SessionAttribution): () 
 	};
 	const mark = ++sequence;
 	openActivities.set(mark, merged);
+	notifyActivityStarted();
 	return () => {
 		if (!openActivities.delete(mark)) return;
 		lastFinished = { sequence: ++sequence, attribution: merged };
