@@ -16,25 +16,28 @@
 
 - LOW: the `record_user_activity` case of `handleCommand` in `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
 
-## 2026-10-22 - A session's client capabilities follow the connection that answers it (omo-desktop-app#4042)
+## 2026-10-22 - Client capabilities are per connection; a session answers with its attached connections' (omo-desktop-app#4042)
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: new `bindDeclaredCapabilities(host, connection, sessionIds?)` applies a connection's declared client capabilities to the bindings of the sessions it is attached to, through the binding's own session-scoped `set_client_info`, and skips a binding that already holds them. That command carries an internal id, and each binding writes through `withoutRebindReplies`, which drops the reply to it (logging a failed one to stderr), so a client never receives a response it did not ask for. `open` records the capabilities each binding was created with and every later session-scoped declaration, and calls it after an open, so a declared connection that attaches through `open_session` (or declared while the binding was being created) rebinds the session.
-- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: the connection-level `set_client_info` calls it after the senpi#3811 role check and the connection update, only when the command carries `capabilities`.
-- `packages/coding-agent/src/modes/rpc/session-router-context.ts`: `bindingCapabilities`, a `WeakMap` from each live binding to the capabilities it currently answers with.
+- `packages/coding-agent/src/modes/rpc/session-router-capabilities.ts` (new): a connection's declaration is its own; one that never declared counts as the host default. A session's binding answers with the union of the declarations of the connections attached to it now, recomputed on open, attach, release, disconnect and every declaration, and pushed through the binding's `setCapabilities`.
+- `packages/coding-agent/src/modes/rpc/session-client-capabilities.ts` (new): the set a session handler answers with. Changing it re-subscribes extension events when `extension_events` comes or goes, and withdrawing `question` cancels the pending structured questions through the question bridge, once each.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: reads its capabilities from that set and exposes `setSessionCapabilities`; `set_client_info` keeps the senpi#3811 role check first and records the connection's declaration through `clientInfo` without overwriting the session's set.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`, `session-worker.ts`: `RpcSessionBinding.setCapabilities`; a worker binding sends the new host-to-isolate `session_capabilities` message, which the isolate applies to its one binding.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `session-event-writer.ts`: a connection that declared its own set (`setConnectionCapabilities(..., declared)`) receives `question` requests, `extension_event` records and the custom-unsupported notice only when it declared the matching capability, and the pending-question replay on attach follows the same rule; a connection that never declared receives them exactly as before.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `session-router-routing.ts`, `session-router-attachments.ts`, `session-attachment-commands.ts`, `session-router-context.ts`: the open, attach, release and disconnect paths recompute; a `set_client_info` without `capabilities` keeps the declaration; one a session could not take answers `client_capabilities_not_applied`. `bindingCapabilities` records each live binding's set.
 
 ### Why
 
-- A binding's capabilities were fixed by its first opener. A session opened by a socket that never sent `set_client_info` kept empty capabilities for its whole life, so every `question` degraded to single dialogs even after the connection answering it declared `question`. Only attached connections rebind; an observer is never in `sessionsByConnection`, and a refused role declaration returns before any update. Regression: `test/suite/regressions/issue-4042-session-capabilities-follow-connection.test.ts`.
+- A binding's capabilities were fixed by its first opener, so a session opened by a socket that never sent `set_client_info` degraded every `question` for its whole life. A single session-wide set that the newest declaration overwrites would let any later connection downgrade the answerer, and leave a departed answerer's `question` on a session whose remaining clients cannot render it. Regression: `test/suite/regressions/issue-4042-session-capabilities-follow-connection.test.ts`.
 
 ### Why an extension could not handle it
 
-- Session bindings and the connection-level `set_client_info` live in the multi-session router; no extension runs there.
+- Connection declarations, attachments and record delivery live in the multi-session router and writer; no extension runs there.
 
 ### Expected merge conflict zones
 
-- LOW: fork-only files; the binding creation block of `open` and the connection-level `set_client_info` branch of `dispatch`.
+- LOW: fork-only files; the `set_client_info` case and the extension-event subscription in `rebindSession` of `connection-handler.ts`, and `targets` in `session-event-fanout.ts`.
 
 ## 2026-10-21 - RpcClient can publish session context (senpi#3905)
 

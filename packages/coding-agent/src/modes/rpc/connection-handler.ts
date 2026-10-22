@@ -139,6 +139,7 @@ import {
 	STEER_WHEN_IDLE_CAPABILITY,
 	USER_ACTIVITY_CAPABILITY,
 } from "./rpc-types.ts";
+import { SessionClientCapabilities } from "./session-client-capabilities.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
@@ -210,6 +211,8 @@ export interface RpcConnectionHandler {
 	isShutdownRequested(): boolean;
 	/** Cancel UI requests that can no longer be answered by this connection. */
 	cancelPendingExtensionUiRequests(): void;
+	/** A shared host sets the capabilities this session answers with: its attached connections' union. */
+	setSessionCapabilities(capabilities: readonly string[]): void;
 	/**
 	 * Tear down subscriptions and dispose the runtime. Never calls process.exit; `processExit` tells the runtime the
 	 * caller exits right after (senpi#3711).
@@ -328,7 +331,10 @@ export function createRpcConnectionHandler(
 	sink: RpcConnectionSink,
 	options: RpcConnectionOptions = {},
 ): RpcConnectionHandler {
-	let clientCapabilities = options.capabilities;
+	const clientCapabilities = new SessionClientCapabilities(options.capabilities, {
+		extensionEventsChanged: () => subscribeExtensionEvents(),
+		questionWithdrawn: () => questions.cancelAll(),
+	});
 	const connectionRoles = options.connectionRoles ?? new ConnectionRoles();
 	const routingSessionId = options.sessionId;
 	// True only while THIS connection's own command drives a replacement; the issuer
@@ -528,7 +534,7 @@ export function createRpcConnectionHandler(
 	 */
 	const createExtensionUIContext = (): ExtensionUIContext => ({
 		question: (request, opts) =>
-			clientCapabilities?.includes(QUESTION_CAPABILITY)
+			clientCapabilities.has(QUESTION_CAPABILITY)
 				? questions.ask(request, opts)
 				: degradeQuestion(createExtensionUIContext(), request, opts),
 		select: (title, options, opts) =>
@@ -638,7 +644,7 @@ export function createRpcConnectionHandler(
 			// so an opt-in client can render a "requires the classic TUI" dialog before
 			// returning undefined. The name is best-effort: ctx.ui.custom carries no
 			// extension identity, so a generic label is used.
-			const request = buildCustomUnsupportedRequest(clientCapabilities, DEFAULT_CUSTOM_EXTENSION_LABEL);
+			const request = buildCustomUnsupportedRequest(clientCapabilities.current(), DEFAULT_CUSTOM_EXTENSION_LABEL);
 			if (request) {
 				output(request);
 			}
@@ -767,9 +773,17 @@ export function createRpcConnectionHandler(
 		}
 	};
 
+	const subscribeExtensionEvents = (): void => {
+		unsubscribeExtensionEvents?.();
+		unsubscribeExtensionEvents = clientCapabilities.has(EXTENSION_EVENTS_CAPABILITY)
+			? session.extensionRunner.onRpcEvent(({ name, data }) => {
+					outputEvent({ type: "extension_event", name, data } satisfies RpcExtensionEvent);
+				})
+			: undefined;
+	};
+
 	const rebindSession = async (deferRefresh = false): Promise<void> => {
 		unsubscribeLoadedSurfaces?.();
-		unsubscribeExtensionEvents?.();
 		const replacedSession = session !== runtimeHost.session;
 		session = runtimeHost.session;
 		sessionQuestionBridges.set(session, questions);
@@ -798,11 +812,7 @@ export function createRpcConnectionHandler(
 				} satisfies RpcSessionReplacedEvent);
 			}
 		}
-		unsubscribeExtensionEvents = clientCapabilities?.includes(EXTENSION_EVENTS_CAPABILITY)
-			? session.extensionRunner.onRpcEvent(({ name, data }) => {
-					outputEvent({ type: "extension_event", name, data } satisfies RpcExtensionEvent);
-				})
-			: undefined;
+		subscribeExtensionEvents();
 		subscribeLoadedSurfaceEvents();
 		// Subscribe to the replaced session before its bind runs, not after. The bind
 		// is deferred by design - awaiting it would deadlock a client whose
@@ -1205,7 +1215,6 @@ export function createRpcConnectionHandler(
 						return error(id, "set_client_info", CONNECTION_ROLE_FIXED);
 				}
 				if (options.clientInfo && command.capabilities !== undefined) {
-					clientCapabilities = command.capabilities;
 					options.clientInfo.setCapabilities(options.clientInfo.connectionId(), command.capabilities);
 				}
 				return success(id, "set_client_info");
@@ -2024,6 +2033,9 @@ export function createRpcConnectionHandler(
 		cancelPendingExtensionUiRequests() {
 			questions.cancelAll();
 			pendingExtensionRequests.cancelAll();
+		},
+		setSessionCapabilities(capabilities) {
+			clientCapabilities.replace(capabilities);
 		},
 		async dispose(disposeOptions) {
 			await ready;

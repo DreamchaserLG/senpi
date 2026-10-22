@@ -20,12 +20,13 @@ import { dispatchSessionBinding } from "./session-held.ts";
 import { moveSession } from "./session-move-commands.ts";
 import { releaseSession } from "./session-release.ts";
 import { releaseConnection } from "./session-router-attachments.ts";
+import { CLIENT_CAPABILITIES_NOT_APPLIED, declareConnectionCapabilities } from "./session-router-capabilities.ts";
 import { close, tearDownReleased, tearDownUnloaded } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
 import { acknowledgePrompt, otherRequestsSettled, sessionMemory } from "./session-router-observation.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
-import { bindDeclaredCapabilities, openWithBarrier } from "./session-router-open.ts";
+import { openWithBarrier } from "./session-router-open.ts";
 import {
 	answerSetSessionContext,
 	answerSubscribeSessions,
@@ -202,11 +203,13 @@ export async function dispatch(
 				success: false,
 				error: CONNECTION_ROLE_FIXED,
 			} as RpcResponse;
-		if (connection !== undefined) {
-			host.pendingCapabilities.set(connection, command.capabilities ?? []);
-			host.writer.setConnectionCapabilities(connection, command.capabilities ?? []);
-			if (command.capabilities !== undefined) await bindDeclaredCapabilities(host, connection);
-		}
+		// A width-only call (a resize) keeps the declaration it does not carry.
+		if (
+			connection !== undefined &&
+			command.capabilities !== undefined &&
+			!(await declareConnectionCapabilities(host, connection, command.capabilities))
+		)
+			return error(command.id, command.type, CLIENT_CAPABILITIES_NOT_APPLIED);
 		return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 	}
 	if (command.type === "subscribe_sessions") {
