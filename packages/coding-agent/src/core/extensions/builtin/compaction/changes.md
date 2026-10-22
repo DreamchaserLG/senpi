@@ -1,3 +1,59 @@
+## 2026-10-21 - Preserve prefix cache keys during remote compaction (omo#10775)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: compact endpoint requests derive their key with the same versioned prefix function as Responses providers (from the system prompt alone, since the compact body sends no tools, so the value differs from the parent request's key but stays stable between compactions). Stream payload rewrites preserve the provider's key. The request retains a separate session id for transport routing.
+
+### Why
+
+The compaction rewrite replaced the provider key with the session UUID, defeating cross-session affinity even after fixing the provider builder.
+
+### Why an extension could not handle it
+
+This builtin owns the compaction request rewrite and compact endpoint body.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: request construction, stream rewrite, and transport session headers.
+
+## 2026-10-19 - The compaction checkpoint's agent name is folded, not read from a full-history view (senpi#3110)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/checkpoint-state.ts`: `deriveAgentName` (used by `captureAgentCheckpoint`) folds the latest `agentName`/`agent` custom entry with `sessionManager.reduceHistory`, the same way #2537 moved `getLatestCheckpoint`, instead of scanning `getEntries()` twice per entry.
+
+### Why
+
+Compaction captures the agent's state while a run is active. On a reopened compacted session (#3519 trims the mirror to the latest compaction window), `getEntries()` re-parses the whole transcript file and keeps it as the full-history view until the session settles idle, so each compaction of a busy task child held about four times its transcript. The fold reads the history once per load and keeps only its own state.
+
+### Why an extension could not handle it
+
+This is the compaction builtin's own read; the fix uses the public `ReadonlySessionManager.reduceHistory`.
+
+### Expected merge conflict zones
+
+- `checkpoint-state.ts` `deriveAgentName` and the new `latestAgentName` reducer above it.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove app-server from the persistent-mode set; TUI and Native RPC still qualify for idle compaction.
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/idle.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-10 - Stable request-local reduction frontier (senpi#900)
 
 ### What changed

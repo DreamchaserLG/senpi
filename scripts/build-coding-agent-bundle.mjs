@@ -195,6 +195,7 @@ async function buildBundle() {
 		join(codingAgentDistDir, "cli.js"),
 		join(codingAgentDistDir, "index.js"),
 		join(codingAgentDistDir, "rpc-entry.js"),
+		join(codingAgentDistDir, "modes", "rpc", "host-supervisor-entry.js"),
 		join(codingAgentDistDir, "client", "index.js"),
 		join(codingAgentDistDir, "utils", "image-resize-worker.js"),
 		join(aiDistDir, "api", "bedrock-converse-stream.js"),
@@ -279,13 +280,24 @@ async function buildBundle() {
 		throw new Error("Image resize implementation and worker were emitted into different directories");
 	}
 
-	validateExternalImports([mainResult.metafile, lazyResult.metafile]);
+	// The lifecycle supervisor's own program (senpi#3743): self-contained beside cli.js, so a supervisor loads
+	// only its own graph instead of booting the whole CLI to reach `--internal-rpc-host-supervisor`.
+	const supervisorResult = await build({
+		...commonBuildOptions(),
+		entryNames: "[name]",
+		entryPoints: { "host-supervisor": join(codingAgentDistDir, "modes", "rpc", "host-supervisor-entry.js") },
+		outdir: bundleDir,
+		splitting: false,
+	});
+
+	const metafiles = [mainResult.metafile, lazyResult.metafile, supervisorResult.metafile];
+	validateExternalImports(metafiles);
 	chmodSync(join(bundleDir, "cli.js"), 0o755);
 	chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
-	writeRuntimeManifest([mainResult.metafile, lazyResult.metafile]);
+	writeRuntimeManifest(metafiles);
 
-	const files = new Set([...Object.keys(mainResult.metafile.outputs), ...Object.keys(lazyResult.metafile.outputs)]).size;
-	const mib = outputBytes([mainResult.metafile, lazyResult.metafile]) / (1024 * 1024);
+	const files = new Set(metafiles.flatMap((metafile) => Object.keys(metafile.outputs))).size;
+	const mib = outputBytes(metafiles) / (1024 * 1024);
 	console.log(`Built ${relative(repoRoot, bundleDir)} (${files} files, ${mib.toFixed(1)} MiB)`);
 }
 

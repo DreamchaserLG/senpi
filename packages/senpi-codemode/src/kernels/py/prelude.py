@@ -2172,6 +2172,12 @@ async def run_code(code: Any, want_value: bool) -> Any:
     return None
 
 
+# Globals a tool prelude installs: the host reinstalls them on a fresh kernel, so they are never reported as lost.
+_PRELUDE_EXPORTS: set[str] = set()
+# The host keeps the newest list so a notice can name what a dead or replaced kernel took with it.
+_REPORTED_GLOBAL_NAMES = 64
+
+
 def apply_preludes(preludes: Any) -> None:
     # Host-computed per cell: globals of tools deactivated since the last cell are dropped,
     # and an active tool's snippet runs only while one of its exports is missing.
@@ -2179,9 +2185,20 @@ def apply_preludes(preludes: Any) -> None:
         return
     for name in preludes.get("remove", []):
         USER_NS.pop(name, None)
+        _PRELUDE_EXPORTS.discard(name)
     for contribution in preludes.get("install", []):
-        if any(name not in USER_NS for name in contribution.get("exports", [])):
+        exports = contribution.get("exports", [])
+        _PRELUDE_EXPORTS.update(exports)
+        if any(name not in USER_NS for name in exports):
             exec(compile(contribution.get("python", ""), "<kernel-prelude>", "exec"), USER_NS)
+
+
+def _user_global_names() -> list[str]:
+    return sorted(
+        name
+        for name in list(USER_NS)
+        if name not in _MEMORY_BASELINE and name not in _PRELUDE_EXPORTS and not name.startswith("__")
+    )
 
 
 def _enter_source_file(source_file: str | None) -> Callable[[], None]:
@@ -2272,6 +2289,9 @@ def run_cell(
         text("stderr", f"[senpi] kernel memory measurement failed: {exc}\n")
     if memory is not None:
         result["memory"] = memory
+    names = _user_global_names()
+    result["globalCount"] = len(names)
+    result["globalNames"] = names[:_REPORTED_GLOBAL_NAMES]
     emit(result)
 
 
@@ -2334,12 +2354,21 @@ def _activate_env_root(root: str) -> None:
     importlib.invalidate_caches()
 
 
-def _terminate_process_group() -> None:
+PARENT_WATCH_MARKER = "[senpi] parent watch:"
+
+
+def _terminate_process_group(reason: str) -> None:
     # The kernel is spawned into its own session (setsid), so its pid is its process
     # group id and a cell's subprocesses inherit that group. Killing the group takes
     # those children down with the kernel instead of orphaning them to init.
+    # The reason goes to the real stderr first: a host that is still alive names it in its restart notice.
     if os.name != "posix":
         return
+    stream = sys.__stderr__
+    if stream is not None:
+        with contextlib.suppress(OSError, ValueError):
+            stream.write(f"{PARENT_WATCH_MARKER} {reason}; stopping the kernel\n")
+            stream.flush()
     with contextlib.suppress(OSError):
         os.killpg(os.getpgrp(), signal.SIGKILL)
 
@@ -2350,8 +2379,9 @@ def _watch_parent(initial_ppid: int) -> None:
     # daemon thread notices the reparenting instead and takes the whole group down.
     while True:
         time.sleep(1.0)
-        if os.getppid() != initial_ppid:
-            _terminate_process_group()
+        current_ppid = os.getppid()
+        if current_ppid != initial_ppid:
+            _terminate_process_group(f"its parent process changed from {initial_ppid} to {current_ppid}")
             return
 
 
@@ -2366,7 +2396,7 @@ def _watch_named_parent(parent_pid: int) -> None:
         try:
             os.kill(parent_pid, 0)
         except ProcessLookupError:
-            _terminate_process_group()
+            _terminate_process_group(f"its host process {parent_pid} is gone")
             return
 
 
@@ -2422,7 +2452,7 @@ def main() -> None:
     # Reaching here without a close frame means the host's pipe hit EOF: it is gone,
     # so retire any subprocess the last cell left running before the interpreter exits.
     if not host_closed:
-        _terminate_process_group()
+        _terminate_process_group("its host closed the control pipe")
 
 
 if __name__ == "__main__":

@@ -5,13 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
-import {
-	ProcessIdentityUnreadableError,
-	processIsLive,
-	processMatchesPidFile,
-	readProcessStartTime,
-	waitForStartTime,
-} from "../src/modes/app-server/daemon/process.ts";
 import { type HostPidFileWriter, readHostRegistration } from "../src/modes/rpc/host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY, HostEnsureRefusedError } from "../src/modes/rpc/host-decision.ts";
 import { createHostDaemonPaths, defaultHostLaunch, ensureHost } from "../src/modes/rpc/host-ensure.ts";
@@ -22,6 +15,13 @@ import {
 	sendSocketHandshake,
 	socketSecretPath,
 } from "../src/modes/rpc/socket-transport.ts";
+import {
+	ProcessIdentityUnreadableError,
+	processIsLive,
+	processMatchesPidFile,
+	readProcessStartTime,
+	waitForStartTime,
+} from "../src/utils/process-identity.ts";
 import { killAndWait, processesUnder, reapProcessesUnder, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
 
 const roots: string[] = [];
@@ -246,6 +246,75 @@ describe("ensureHost", () => {
 			expect(await readHostRegistration(paths)).toMatchObject({ generation: 1, record: { pid: result.pid } });
 			await expect(access(join(paths.generationsDir, before.instanceId))).resolves.toBeUndefined();
 			expect((await protocolInfo(qa.socket)).data).toMatchObject({ serverVersion: VERSION });
+		},
+		20_000,
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"refuses an unregistered listener that accepts but never answers, and leaves it alone",
+		async () => {
+			// A process nobody registered holds the public path and never answers get_protocol_info.
+			// Starting a host there can only fail its bind ("address already in use") and exit 1 with
+			// no reason a caller can act on; the ensure refuses with a typed reason instead.
+			const qa = await scratch("unregistered-listener");
+			const listener = await startUnregisteredListener(qa.socket);
+
+			const failure = await ensureFixtureHost(qa).catch((error: unknown) => error);
+
+			expect(failure).toBeInstanceOf(HostEnsureRefusedError);
+			expect((failure as HostEnsureRefusedError).reason).toBe("endpoint_occupied");
+			expect(processIsLive(listener.pid ?? 0)).toBe(true);
+			await expect(access(qa.socket)).resolves.toBeUndefined();
+			expect(await readHostRegistration(daemonPaths(qa))).toBeUndefined();
+		},
+		20_000,
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"uses an unregistered host that answers inside the probe bound, never refusing or removing it",
+		async () => {
+			// Duty check 1: slow but alive. The probe waits; the host answers once the test lets it.
+			const qa = await scratch("slow-inside-bound");
+			const slow = await startGatedListener(qa.socket);
+			const ensured = ensureHost({
+				agentDir: qa.agentDir,
+				socket: qa.socket,
+				_test: { existingHostProbeTimeoutMs: 15_000, launch: refuseToSpawn },
+			});
+			await slow.probed;
+			slow.release();
+
+			const result = await ensured;
+			result.release();
+
+			expect(result.reused).toBe(true);
+			expect(processIsLive(slow.child.pid ?? 0)).toBe(true);
+			await expect(access(qa.socket)).resolves.toBeUndefined();
+		},
+		20_000,
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"refuses an unregistered host that answers only after the probe bound, and leaves it alone",
+		async () => {
+			// Duty check 1, the other side: the answer comes after the probe gave up, so nothing
+			// identified the listener; it still accepts, so it is refused and kept.
+			const qa = await scratch("slow-past-bound");
+			const slow = await startGatedListener(qa.socket);
+			const ensured = ensureHost({
+				agentDir: qa.agentDir,
+				socket: qa.socket,
+				_test: { existingHostProbeTimeoutMs: 200, launch: refuseToSpawn },
+			}).catch((error: unknown) => error);
+			await slow.probed;
+
+			const failure = await ensured;
+			slow.release();
+
+			expect(failure).toBeInstanceOf(HostEnsureRefusedError);
+			expect((failure as HostEnsureRefusedError).reason).toBe("endpoint_occupied");
+			expect(processIsLive(slow.child.pid ?? 0)).toBe(true);
+			await expect(access(qa.socket)).resolves.toBeUndefined();
 		},
 		20_000,
 	);
@@ -678,11 +747,25 @@ describe("defaultHostLaunch", () => {
 		// standalone program the unbundled tree ships: run directly it returns without ever
 		// listening, so ensure reported "exited with code 0 before answering
 		// get_protocol_info" with an empty stderr log. An undefined sibling is that layout.
-		const launch = defaultHostLaunch(["--socket", "/tmp/qa.sock", "--provider", "mock"], false, null);
+		const launch = defaultHostLaunch(["--socket", "/tmp/qa.sock", "--provider", "mock"], false, null, null);
 		expect(launch.command).toBe(process.execPath);
 		expect(launch.args).toContain("--internal-rpc-host-supervisor");
 		expect(launch.args.some((arg) => arg.endsWith("host-lifecycle.js"))).toBe(false);
 		expect(launch.args.slice(-4)).toEqual(["--socket", "/tmp/qa.sock", "--provider", "mock"]);
+	});
+
+	it("starts the bundle's own supervisor program instead of the whole CLI when it exists (senpi#3743)", () => {
+		const supervisor = "/opt/senpi/dist/bundle/host-supervisor.js";
+		const launch = defaultHostLaunch(["--socket", "/tmp/qa.sock", "--provider", "mock"], false, null, supervisor);
+		expect(launch.command).toBe(process.execPath);
+		expect(launch.args.slice(process.execArgv.length)).toEqual([
+			supervisor,
+			"--internal-rpc-host-supervisor",
+			"--socket",
+			"/tmp/qa.sock",
+			"--provider",
+			"mock",
+		]);
 	});
 
 	it("re-enters through the host-lifecycle script outside compiled binaries", () => {
@@ -735,7 +818,7 @@ async function writeRegistration(
 ): Promise<void> {
 	const paths = daemonPaths(qa);
 	const instanceId = `fixture-${record.pid}`;
-	const stamp = writer ?? { pid: process.pid, startTime: (await readProcessStartTime(process.pid)) ?? null };
+	const stamp = writer ?? { pid: process.pid, startTime: (await readFixtureStartTime(process.pid)) ?? null };
 	await mkdir(join(paths.generationsDir, instanceId), { recursive: true, mode: 0o700 });
 	await writeFile(
 		join(paths.generationsDir, instanceId, "host.pid"),
@@ -747,6 +830,13 @@ async function writeRegistration(
 		`${JSON.stringify({ layout: 2, instance_id: instanceId, generation_dir: `generations/${instanceId}`, writer: stamp })}\n`,
 		{ mode: 0o600 },
 	);
+}
+/**
+ * Fixture setup reads identities the way production's unhurried fallback does: a loaded Windows runner
+ * can make Get-CimInstance outlive the 1 s default, and a killed probe would fail setup, not the case.
+ */
+function readFixtureStartTime(pid: number): Promise<string | undefined> {
+	return readProcessStartTime(pid, process.platform, 15_000);
 }
 /** Who the pidfile claims wrote it: this process, this process's pid after a reboot recycled it, or the host itself. */
 type Writer = "self" | "recycled-pid" | "foreign";
@@ -836,6 +926,51 @@ async function startManagedProcess(
 		options.writer,
 		options.selfWriterStartTime,
 	);
+}
+
+/** A live process listening on the public path that is not a registered host and never answers. */
+async function startUnregisteredListener(socketPath: string): Promise<ChildProcess> {
+	const script = [
+		'const net = require("node:net");',
+		'net.createServer(() => {}).listen(process.env.HELD_SOCKET, () => process.stdout.write("listening\\n"));',
+		"setInterval(() => {}, 1000);",
+	].join(" ");
+	const child = spawn(process.execPath, ["-e", script], {
+		stdio: ["ignore", "pipe", "ignore"],
+		env: { ...process.env, HELD_SOCKET: socketPath },
+	});
+	children.push(child);
+	await new Promise<void>((resolve, reject) => {
+		child.stdout?.once("data", () => resolve());
+		child.once("exit", (code) => reject(new Error(`listener exited before listening (code ${code})`)));
+	});
+	return child;
+}
+
+/**
+ * An unregistered listener that answers get_protocol_info only when the test releases it: a slow
+ * host whose timing the test drives. `probed` settles when the first probe reaches it.
+ */
+async function startGatedListener(socketPath: string): Promise<{
+	child: ChildProcess;
+	probed: Promise<void>;
+	release: () => void;
+}> {
+	const child = spawn(process.execPath, [fixture, socketPath, VERSION, CAPABILITIES, "gated"], {
+		stdio: ["pipe", "pipe", "ignore"],
+	});
+	children.push(child);
+	let resolveProbed!: () => void;
+	const probed = new Promise<void>((resolve) => (resolveProbed = resolve));
+	await new Promise<void>((resolve, reject) => {
+		child.stdout?.on("data", (chunk: Buffer) => {
+			const text = chunk.toString("utf8");
+			if (text.includes("listening")) resolve();
+			if (text.includes("probe")) resolveProbed();
+		});
+		child.once("exit", (code) => reject(new Error(`gated listener exited before listening (code ${code})`)));
+	});
+	return { child, probed, release: () => child.stdin?.write("go\n") };
 }
 
 /**
@@ -929,11 +1064,11 @@ async function writerRecord(
 	selfWriterStartTime?: string,
 ): Promise<{ pid: number; startTime: string | null }> {
 	if (writer === "self") {
-		return { pid: process.pid, startTime: selfWriterStartTime ?? (await readProcessStartTime(process.pid)) ?? null };
+		return { pid: process.pid, startTime: selfWriterStartTime ?? (await readFixtureStartTime(process.pid)) ?? null };
 	}
 	// A recycled pid carries this process's number with somebody else's start time.
 	if (writer === "recycled-pid") return { pid: process.pid, startTime: "1970-01-01T00:00:00.000Z" };
-	return { pid: hostPid, startTime: (await readProcessStartTime(hostPid)) ?? null };
+	return { pid: hostPid, startTime: (await readFixtureStartTime(hostPid)) ?? null };
 }
 
 async function protocolInfo(socketPath: string): Promise<Record<string, unknown>> {

@@ -8,7 +8,7 @@ import { HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.t
 import { probeSocketReachable } from "./host-probe.ts";
 import { hostChildAlive, hostLoopStalled, stallRefusalWindowMs } from "./host-stalled-evidence.ts";
 import { loopLagErrorMs } from "./loop-lag-threshold.ts";
-import { statSocketIdentity } from "./socket-ownership.ts";
+import { socketEntryListenerState, statSocketIdentity } from "./socket-ownership.ts";
 
 /**
  * IS-5: a generation nothing can reach whose loop is measurably stalled is still serving its sessions, so
@@ -54,4 +54,22 @@ export async function publicEndpointAccepts(socket: string): Promise<boolean> {
 	if (entry === "absent") return false;
 	if (entry === "unknown") return true;
 	return probeSocketReachable(socket, FOREIGN_ENDPOINT_PROBE_TIMEOUT_MS);
+}
+
+/**
+ * Whether something stands behind a public path that no registration names: the gate before an
+ * ensure would start a host there. Unlike `publicEndpointAccepts` it also counts a listener that
+ * refuses only because its backlog is full (`socketEntryListenerState`), because a start there
+ * could only lose the bind; the registered paths keep `publicEndpointAccepts`, whose "not
+ * accepting" leads to the stall check (IS-5).
+ */
+export async function unregisteredEndpointHeld(socket: string): Promise<boolean> {
+	if (process.platform === "win32" || socket.startsWith("\0")) return false;
+	const entry = await statSocketIdentity(socket).then(
+		(identity) => (identity === undefined ? "absent" : "present"),
+		() => "unknown",
+	);
+	if (entry === "absent") return false;
+	if (entry === "unknown") return true;
+	return (await socketEntryListenerState(socket)).verdict === "live";
 }

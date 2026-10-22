@@ -13,11 +13,11 @@
  * cannot be asked how many sessions it has.
  */
 import { readdir, rm } from "node:fs/promises";
-import { processIsLive } from "../app-server/daemon/process.ts";
+import { processIsLive } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonDirectory, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";
-import { claimOwnerIsLive, readSessionPathClaims } from "./host-reservations.ts";
+import { claimOwnerIdentity, readSessionPathClaims, type SessionPathOwner } from "./host-reservations.ts";
 import { hostChildAlive } from "./host-stalled-evidence.ts";
 
 /** One generation that is still running, as the daemon directory and the OS describe it. */
@@ -60,19 +60,56 @@ export async function pruneDeadGenerations(paths: HostDaemonPaths): Promise<Prun
 		const record = parseJson(await readFileOrUndefined(generationPaths(paths, instanceId).pidFile));
 		if (typeof record?.pid !== "number" || processIsLive(record.pid)) continue;
 		if (await hostChildAlive(generationPaths(paths, instanceId))) continue;
-		await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true }).catch(() => undefined);
 		generations.push(instanceId);
 	}
+	// Claims end before the directories go: a prune cut short in between must not leave a claim whose generation
+	// (and heartbeat) no longer exists to explain it.
+	const claims = await endClaimsOfEndedGenerations(paths, new Set(generations));
+	for (const instanceId of generations)
+		await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true }).catch(() => undefined);
 	const pointerRemoved = pointedAt !== undefined && generations.includes(pointedAt);
 	// The pointer outliving its generation is what makes a client probe a socket nobody serves.
 	if (pointerRemoved) await rm(paths.pointerFile, { force: true }).catch(() => undefined);
+	return { generations, claims, pointer: pointerRemoved };
+}
+
+/**
+ * Removes every claim whose owner is gone, and every claim of a generation in `ended` (being removed by the caller)
+ * whose owner identity cannot be proven. Returns the session paths released. Every path that removes a generation
+ * directory calls this first, so no generation leaves claims behind that its directory no longer explains.
+ */
+export async function endClaimsOfEndedGenerations(
+	paths: HostDaemonDirectory,
+	ended: ReadonlySet<string>,
+): Promise<string[]> {
 	const claims: string[] = [];
 	for (const claim of await readSessionPathClaims(paths.reservationsDir)) {
-		if (await claimOwnerIsLive(claim.owner)) continue;
+		if (!(await claimEnded(claim.owner, ended))) continue;
 		await rm(claim.file, { force: true }).catch(() => undefined);
 		claims.push(claim.owner.sessionPath);
 	}
-	return { generations, claims, pointer: pointerRemoved };
+	return claims;
+}
+
+/**
+ * A claim ends with its owner's pid, or with the generation this prune just removed when the owner's identity
+ * cannot be proven (desktop#3157: Windows hands the dead host child's pid to another process, and removing the
+ * generation also removed the heartbeat that would have released the claim). Such an owner might only be frozen,
+ * so its session file is fenced first; a fence that cannot be written keeps the claim.
+ */
+async function claimEnded(owner: SessionPathOwner, ended: ReadonlySet<string>): Promise<boolean> {
+	const identity = await claimOwnerIdentity(owner);
+	if (identity === "gone") return true;
+	if (identity === "proven" || !ended.has(owner.instanceId)) return false;
+	// Documented lazy boundary (AGENTS.md: inline dynamic imports only at documented lazy boundaries): the lifecycle
+	// supervisor imports this module, and the fence module (whose writers read it synchronously) must stay out of its
+	// startup graph (test/supervisor-import-graph.test.ts).
+	return import("../../core/session-write-fence.ts")
+		.then(({ advanceSessionFence }) => advanceSessionFence(owner.sessionPath))
+		.then(
+			() => true,
+			() => false,
+		);
 }
 
 function memoryOf(metrics: HostProcessMetrics): Pick<HostGenerationRow, "rss_mb" | "host_rss_mb"> {

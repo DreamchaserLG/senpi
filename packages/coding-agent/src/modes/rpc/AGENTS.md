@@ -47,10 +47,18 @@ host-endpoints.ts, host-status-all.ts     `status --all`: enumerate endpoint dir
 host-endpoint-liveness.ts `classifyEndpointLiveness`: routable | live_unresponsive | dead; per-kind probe budget (tui 1.5 s)
 tui-socket.ts             Terminal control socket name `t-<16hex>.sock`; a client sends the secret first on every platform
 rpc-session-state.ts      `buildRpcSessionState`: the one wire projection of a session (RPC `get_state`, `open_session`, TUI endpoint)
+client-admissions.ts, client-admission-record.ts
+                          Input receipts (`rpc_client_message_admission`): replay/conflict, queue restore, reopen seal, turn outcome
+effect-ledger.ts, effect-record.ts
+                          `rpc_effect` receipts for abort/set_model (accepted before applied, reopen seal) + one EffectStatus;
+                          effect-commands.ts (handlers), effect-transcript-lookup.ts (`get_effect_status { sessionPath }`), effect-status.ts,
+                          effect-outcome-copy.ts (reason/action copy), effect-crash-point.ts (test-only SIGKILL hook);
+                          session-effect-status.ts (`effect_status` wire record + the pending-transition bus the
+                          status stream delivers after the causing record)
 host-gc.ts, host-gc-evidence.ts           `host gc`: remove dead endpoint dirs on three-part evidence
 host-gc-pass.ts, host-gc-pass-marker.ts   The budgeted gc pass ensure schedules after returning (`gc-last-run.json`)
 host-ensure-{start,stop,client,types}.ts, host-internal-dir-reaper.ts, host-ensure-liveness.ts   ensureHost's start + readiness gate, the recorded stop path, client identity, options, tmpdir reaper, stall refusal
-host-observers.ts, host-zero-session-trim.ts  Host self-observation: stall watchdog, memory sampler, zero-session trim (`host_trimmed`)
+host-observers.ts, host-zero-session-trim.ts  Host self-observation: stall watchdog, memory sampler, zero-session + busy-host trim (`host_trimmed`)
 host-lifecycle.ts, supervisor-route.ts    Supervisor that owns the public socket + idle exit (orchestration only)
 host-lifecycle-{launch,proxy,activity,drain,shutdown,scratch,stall-wait}.ts, host-cli-entry.ts, host-supervisor-log.ts
                           Supervisor argv/child launch (CLI entry resolution), public proxy, idle activity, drain, teardown + child stop,
@@ -82,6 +90,7 @@ changes.md                Fork-specific RPC behavior record
 - Inbound messages over `MAX_RPC_MESSAGE_CHARACTERS` are rejected with a typed error; non-object JSON is rejected.
 - Pending work is rejected on disconnect or child exit; preserve request/response correlation.
 - Child stderr is emitted and embedded raw; treat diagnostics as secret-bearing.
+- Documented lazy boundaries (the root rule allows inline `import()` only at documented ones): `host-reservations.ts` (`claim()`, on the takeover of an unprovable claim) and `host-generations.ts` (the prune of an ended generation's unproven claims) load `core/session-write-fence.ts` on first use, so the lifecycle supervisor, which imports both modules, keeps the fence module and its synchronous read out of its startup graph (`test/supervisor-import-graph.test.ts`).
 
 ### Shared-daemon invariants (I1-I4)
 

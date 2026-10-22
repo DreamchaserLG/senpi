@@ -1,4 +1,5 @@
 /** This build as a host client: what it declares to `decideHostAction`, and when a host is compatible with it. */
+import { isToolRuntimeKind, toolRuntimeCapability } from "../../cli/tool-runtime.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import {
 	decideHostAction,
@@ -14,7 +15,7 @@ import { hostLaunchProfile } from "./protocol-identity.ts";
 export function ensureClient(options: EnsureHostOptions, startedByUs: boolean): HostDecisionClient {
 	return {
 		protocolVersion: HOST_PROTOCOL_VERSION,
-		requiredCapabilities: REQUIRED_HOST_CAPABILITIES,
+		requiredCapabilities: [...REQUIRED_HOST_CAPABILITIES, ...requestedToolRuntime(options.hostArgs ?? [])],
 		identity: engineBuildIdentity(),
 		// An ensure that may upgrade has to say what it would launch: the superset rule refuses to
 		// hand off to a generation that would drop what the running host loads. An ensure that may
@@ -25,6 +26,24 @@ export function ensureClient(options: EnsureHostOptions, startedByUs: boolean): 
 		startedByUs,
 		platform: process.platform,
 	};
+}
+
+/**
+ * An explicit `--tool-runtime` in `hostArgs` is a requirement (senpi#3566): a host advertising another runtime - or none,
+ * because it predates the flag - is not reused for this client. Without the flag the client requires nothing new.
+ */
+export function requestedToolRuntime(hostArgs: readonly string[]): string[] {
+	for (let index = 0; index < hostArgs.length; index++) {
+		const arg = hostArgs[index] ?? "";
+		const value =
+			arg === "--tool-runtime"
+				? hostArgs[index + 1]
+				: arg.startsWith("--tool-runtime=")
+					? arg.slice("--tool-runtime=".length)
+					: undefined;
+		if (value !== undefined && isToolRuntimeKind(value)) return [toolRuntimeCapability(value)];
+	}
+	return [];
 }
 
 /** The argv the supervisor gives its host child; the launch profile has to describe THAT host. */

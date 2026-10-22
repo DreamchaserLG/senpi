@@ -134,7 +134,7 @@ function sessionSpawnContext(ctx: TerminalToolContext): TerminalToolContext {
 	};
 }
 
-function sessionEnvOverrides(ctx: TerminalToolContext, execCtx?: SessionEnvSource): Record<string, string> {
+export function sessionEnvOverrides(ctx: TerminalToolContext, execCtx?: SessionEnvSource): Record<string, string> {
 	const session = execCtx ?? ctx.getSessionContext?.();
 	if (!session?.sessionManager) return {};
 	const env: Record<string, string> = {};

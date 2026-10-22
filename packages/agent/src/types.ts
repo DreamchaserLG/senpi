@@ -354,6 +354,13 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	restorePendingMessages?: (queue: "steering" | "followUp", messages: AgentMessage[]) => Promise<void> | void;
 
 	/**
+	 * Called with the queued messages the loop is about to put into the context, after they were drained and
+	 * before any of them is inserted or sent. A rejection keeps them out of this turn (they are restored), so a
+	 * message is never seen by a provider without its consumption committed first (senpi#3549).
+	 */
+	commitQueuedConsumption?: (queue: "steering" | "followUp", messages: AgentMessage[]) => Promise<void>;
+
+	/**
 	 * Tool execution mode.
 	 * - "sequential": execute tool calls one by one
 	 * - "parallel": preflight tool calls sequentially, then execute allowed tools in concurrent waves;

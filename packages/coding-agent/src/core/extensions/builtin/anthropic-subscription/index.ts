@@ -4,12 +4,14 @@ import { readByProviderId } from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../../../../config.ts";
 import { FileAuthStorageBackend } from "../../../auth-storage.ts";
-import type { ExtensionAPI } from "../../types.ts";
+import type { ExtensionAPI, ProviderConfig } from "../../types.ts";
 import { toBuiltinProviderContext } from "../provider-context.ts";
 import { registerClaudeAccountCommand } from "./account-command.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import type { AnthropicSubscriptionCredential } from "./accounts.ts";
 import { CLAUDE_SDK_OAUTH_API_ID } from "./api-id.ts";
+import { plannedContextWindow } from "./context-window.ts";
+import { longContextAvailable, onLongContextAvailabilityChange } from "./long-context.ts";
 import { createOAuthConfig } from "./oauth-login.ts";
 import { registerSessionRegistry } from "./session-registry-wiring.ts";
 import {
@@ -25,19 +27,25 @@ export type AnthropicSubscriptionExtensionDeps = {
 	readSettings?: () => AnthropicSubscriptionProviderSettings;
 };
 
-const MODELS = getModels("anthropic").map((model) => ({
-	id: model.id,
-	name: model.name,
-	reasoning: model.reasoning,
-	input: model.input,
-	cost: model.cost,
-	contextWindow: model.contextWindow,
-	maxTokens: model.maxTokens,
-	thinkingLevelMap: {
-		...model.thinkingLevelMap,
-		minimal: null,
-	},
-}));
+/**
+ * The lane's models carry the window their requests actually get, which is what compaction plans
+ * against: the catalog window, except a legacy long-context id at Claude Code's 200k default after the
+ * account refused its 1M opt-in (senpi#3408, senpi#3801).
+ */
+export const anthropicSubscriptionModels = (longContext = longContextAvailable()) =>
+	getModels("anthropic").map((model) => ({
+		id: model.id,
+		name: model.name,
+		reasoning: model.reasoning,
+		input: model.input,
+		cost: model.cost,
+		contextWindow: plannedContextWindow(model, longContext),
+		maxTokens: model.maxTokens,
+		thinkingLevelMap: {
+			...model.thinkingLevelMap,
+			minimal: null,
+		},
+	}));
 
 function readStoredCredential(providerId: string): AnthropicSubscriptionCredential | undefined {
 	const authPath = join(getAgentDir(), "auth.json");
@@ -61,10 +69,13 @@ export function registerAnthropicSubscriptionExtension(
 ): void {
 	registerClaudeAccountCommand(pi);
 	registerSessionRegistry(pi);
-	pi.registerProvider(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, {
+	// The lane re-registers whenever the 1M window is refused or offered again, so the session's current
+	// model, and compaction with it, plans against the window the requests get. Each registration is the
+	// whole config: the runtime validates a registration on its own, not merged with the previous one.
+	const providerConfig = (longContext: boolean): ProviderConfig => ({
 		baseUrl: CLAUDE_SDK_OAUTH_API_ID,
 		api: CLAUDE_SDK_OAUTH_API_ID,
-		models: MODELS,
+		models: anthropicSubscriptionModels(longContext),
 		streamSimple: (model, context, options) =>
 			streamAnthropicSubscription(model, toBuiltinProviderContext(context), options),
 		// A verbatim `enabled: false` is the kill switch: the lane cannot serve, so
@@ -113,6 +124,11 @@ export function registerAnthropicSubscriptionExtension(
 			},
 		}),
 	});
+	pi.registerProvider(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, providerConfig(longContextAvailable()));
+	const stopFollowingLongContext = onLongContextAvailabilityChange((available) => {
+		pi.registerProvider(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, providerConfig(available));
+	});
+	pi.on("session_shutdown", () => stopFollowingLongContext());
 }
 
 export default function anthropicSubscriptionExtension(pi: ExtensionAPI): void {

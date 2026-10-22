@@ -1,3 +1,4 @@
+import type { PinSource, UnavailableAccount } from "./affinity.ts";
 import type { SdkErrorKind } from "./errors.ts";
 import type { ClaudeCodeRun } from "./executable.ts";
 
@@ -23,8 +24,13 @@ export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined,
 		// omo#8383: name the authentication failure. The recovery is a re-login,
 		// and the outer credential-pool classifier maps "authentication error" to
 		// auth_error instead of laundering the block into a rate-limit cooldown.
+		const recheck =
+			soonestUnblockAt !== undefined && Number.isFinite(soonestUnblockAt)
+				? [`  Next automatic re-check: ${new Date(soonestUnblockAt).toISOString()}.`]
+				: [];
 		return [
 			`All Claude accounts for ${PROVIDER} are currently blocked (authentication error).`,
+			...recheck,
 			`  /login ${PROVIDER}  - re-authenticate to refresh the blocked account`,
 			`  /claude-account list  - inspect account states`,
 		].join("\n");
@@ -38,6 +44,71 @@ export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined,
 		`  Soonest automatic retry: ${eta}.`,
 		`  /claude-account list  - inspect account states`,
 		`  /login ${PROVIDER}  - add another account`,
+	].join("\n");
+}
+
+const ENABLE_ACCOUNT_FALLBACK =
+	"  Set anthropicSubscriptionProvider.accountFallback: true (or SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK=1) to switch accounts automatically.";
+
+/**
+ * How to move off a pinned account. `/claude-account pin` only writes the stored pin, which a CLI or a
+ * settings pin outranks (`resolveClaudeAccountPin`), so for those it would change nothing (senpi#3672).
+ */
+function switchAccountLine(pinnedBy: PinSource | undefined): string {
+	switch (pinnedBy) {
+		case "cli":
+			return "  This session was started with --claude-account; start a new session with another --claude-account to switch.";
+		case "settings":
+			return "  The pin comes from anthropicSubscriptionProvider.pinnedAccount (or SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT); change it there to switch accounts.";
+		case "stored":
+		case undefined:
+			return "  /claude-account pin <name>  - switch to another account";
+	}
+}
+
+/**
+ * With account fallback off, only one account may serve (senpi#3465), so the pool-wide advice is wrong:
+ * other accounts may be healthy, and adding one does not help because it is never used. Name the account
+ * and the remedies that do work. For a blocked account the cause words ("authentication error", "rate
+ * limit") stay, so the outer credential-pool classifier reads the same verdict as for the pool-wide
+ * guidance. An account that is not configured carries neither on purpose: no cooldown brings it back, so
+ * the classifier fails the request instead of rotating (senpi#3672).
+ */
+export function singleAccountUnavailableGuidance(
+	account: UnavailableAccount,
+	soonestUnblockAt: number | undefined,
+	blockReason?: "auth_error",
+): string {
+	if (!account.configured) {
+		return [
+			`Claude account '${account.name}' for ${PROVIDER} is not configured, and account fallback is off, so no other account is used.`,
+			`  /claude-account list  - see the configured accounts`,
+			account.pinnedBy === "cli" || account.pinnedBy === "settings"
+				? switchAccountLine(account.pinnedBy)
+				: `  /claude-account pin <name>  - pin a configured account (or /claude-account unpin)`,
+			"  Start a new session if this session's account was removed.",
+			ENABLE_ACCOUNT_FALLBACK,
+		].join("\n");
+	}
+	const until =
+		soonestUnblockAt !== undefined && Number.isFinite(soonestUnblockAt)
+			? new Date(soonestUnblockAt).toISOString()
+			: undefined;
+	// An auth block's time is only the next re-check: logging in again is what fixes it, as in the pool-wide guidance.
+	if (blockReason === "auth_error") {
+		return [
+			`Claude account '${account.name}' for ${PROVIDER} is blocked (authentication error), and account fallback is off, so no other account is tried.`,
+			`  /login ${PROVIDER}  - re-authenticate this account`,
+			...(until === undefined ? [] : [`  Next automatic re-check: ${until}.`]),
+			switchAccountLine(account.pinnedBy),
+			ENABLE_ACCOUNT_FALLBACK,
+		].join("\n");
+	}
+	return [
+		`Claude account '${account.name}' for ${PROVIDER} is blocked (rate limit)${until === undefined ? "" : ` until ${until}`}, and account fallback is off, so no other account is tried.`,
+		...(until === undefined ? [] : [`  Wait until ${until}, when this account can serve again.`]),
+		switchAccountLine(account.pinnedBy),
+		ENABLE_ACCOUNT_FALLBACK,
 	].join("\n");
 }
 

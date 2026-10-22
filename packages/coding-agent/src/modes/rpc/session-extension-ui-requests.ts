@@ -1,9 +1,12 @@
-import type { RpcExtensionUIResponse } from "./rpc-types.ts";
+import type { RpcExtensionUIRequest, RpcExtensionUIResponse } from "./rpc-types.ts";
 
 type PendingRequest = {
 	resolve: (value: RpcExtensionUIResponse) => void;
 	reject: (error: Error) => void;
+	frame?: RpcExtensionUIRequest;
 };
+
+export const sessionDialogRequests = new WeakMap<object, SessionExtensionUiRequests>();
 
 /** Per-session extension UI request state; never share this map between bindings. */
 export class SessionExtensionUiRequests {
@@ -15,6 +18,10 @@ export class SessionExtensionUiRequests {
 
 	delete(id: string): void {
 		this.pending.delete(id);
+	}
+
+	snapshot(): RpcExtensionUIRequest[] {
+		return [...this.pending.values()].flatMap((request) => (request.frame ? [request.frame] : []));
 	}
 
 	resolve(response: RpcExtensionUIResponse): boolean {

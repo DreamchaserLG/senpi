@@ -1,3 +1,150 @@
+## 2026-10-19 - The bundle ships the RPC host supervisor as its own program (senpi#3743)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: a third esbuild pass emits `packages/coding-agent/dist/modes/rpc/host-supervisor-entry.js` self-contained (splitting off) as `dist/bundle/host-supervisor.js` beside `cli.js`; its metafile joins the external-import check, the runtime manifest hash and the size summary.
+
+### Why
+
+- `scripts/build-coding-agent-bundle.mjs`: a bundled supervisor started through `cli.js` kept the whole CLI graph resident (69-71 MB per supervisor against 8.5 MB for its own graph), and the desktop runs one per thread host (omo-desktop-app#3359).
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs`: the bundle layout is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs`: the input check list and the end of `buildBundle`.
+
+## 2026-10-19 - Release commands that read large output no longer fail with ENOBUFS
+
+### What changed
+
+- `scripts/release.mjs`: `captureCommand` and the CI check-run lookup read command output through `captureOutput` (`scripts/release-capture.mjs`), which raises `execFileSync`'s buffer from the 1 MiB default to 256 MiB.
+
+### Why
+
+- `scripts/release.mjs`: the pinned v2026.10.19-1 release (run 39296257099) passed its forced suite and checks, then died merging main back: `git show origin/main:packages/coding-agent/CHANGELOG.md` failed with `spawnSync git ENOBUFS` because that file is over 1 MiB. Nothing was pushed.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `captureCommand` and `lookupCiCheckRuns`.
+
+## 2026-10-19 - A release never pushes a regenerated model catalog to main before testing it
+
+### What changed
+
+- `scripts/release.mjs`: when the catalog regeneration changes the catalog, the release commits it on the release only and requires `--force-tests` (the `force_tests` dispatch input); the forced suite and `npm run check` then run on that tree before anything is pushed, and `main` is pushed once, at the end. Without `--force-tests` such a release stops before it commits, tags or pushes. Before, the catalog commit was pushed to `main` first so CI would test it.
+
+### Why
+
+- `scripts/release.mjs`: the v2026.10.19-1 release pushed a regenerated catalog that no longer listed `deepseek/deepseek-r1`, which a test pinned, so `main` failed typecheck for every PR (#3734) before any check of the release had run.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `secureCiEvidence`.
+
+## 2026-10-19 - A release can be cut from an exact commit, not only from main at dispatch (senpi#3609)
+
+### What changed
+
+- `scripts/release.mjs`: a new `--sha <sha>` option (the `sha` input of `publish-npm.yml`) releases that exact commit. `pinReleaseCommit` in `release-git.mjs` refuses anything but a full 40-character sha, checks that `origin/main` contains it, then checks it out as `main`. The release stamps, commits and tags on that tree; the existing `syncRemoteMainBeforePush` still merges the newer main only after the tag, so later merges never reach the tagged commit. In pinned mode a cancelled CI run on the commit stops the release instead of moving it to main's tip, and a regenerated model catalog is committed on the release only and requires `force_tests`. Without `--sha` nothing changes.
+- `scripts/release-pin.mjs` (review of #3731): the pinned commit must be one of main's own first-parent commits (a merged PR's head is refused); the read-only checks also run in a dry run. When the pinned tree differs from the job's checkout, it is reinstalled and rebuilt before the forced suite. After the tag, `syncPinnedReleaseIntoMain` merges main with `--no-commit` and rebuilds each CHANGELOG.md (`release-pinned-changelog.mjs`): main's [Unreleased] keeps the entries merged after the pinned commit, and the version's section is the tag's own, so main never claims the release shipped them. The sha reaches the workflow shell through `env`.
+
+### Why
+
+- `scripts/release.mjs`: the release always took main's tip at dispatch, so a release could not ship the commit a full local suite had just verified once anything merged after it; the only way to keep the evidence valid was to freeze main, which is no longer allowed.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration and its workflow are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `parseArgs`, `secureCiEvidence`, the top of `main()` and the final sync before the pushes; the `workflow_dispatch` inputs and the `Run release` step in `publish-npm.yml`.
+
+## 2026-10-16 - A forced release tests its code before stamping the version and changelogs (senpi#3446)
+
+### What changed
+
+- `scripts/release.mjs`: with `--force-tests`, the suite (clean, build, then `CI=1 npm test`) runs right after the test-evidence step (catalog regeneration and its commit), before any version bump or CHANGELOG stamping. The release still cleans and builds again after stamping. Without `--force-tests` the order of commands is unchanged.
+
+### Why
+
+- `scripts/release.mjs`: the suite used to run after `stampChangelogs`, so any test that reads a real CHANGELOG.md saw no `[Unreleased]` section; the v2026.10.16 forced release (run 38824836070) failed on `scripts/model-catalog-refresh.test.mjs`. CI always tests the unstamped commit, so the forced path never matched it.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `main()`'s step list and `runForcedTests`.
+
+## 2026-10-15 - The forced release test suite is bounded and dispatchable (senpi#3426, Refs senpi#2291)
+
+### What changed
+
+- `scripts/release.mjs`: `runForcedTests` (the `--force-tests` path) runs the suite through `runForcedTestSuite` from `release-test-gate.mjs` instead of `runCommand("npm", ["test"], { CI: "1" })`. The suite runs under a 110-minute budget as the leader of its own process group (`release-forced-test-supervisor.mjs`), and a timeout kills the whole group and fails with a named error. The default path, which waits for the release commit's green "Check and test" run, is unchanged.
+
+### Why
+
+- `scripts/release.mjs`: when GitHub-hosted macOS runners are backlogged, the release commit's "Check and test" never reports and the release fails after 40 minutes without publishing (two v2026.10.16 attempts on 2026-10-15). `--force-tests` is the existing fallback, but the workflow could not pass it, and the in-job suite once hung silently in packages/ai vitest until the job timeout killed it (senpi#2291). The budget is about twice the serial cost estimated from green main CI (the ubuntu Test jobs sum to 56.8-62.7 min).
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: the release orchestration and its workflow are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `runForcedTests` and the `release-test-gate.mjs` import; the `release` job's `timeout-minutes` and inputs in `publish-npm.yml`.
+
+## 2026-10-15 - The ./models entry graph reaches the cost-card leaf (senpi#3378)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 24 files (was 23 after senpi#3292). The added file is `model-cost.ts`, the type-only leaf that picks the cost card in force; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+- senpi#3378: `calculateCost` in `models.ts` selects the dated card, which brings the leaf into the `./models` graph.
+
+### Why an extension could not handle it
+
+- The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`, which senpi#3292 also raised.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the retired generated protocol-tree example from the runtime dependency auditor comment; the audit rules are unchanged.
+
+- `scripts/check-runtime-deps.mjs`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-12 - System-temp scan safeguards have mutation-tested contracts (Refs senpi#3064)
 
 ### What changed
@@ -125,6 +272,24 @@ Release orchestration is repository tooling.
 ### Expected merge conflict zones
 
 - `main()` and the test-gate section of `scripts/release.mjs`; the `release` job comment and timeout in `publish-npm.yml`.
+
+## 2026-10-15 - The ./models entry graph reaches the generation-4 thinking leaf (senpi#3292)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 23 files (was 22). The added file is `google-thinking-generation.ts`, a type-only leaf that gives a generation-4 row with no level map its low/medium/high levels; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+senpi#3292: generation-4 rows reject a thinking budget with HTTP 400, so `getSupportedThinkingLevels` in `models.ts` must know their levels even when the catalog row ships no map. That brings the leaf into the `./models` graph.
+
+### Why an extension could not handle it
+
+The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`.
 
 ## 2026-10-07 - The ./models entry graph allows one more file (senpi#2893)
 

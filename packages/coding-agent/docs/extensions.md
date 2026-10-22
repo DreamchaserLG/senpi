@@ -467,6 +467,46 @@ See [Session Format](session-format.md) for session storage internals and the Se
 
 Fired when a session is started, loaded, or reloaded.
 
+`event.attended === false` marks an unattended open. Automatic turns are held until
+real user input or explicit Resume, not attachment. `ctx.engineTurnsHeld()` reads
+that gate. A source that charges or renders before sending must check it first
+and call `ctx.noteHeldWake("goal")` (or its own source key) instead of charging.
+Source-only notices are consumed on release and reported through
+`held_wakes_released`; they never require a model payload to clear the hold.
+
+#### held_wakes_released
+
+`pi.on("held_wakes_released", (event, ctx) => ...)` receives
+`event.sources: Record<string, number>` after a hold is released. Re-read current
+source state before scheduling work. The goal builtin queues one fresh
+continuation only if the current goal remains active; held goal text is never
+replayed. For user input, other sources are coalesced into that input's context
+before its message, and this event follows the user turn. Explicit Resume runs
+one turn per non-goal source sequentially, then releases the goal last.
+
+The core backstop groups `goal-continuation` as `goal`, `senpi-monitor:*` as
+`monitor`, and `senpi-codemode:*` as `codemode`; other custom types keep their own
+key. It persists counts and only the latest payload per source. A monitor release
+includes the held count and latest event text.
+
+The shared internal ledger exposes `SessionHold { kind, key, since, data?,
+sourceCounts }`. Only `kind: "unattended"` is implemented here.
+`addHold(kind, { key?, data? })` defaults the identity key to the kind and preserves
+opaque metadata. Multiple keys of one kind remain independent records.
+`releaseAll("input" | "resume_session")` releases every current key; attachment
+does not release any. Persisted `session-hold` additions carry `key` and `data`,
+and release entries carry `keys`. Restart restores both identity and metadata.
+
+`getHold(key)` returns the current keyed record, or `undefined`.
+`release(keys, cause)` releases only the named keys and emits `session_resumed`
+only when the final active record goes. `releaseAll(cause)` delegates to that
+operation. The cause union remains `"input" | "resume_session"`.
+`engine-turn-hold-notices.ts` owns notice persistence, coalescing, counts, and
+consumption; the ledger delegates to that one custody path.
+Each delivered snapshot acknowledges its own notice IDs. New wakes arriving
+during delivery stay held for the next release, including newer wakes from the
+same source. The goal-release event waits until that non-goal custody is empty.
+
 ```typescript
 pi.on("session_start", async (event, ctx) => {
   // event.reason - "startup" | "reload" | "new" | "resume" | "fork"
@@ -665,7 +705,24 @@ pi.on("session_shutdown", async (event, ctx) => {
 });
 ```
 
-The host budgets each handler separately: a handler still running after `sessionShutdownHandlerWarnMs` (default 2000) logs a warning naming the extension, and at `sessionShutdownHandlerTimeoutMs` (default 10000) senpi aborts that handler's `event.signal`, reports an extension error, and continues teardown with the remaining handlers. Keep shutdown work short, and pass `event.signal` to anything that can block (subprocess waits, network calls, lock acquisition) so it stops when the host gives up on it. Both thresholds are settings; `0` disables either half. See [settings.md](settings.md#shutdown-handler-budget).
+The host budgets each handler separately: a handler still running after `sessionShutdownHandlerWarnMs` (default 2000) logs a warning naming the extension, and at `sessionShutdownHandlerTimeoutMs` (default 10000) senpi aborts that handler's `event.signal`, reports an extension error, and continues teardown with the remaining handlers. Keep shutdown work short, and pass `event.signal` to anything that can block (subprocess waits, network calls, lock acquisition) so it stops when the host gives up on it. Both thresholds are settings; `0` disables either half. When a quit exits senpi, all handlers also share one total budget, `sessionShutdownQuitBudgetMs` (default 2000): once it runs out senpi stops waiting, logs the extension that overran it with the elapsed time, and exits. An RPC host closing one session keeps running and keeps only the per-handler limits. Write anything that must survive quit synchronously or early in the handler. See [settings.md](settings.md#shutdown-handler-budget).
+
+After the handlers return, senpi closes anything the extension instance's own code created during the session and still holds open: servers (`Bun.serve`, `Bun.listen`, `node:net` and `node:http` servers), `node:net` client sockets, and `setTimeout`/`setInterval` timers. It logs one line per extension naming what it closed, so a missing teardown shows up in the host's stderr. An extension's own code is its package directory when a `package.json` sits beside its entry file, otherwise the entry file alone; senpi's own packages never count, even when installed inside it. Inline factories passed through the SDK (`extensionFactories`) have no file to tell their code from senpi's, so nothing they open is reclaimed. Stopping your resources here yourself is still the right design; the reclaim is the safety net that keeps a long-lived host from accumulating what closed sessions forgot.
+
+This means a resource opened from a session callback (the factory, `session_start`, a tool, a command, an RPC handler) belongs to that session and ends with it. A server or timer meant to be shared across sessions must be owned by the extension's process-level scope instead: create it at module top level, outside the factory and every callback, so no session owns it.
+
+```typescript
+// Process-level: created once when the module loads, shared by every session, never reclaimed.
+const shared = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+
+export default function (pi: ExtensionAPI) {
+  pi.on("session_start", () => {
+    // Session-level: closed with this session, by you or by senpi.
+    const perSession = setInterval(() => {}, 60_000);
+    pi.on("session_shutdown", () => clearInterval(perSession));
+  });
+}
+```
 
 ### Agent Events
 
@@ -1250,9 +1307,18 @@ For `tool_call`, this state is synchronized through the current assistant messag
 
 ```typescript
 ctx.sessionManager.getEntries()             // All entries
-ctx.sessionManager.getBranch()              // Current branch
+ctx.sessionManager.getBranch()              // Current branch (from the latest compaction window once the session compacted)
+ctx.sessionManager.getFullBranch()          // Current branch over the whole history, read from the session file
+ctx.sessionManager.reduceHistory(reducer)   // Fold every entry (like getEntries()) without holding the history; see below
 ctx.sessionManager.buildContextEntries()    // Active branch entries with compaction applied
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
+```
+
+A handler that runs every turn and needs only the latest or the since-last of something should use `reduceHistory` instead of scanning `getEntries()`: on a compacted session `getEntries()` reads and keeps the whole history. A reducer is a stable, module-level `{ initial(), add(state, entry) }`; the session reads the history once and folds only the entries appended since. Treat the returned state as read-only, and do not rely on `parentId`: an entry kept across a compaction can carry a rewritten link, as in `getEntries()`. A reducer that throws starts over on the next call.
+
+```typescript
+const latestNote = { initial: () => undefined, add: (latest, entry) => (entry.type === "custom" && entry.customType === "note" ? entry : latest) };
+const note = ctx.sessionManager.reduceHistory(latestNote);
 ```
 
 ### ctx.goalStoreFile
@@ -1711,7 +1777,7 @@ runtime's steering or follow-up queue like the user's queued input. The protocol
 |---|---|---|
 | `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. |
 | `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while the user composes or their submission is still on its way into the runtime. |
-| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
+| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
 | `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
 | `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
 
@@ -2030,9 +2096,17 @@ From a command handler, send the text before the handler returns: messages anoth
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 
-### pi.appendEntry(customType, data?)
+### pi.appendEntry(customType, data?, options?)
 
 Persist extension data. Custom entries do NOT participate in LLM context. In interactive mode, they can also render inside the chat transcript when paired with `pi.registerEntryRenderer()`.
+
+Pass `{ startupBookkeeping: true }` for an entry your extension writes at session start without any user action (a scan record, an environment fingerprint). A session that closes without a conversation then leaves no file behind if it holds only setup entries and such bookkeeping. Leave the option unset for anything a user created or anything billed: an unmarked entry keeps the session file.
+
+```typescript
+pi.on("session_start", () => {
+  pi.appendEntry("my-ext.scan", { at: Date.now() }, { startupBookkeeping: true });
+});
+```
 
 ```typescript
 pi.appendEntry("my-state", { count: 42 });
@@ -2250,6 +2324,31 @@ if (pi.getFlag("plan")) {
 }
 ```
 
+### pi.getPermissionPreset()
+
+The permission preset the built-in permission system enforces for this session right now (`"full-access"`, `"workspace"`, `"accept-edits"`, `"auto"`, `"read-only"` or `"ask"`). It resolves like the permission system does: the `--permission-preset` flag, then project and global settings (with the same untrusted-project handling), then the `full-access` default. A preset flag changed on a live session is applied before the read. It returns `undefined` when the permission system is not running for the session, its setup failed, or the session is not bound yet (during extension loading).
+
+```typescript
+pi.on("tool_call", () => {
+  if (pi.getPermissionPreset() === "full-access") {
+    // Nothing will prompt for permission in this session.
+  }
+});
+```
+
+### pi.getSubscriptionLimits()
+
+Every subscription account's latest limit windows, the same records RPC `get_subscription_limits` serves: `{ provider, account, windows, reportedAt, plan?, error? }`. The engine polls each signed-in Claude and ChatGPT subscription account's usage endpoint (interactive and RPC modes) and turns update the same records, so an account's windows are known before its first turn. An account nothing has reported for is absent. `error` says why the last poll failed (for example `auth stale - run /login`); the windows beside it are the last ones reported.
+
+### pi.onSubscriptionLimits(listener)
+
+Calls `listener(limits)` each time an account's limits are reported and returns the unsubscribe. Unsubscribe on `session_shutdown`.
+
+```typescript
+const stop = pi.onSubscriptionLimits((limits) => render(pi.getSubscriptionLimits()));
+pi.on("session_shutdown", () => stop());
+```
+
 ### pi.exec(command, args, options?)
 
 Execute a shell command.
@@ -2258,6 +2357,19 @@ Execute a shell command.
 const result = await pi.exec("git", ["status"], { signal, timeout: 5000 });
 // result.stdout, result.stderr, result.code, result.killed
 ```
+
+### pi.redactForUpload(text, options?)
+
+Redact text before sending it off this machine, with the same rules `/share` uses: this machine's home path, account and host names, credentials, private keys, emails and IP addresses. Pass `extraLiterals` for other identity values you know about (for example a remote host's account name). The result is idempotent.
+
+```typescript
+const { text, counts } = pi.redactForUpload(logText, { extraLiterals: ["build-runner-07"] });
+// counts: { "home path": 1, credential: 2 }
+```
+
+### pi.hostVersion
+
+The running senpi version string.
 
 ### pi.getActiveTools() / pi.getAllTools() / pi.setActiveTools(names)
 
@@ -3321,6 +3433,8 @@ ctx.ui.setWorkingIndicator();  // Restore default spinner
 ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"]);
 // Widget below editor
 ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"], { placement: "belowEditor" });
+// Choices: the TUI shows "label: command" on the last line; an RPC client gets them as `widgetActions`
+ctx.ui.setWidget("my-widget", ["Session is large"], { actions: [{ label: "Start fresh", command: "/handoff" }] });
 ctx.ui.setWidget("my-widget", (tui, theme) => new Text(theme.fg("accent", "Custom"), 0, 0));
 ctx.ui.setWidget("my-widget", undefined);  // Clear
 

@@ -1,4 +1,87 @@
+## 2026-10-21 - Revalidate held goal continuations before charging (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: Checks the engine hold before continuation accounting or prompt rendering, records only a goal wake, and handles held_wakes_released by reading the current active goal and queueing one fresh continuation.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: A pre-rendered held continuation can outlive its goal or contain an obsolete objective, and charging a held wake exhausts the goal guard without provider work.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: This is source-owned lifecycle behavior inside the goal builtin.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: admitAndQueueGoalContinuation and lifecycle event registration; preserve the existing continuation latch and normal post-release rules.
+
+## 2026-10-17 - No fixed auto-continue cap; a no-progress guard instead (oh-my-openagent#10280)
+
+### What changed
+
+- `continuation.ts`: `GOAL_UNATTENDED_CONTINUATION_LIMIT` (150) and the `unattended` deny reason are gone. `GOAL_NO_PROGRESS_CONTINUATION_LIMIT` (60) and the `no-progress` deny reason replace them, read from the new persisted `Goal.noProgressContinuations`. `hasGoalTodoProgress` compares only the todo part of the continuation signature.
+- `store.ts`: every counted delivery increments `noProgressContinuations` (monitor-delayed deliveries stay exempt); `resetContinuationStreak(ref, { progress })` clears it, `{ unattended }` (human input) clears both counters, and status transitions zero it.
+- `monitor-continuation.ts`: a turn is progress when its tool effect is new, the todo state changed, or it carried a human-input monitor notification (`isHumanInputMonitorNotification`). A tool effect is `toolEffectFingerprint`: every call's name and arguments, and every result's error flag and text. Results mask run-to-run noise only (ISO timestamps, clock times, durations, `pid N`, 6+ digit numbers, 8+ hex ids), so a small counter that really advances (`12/200 modules`) stays visible. Arguments of non-mutating tools mask every number and long hex id, so `sleep N`, `--bail=N` or a timestamp argument is not a new action; arguments of mutating tools (`edit`, `write`, `apply_patch`, `todo`, decided by tool kind) stay exact so distinct edits never merge. Output alone is not the fingerprint because repeated edits of one file print the same text. A turn whose tool results all failed has no fingerprint and is never progress; a fingerprint matching any of the last `GOAL_TOOL_EFFECT_WINDOW` (256) tool turns is a repeat; with an empty window (first tool turn, after a reload or input reset) a fingerprint only seeds. So re-running the same failing test, swallowing its exit code, varying a counter or timestamp argument, sleeping a growing N, polling a status that only gains a timestamp, or rotating through a fixed set of reads is not progress, while an advancing build counter or a new edit is. Varied narration still resets the consecutive streak (#539/#567) but no longer the no-progress count. A human-input monitor delivery also resets the unattended count and clears the repetition and toolless windows, like typed input.
+- `continuation-recovery.ts` / `lifecycle-helpers.ts`: new mechanical block reason `NO_PROGRESS_BLOCKED_REASON`, so the notice ends with "Send any message to resume." `UNATTENDED_CONTINUATION_BLOCKED_REASON` stays mechanical so goals persisted with it still resume. `goal_continuation_guard_tripped` and `goal-continuation-stopped` add `noProgressContinuations`; `unattendedContinuations` stays as an informational count.
+
+### Why
+
+- A persistent setup paused after 150 continuations even while it worked, because the budget refilled only on typed input and a person's message delivered through a monitor never counted. Thresholds: across 593 local goal sessions (30 days), toolless stretches that recovered into tool use peaked at 29 (p99 7); the #1139 stall ran 122 toolless turns. 60 is twice the measured peak and above the #447 50-turn pin.
+
+- This supersedes the 2026-08-27 unattended continuation backstop (#1139) entry below.
+
+### Why an extension could not handle it
+
+- Admission, the persisted counters and progress detection are private to the goal builtin.
+
+### Expected merge conflict zones
+
+- LOW: the deny-reason union, `afterAgentEnd` progress detection, `recordContinuationDelivered` / `resetContinuationStreak`.
+
+## 2026-10-14 - Provider-recovery continuations back off and wake when the pool frees up (senpi#3264)
+
+### What changed
+
+- New `provider-retry.ts`: `providerRetryDelayMs(attempt, retryAt, now)` (first retry immediate, then 15 s doubling to 30 min; a stated unblock time wins, capped at 6 h) and `providerRetryAt(messages, now)` (earliest future ISO instant in the failed turn's `errorMessage`, e.g. "blocked until ..."; assistant text is never scanned).
+- `monitor-continuation.ts`: `afterAgentSettled` counts consecutive provider-recovery attempts (reset by a turn that ends cleanly and by every continuation-state reset: session start, accepted user input, a goal change) and, when the delay is positive, arms a `providerRetry` timer instead of queueing at once; the timer fires through the normal `providerRecovery` admission (same cap, same single-flight and unattended guards).
+- `wait-progress.ts`: `GoalWaitKind` gains `providerRetry`, rendered "provider unavailable · goal retries in ...". RPC clients see it as the `kind` of `goal_continuation_timer_state`.
+
+### Why
+
+- With every pooled account blocked, provider recovery re-queued at once after each failed turn: 8 continuations in under 30 s hit the cap and blocked the goal, and nothing woke it when an account freed up (senpi#3264). Regression: `test/suite/regressions/3264-goal-provider-retry-backoff.test.ts`.
+
+### Why an extension could not handle it
+
+- This is the goal extension's own continuation scheduler.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentSettled`, `#schedule` delay selection and `#continueIfEligible` path mapping in `monitor-continuation.ts`; `formatGoalWaitLabel` in `wait-progress.ts`.
+
 # goal Extension Changes
+
+## 2026-10-12 - Name on-duty todo waits (senpi#3163)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts`: `collectOnDutySources` combines active wake-source names, an active goal, a pending continuation, and pending messages into the `waiting` suppression. It renders the `todo-waiting` footer, emits the existing reminder event with `reason: "waiting"` and `sources`, and logs the reason and source names at debug level.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` exposes its existing live source-name projection; `packages/coding-agent/src/core/extensions/builtin/goal/index.ts` passes those names to the backstop and clears the waiting footer on agent start, session start, and tree navigation.
+- A goal whose continuation stopped (stale stop) is not an on-duty source: it gets the `goal-stopped` suppression, so the goal's own stop notice stays visible and no `todo-waiting` footer or nudge contradicts it.
+- The two hidden nudges, the cap and its stop notice (owned by oh-my-openagent#10026 above), the setting, and the chain resets are unchanged.
+- `goal-todo-owed-backstop.test.ts` covers named waits, source drain, footer clearing, telemetry, debug logging, and a stopped goal not counting as waiting. `docs/settings.md` and the unreleased changelog describe the behavior.
+
+### Why
+
+Open todo work can legitimately wait for a background child or another continuation owner. The old suppression hid that reason.
+
+### Why an extension could not handle it
+
+The goal builtin owns the continuation latch, wake-source registry, todo backstop chain, and lifecycle hooks.
+
+### Expected merge conflict zones
+
+`todo-owed-backstop.ts` suppression and notice, `index.ts` lifecycle and agent-end input assembly, and the source-name projection in `monitor-continuation.ts`.
 
 ## 2026-10-12 - The todo-owed stop notice names the cause and the resume action (oh-my-openagent#10026)
 

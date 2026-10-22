@@ -1,5 +1,7 @@
 import { dirname, join } from "node:path";
 import { type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
+import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
+import { applyAccountOrder, withoutOrderedAccount } from "@earendil-works/pi-ai/auth/pool/select";
 import {
 	accountDisplayName,
 	listSlots,
@@ -26,6 +28,8 @@ export type CredentialAccountSummary = {
 	readonly pinned: boolean;
 	/** Usage limits binding one model (family) while the account serves the rest (senpi#2555). */
 	readonly blockedModels?: readonly { readonly model: string; readonly until: number }[];
+	/** A slot of the other kind than the stored credential: kept, never used, cannot be pinned (senpi#3486). */
+	readonly unused?: true;
 };
 
 const ACCOUNT_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
@@ -51,7 +55,7 @@ function numberField(value: object, key: string): number | undefined {
 	return typeof found === "number" ? found : undefined;
 }
 
-function defaultRepository(storage: AuthStorage): CredentialSlotRepository {
+export function credentialPoolRepository(storage: AuthStorage): CredentialSlotRepository {
 	const authPath = storage.getStoragePath();
 	return new CredentialSlotRepository(authPath ? join(dirname(authPath), "credential-pool-state.json") : undefined);
 }
@@ -70,7 +74,7 @@ function stringField(value: object, key: string): string | undefined {
 function slotBlocked(slot: object, sidecar: CredentialSlotState | undefined, now: number): boolean {
 	if (slotHealth(sidecar, now) === "blocked") return true;
 	const reason = stringField(slot, "blockReason");
-	if (reason === "auth_error" || reason === "account_disabled") return true;
+	if (reason === "account_disabled") return true;
 	const blockedUntil = numberField(slot, "blockedUntil");
 	return blockedUntil !== undefined && blockedUntil > now;
 }
@@ -112,7 +116,12 @@ export async function getCredentialAccounts(
 	env: NodeJS.ProcessEnv = process.env,
 	repository?: CredentialSlotRepository,
 ): Promise<CredentialAccountSummary[]> {
-	return summarizeCredentialAccounts(provider, storage.get(provider), env, repository ?? defaultRepository(storage));
+	return summarizeCredentialAccounts(
+		provider,
+		storage.get(provider),
+		env,
+		repository ?? credentialPoolRepository(storage),
+	);
 }
 
 /** Storage-free variant for callers that already hold the credential (e.g. auth check). */
@@ -123,6 +132,15 @@ export async function summarizeCredentialAccounts(
 	repository: CredentialSlotRepository = new CredentialSlotRepository(),
 ): Promise<CredentialAccountSummary[]> {
 	const credential = pooledFrom(stored);
+	return applyAccountOrder(credential?.order, await summarizeInStoredOrder(provider, credential, env, repository));
+}
+
+async function summarizeInStoredOrder(
+	provider: string,
+	credential: PooledCredential | undefined,
+	env: NodeJS.ProcessEnv,
+	repository: CredentialSlotRepository,
+): Promise<CredentialAccountSummary[]> {
 	const now = Date.now();
 	const pinned = pinnedName(credential);
 	const summaries: CredentialAccountSummary[] = [];
@@ -137,6 +155,7 @@ export async function summarizeCredentialAccounts(
 					? listSlots(credential)
 					: []
 				: listSlots(credential);
+		const usable = new Set(slotsOfOwnKind(credential).map((slot) => slot.name));
 		for (const slot of storedAccounts) {
 			const displayName = accountDisplayName(slot.displayName);
 			const persisted = state[slot.name];
@@ -154,6 +173,7 @@ export async function summarizeCredentialAccounts(
 				blocked: slotBlocked(slot, applicable, now),
 				pinned: pinned === slot.name,
 				...blockedModels(now, applicable?.modelBlocks, storedModelBlocks(slot)),
+				...(usable.has(slot.name) ? {} : { unused: true as const }),
 			});
 		}
 		if (normalizeProviderId(provider) !== "anthropic-subscription") return summaries;
@@ -208,12 +228,18 @@ export async function pinCredentialAccount(
 	env: NodeJS.ProcessEnv = process.env,
 	repository?: CredentialSlotRepository,
 ): Promise<void> {
-	const repo = repository ?? defaultRepository(storage);
+	const repo = repository ?? credentialPoolRepository(storage);
 	if (name !== null) {
 		assertValidAccountName(name);
 		const accounts = await getCredentialAccounts(storage, provider, env, repo);
-		if (!accounts.some((account) => account.name === name)) {
+		const account = accounts.find((candidate) => candidate.name === name);
+		if (!account) {
 			throw new Error(`Provider account not found: ${name}`);
+		}
+		if (account.unused) {
+			throw new Error(
+				`Account ${name} holds a login of the other kind and is never used, so it cannot be pinned. To switch ${provider} to it, save it again with /login.`,
+			);
 		}
 	}
 	await storage.modify(provider, async (current) => {
@@ -247,7 +273,7 @@ export async function removeCredentialAccount(
 	env: NodeJS.ProcessEnv = process.env,
 	repository?: CredentialSlotRepository,
 ): Promise<void> {
-	const repo = repository ?? defaultRepository(storage);
+	const repo = repository ?? credentialPoolRepository(storage);
 	const accounts = await getCredentialAccounts(storage, provider, env, repo);
 	const account = accounts.find((candidate) => candidate.name === name);
 	if (!account) throw new Error(`Provider account not found: ${name}`);
@@ -256,7 +282,8 @@ export async function removeCredentialAccount(
 	}
 	const next = await storage.read(provider);
 	if (next === undefined) throw new Error(`No stored credential for provider: ${provider}`);
-	const remaining = removeSlot(next, name);
+	const removed = removeSlot(next, name);
+	const remaining = removed === undefined ? undefined : withoutOrderedAccount(removed, name);
 	if (remaining === undefined) await storage.delete(provider);
 	else await storage.modify(provider, async () => remaining);
 	await repo.mutateSlotState(provider, "stored", name, () => undefined);

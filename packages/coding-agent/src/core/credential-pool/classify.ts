@@ -48,6 +48,15 @@ export function rateLimitCooldown(
 	};
 }
 
+/** The cooldown of a spent account whose limit names a future reset: exactly until that reset, capped. */
+export function usageLimitCooldown(
+	resetMs: number,
+	policy: { capMs?: number } = {},
+): { cooldownMs: number; retryAfterWasCapped: boolean } {
+	const cap = policy.capMs ?? COOLDOWN_CAP_MS;
+	return { cooldownMs: Math.min(cap, resetMs), retryAfterWasCapped: resetMs > cap };
+}
+
 const INVALID_KEY_TEXT = /invalid[ _-]?(?:api[ _-]?)?key|authentication[_ ]?error|invalid x-api-key|unauthorized/i;
 const ACCOUNT_SCOPED_403_TEXT = /account|credential|token|api[ _-]?key|organization|subscription/i;
 const RATE_LIMIT_TEXT = /rate[ _-]?limit|too many requests|resource_exhausted/i;
@@ -128,14 +137,17 @@ export function classifyCredentialFailure(
 			extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs) ??
 			(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : undefined);
 		const modelFamily = rateLimitModelFamily(text);
+		const policy = { baseMs: context.cooldownBaseMs, capMs: context.cooldownCapMs };
 		return {
 			kind: "failover",
 			block: {
 				reason: "rate_limit",
-				...rateLimitCooldown(failureCount, hint, {
-					baseMs: context.cooldownBaseMs,
-					capMs: context.cooldownCapMs,
-				}),
+				// A spent account comes back at the reset it names, so that reset is the cooldown: an
+				// exponential backoff grown from earlier failures would keep it blocked past it (senpi#3771).
+				// A reset already past (clock skew, a stale string) proves nothing and keeps the default floor.
+				...(usageLimit && hint !== undefined && hint > 0
+					? usageLimitCooldown(hint, policy)
+					: rateLimitCooldown(failureCount, hint, policy)),
 				...(modelFamily === undefined ? {} : { modelFamily }),
 			},
 		};

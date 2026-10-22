@@ -3,7 +3,6 @@ import { once } from "node:events";
 import { access, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { processStartTimeMs, readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { readHostCrashRecords } from "../../../src/modes/rpc/host-crash-record.ts";
 import {
 	createDaemonDirectories,
@@ -20,6 +19,7 @@ import type { ChildExit } from "../../../src/modes/rpc/host-readiness.ts";
 import { hostChildAlive } from "../../../src/modes/rpc/host-stalled-evidence.ts";
 import { writeJsonAtomic } from "../../../src/modes/rpc/host-state-json.ts";
 import { CHILD_KILL_EXIT_TIMEOUT_MS } from "../../../src/modes/rpc/host-stop-intent.ts";
+import { processStartTimeMs, readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { processExitEvent } from "../../helpers/process-exit-event.ts";
 import { type GenerationScratch, generationEnv, generationScratch } from "../../helpers/rpc-generation-support.ts";
 import { processAlive } from "../../helpers/spawned-host-reaper.ts";
@@ -207,7 +207,8 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 	});
 
 	// #3054: a dead supervisor's retained generation belongs to an OS process identity, not just a pid.
-	it.each(["same", "reused", "unreadable"] as const)(
+	// #3658: an unreadable identity is released once the generation's heartbeat stopped; with no heartbeat it stays guarded.
+	it.each(["same", "reused", "unreadable", "unreadable-heartbeat-stopped"] as const)(
 		"judges a kept generation with a %s child start time",
 		async (identity) => {
 			const r = await rig("held-kill");
@@ -228,11 +229,13 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 			await writeJsonAtomic(r.generation.childPidFile, {
 				pid: r.hostPid,
 				processStartTime:
-					identity === "unreadable"
+					identity === "unreadable" || identity === "unreadable-heartbeat-stopped"
 						? null
 						: new Date(startMs - (identity === "reused" ? 60_000 : 0)).toISOString(),
 			});
-			if (identity === "reused") {
+			if (identity === "unreadable-heartbeat-stopped")
+				await writeJsonAtomic(r.generation.aliveFile, { at: new Date(Date.now() - 10 * 60_000).toISOString() });
+			if (identity === "reused" || identity === "unreadable-heartbeat-stopped") {
 				expect(await hostChildAlive(r.generation), "reused PID must not guard the old generation").toBe(false);
 				expect(await anyGenerationLive(r.paths)).toBe(false);
 				expect((await pruneDeadGenerations(r.paths)).generations, "reused PID generation must be released").toEqual(

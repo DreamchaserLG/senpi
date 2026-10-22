@@ -218,18 +218,28 @@ async function runLoop(
 	let explicitContinuation = false;
 	// Messages from `prepareNextTurn`, appended before the next provider request.
 	let preparedMessages: AgentMessage[] = [];
+	// Which queue the current pendingMessages were drained from, so consumption is committed against it.
+	let pendingSource: "steering" | "followUp" = "steering";
+	const drainSteering = async (): Promise<AgentMessage[]> => {
+		pendingSource = "steering";
+		return (await config.getSteeringMessages?.()) || [];
+	};
+	const drainFollowUp = async (): Promise<AgentMessage[]> => {
+		pendingSource = "followUp";
+		return (await config.getFollowUpMessages?.()) || [];
+	};
 	const refreshTerminatingQueueDrain = async (): Promise<void> => {
 		if (!drainedTerminatingQueue || !config.restorePendingMessages) return;
 		await config.restorePendingMessages(drainedTerminatingQueue, pendingMessages);
-		pendingMessages = (await config.getSteeringMessages?.()) || [];
+		pendingMessages = await drainSteering();
 		drainedTerminatingQueue = pendingMessages.length > 0 ? "steering" : undefined;
 		if (pendingMessages.length === 0) {
-			pendingMessages = (await config.getFollowUpMessages?.()) || [];
+			pendingMessages = await drainFollowUp();
 			drainedTerminatingQueue = pendingMessages.length > 0 ? "followUp" : undefined;
 		}
 	};
 	// Check for steering messages at start (user may have typed while waiting)
-	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
+	let pendingMessages: AgentMessage[] = await drainSteering();
 
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
@@ -251,6 +261,17 @@ async function runLoop(
 					return;
 				}
 				drainedTerminatingQueue = undefined;
+			}
+
+			// Commit the queued messages' consumption before any of them reaches the context or a provider;
+			// a rejected commit restores them and fails this attempt.
+			if (pendingMessages.length > 0 && config.commitQueuedConsumption) {
+				try {
+					await config.commitQueuedConsumption(pendingSource, pendingMessages);
+				} catch (error) {
+					await config.restorePendingMessages?.(pendingSource, pendingMessages);
+					throw error;
+				}
 			}
 
 			// Process prepared and queued messages before the next assistant response.
@@ -362,10 +383,10 @@ async function runLoop(
 			}
 			explicitContinuation = decision?.action === "continue";
 			if (toolBatchTerminated) {
-				pendingMessages = (await config.getSteeringMessages?.()) || [];
+				pendingMessages = await drainSteering();
 				if (pendingMessages.length > 0) drainedTerminatingQueue = "steering";
 				if (pendingMessages.length === 0) {
-					pendingMessages = (await config.getFollowUpMessages?.()) || [];
+					pendingMessages = await drainFollowUp();
 					if (pendingMessages.length > 0) drainedTerminatingQueue = "followUp";
 				}
 				if (pendingMessages.length === 0 && !explicitContinuation) {
@@ -408,7 +429,7 @@ async function runLoop(
 				drainedTerminatingQueue = undefined;
 			}
 			if (!toolBatchTerminated) {
-				pendingMessages = (await config.getSteeringMessages?.()) || [];
+				pendingMessages = await drainSteering();
 			}
 			if (hasMoreToolCalls || pendingMessages.length > 0) {
 				explicitContinuation = false;
@@ -416,7 +437,7 @@ async function runLoop(
 		}
 
 		// Agent would stop here. Check for follow-up messages.
-		const followUpMessages = (await config.getFollowUpMessages?.()) || [];
+		const followUpMessages = await drainFollowUp();
 		if (followUpMessages.length > 0) {
 			// Set as pending so inner loop processes them
 			explicitContinuation = false;
@@ -623,31 +644,47 @@ async function streamAssistantResponse(
 	}
 
 	try {
-		const llmContext = await buildProviderContext(context, config, signal);
+		// The start bound (or, without one, the idle bound) runs from here, not from the first stream read: the
+		// context transform, the key lookup and the stream function can each hang, and a hung step must end the
+		// turn with a provider failure like a provider that never answers (senpi#3471).
+		const preStream = createPreStreamBound(
+			normalizeTimeoutMs(config.streamStartTimeoutMs),
+			normalizeTimeoutMs(streamIdleTimeoutMs),
+			requestAbortController,
+		);
+		const llmContext = await preStream.run(buildProviderContext(context, config, requestAbortController.signal));
 
 		// Resolve API key (important for expiring tokens)
 		const resolvedApiKey =
-			(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
+			(config.getApiKey ? await preStream.run(config.getApiKey(config.model.provider)) : undefined) || config.apiKey;
 
-		const response = await streamFunction(config.model, llmContext, {
-			...config,
-			streamKind: "main",
-			apiKey: resolvedApiKey,
-			signal: requestAbortController.signal,
-			// Cursor exec bridging (ignored by every other provider): handlers
-			// execute mid-stream; their paired results buffer here.
-			...(config.cursorExecHandlers
-				? {
-						execHandlers:
-							typeof config.cursorExecHandlers === "function"
-								? config.cursorExecHandlers(signal ?? requestAbortController.signal)
-								: config.cursorExecHandlers,
-						onToolResult: (result: ToolResultMessage) => {
-							providerToolResults.push(result);
-						},
-					}
-				: {}),
-		});
+		const response = await preStream.run(
+			streamFunction(config.model, llmContext, {
+				...config,
+				streamKind: "main",
+				apiKey: resolvedApiKey,
+				signal: requestAbortController.signal,
+				// Cursor exec bridging (ignored by every other provider): handlers
+				// execute mid-stream; their paired results buffer here.
+				...(config.cursorExecHandlers
+					? {
+							execHandlers:
+								typeof config.cursorExecHandlers === "function"
+									? config.cursorExecHandlers(signal ?? requestAbortController.signal)
+									: config.cursorExecHandlers,
+							onToolResult: (result: ToolResultMessage) => {
+								providerToolResults.push(result);
+							},
+						}
+					: {}),
+			}),
+			// A stream that arrives after the bound ended the turn is closed here, not left to the provider.
+			// A custom stream function may resolve to something that is not a stream; there is nothing to close then.
+			(late) => {
+				if (typeof late?.[Symbol.asyncIterator] === "function")
+					closeAssistantIterator(late[Symbol.asyncIterator]());
+			},
+		);
 		// Record the requested level, whichever stream function answered.
 		const result = async () => Object.assign(await response.result(), { thinkingLevel: config.reasoning ?? "off" });
 
@@ -657,8 +694,9 @@ async function streamAssistantResponse(
 			streamIdleTimeoutMs,
 			requestAbortController.signal,
 			(error) => requestAbortController.abort(error),
-			config.streamStartTimeoutMs,
+			preStream.remainingStartMs(),
 			response,
+			normalizeTimeoutMs(config.streamStartTimeoutMs),
 		);
 		try {
 			while (true) {
@@ -779,10 +817,17 @@ async function streamAssistantResponse(
 			await emit({ type: "message_end", message: finalMessage });
 			return { message: finalMessage, providerToolResults };
 		}
+		// A caller abort is the reason a turn ended even when the bound fired first on a step that never finished:
+		// the user gets the abort's own message, not a timeout and advice to raise it (#3481).
+		// A step that rethrows the caller's own reason (`throwIfAborted()`, a fetch rejected with it) shows that reason
+		// through the same shaping and cap (#3510).
+		const callerAbortedPastBound =
+			signal?.aborted === true &&
+			(error instanceof StreamStartTimeoutError || isStreamIdleTimeoutError(error) || error === signal.reason);
 		const finalMessage = createTerminalFailureAssistantMessage(
 			config.model,
 			signal?.aborted ? "aborted" : "error",
-			error,
+			callerAbortedPastBound ? abortError(signal.reason) : error,
 			partialMessage,
 		);
 		propagateThinkingTiming(finalMessage);
@@ -807,12 +852,96 @@ type AssistantEventReader = {
 	dispose(): void;
 };
 
+const MAX_ABORT_REASON_CHARS = 500;
+
 function abortError(reason: unknown): Error {
-	return reason instanceof Error ? reason : new Error("Request was aborted");
+	if (reason instanceof Error) return reason;
+	// A caller's own words are its abort reason: a plain string, or an object carrying a `message` (#3510).
+	const text = abortReasonText(reason);
+	if (text === undefined) return new Error("Request was aborted");
+	const characters = Array.from(text);
+	return new Error(
+		characters.length > MAX_ABORT_REASON_CHARS ? `${characters.slice(0, MAX_ABORT_REASON_CHARS).join("")}…` : text,
+	);
+}
+
+function abortReasonText(reason: unknown): string | undefined {
+	const text =
+		typeof reason === "string"
+			? reason
+			: typeof reason === "object" && reason !== null && "message" in reason && typeof reason.message === "string"
+				? reason.message
+				: undefined;
+	return text !== undefined && text.trim() !== "" ? text : undefined;
 }
 
 function closeAssistantIterator(iterator: AsyncIterator<AssistantMessageEvent>): void {
 	void Promise.resolve(iterator.return?.()).catch(() => undefined);
+}
+
+/**
+ * The bound on everything before a provider stream's first event. With a start bound the budget is shared:
+ * whatever the steps before the stream used, the first read only gets the rest. Without one the idle bound
+ * covers each step, as it covers each wait between events.
+ */
+function createPreStreamBound(
+	startTimeoutMs: number | undefined,
+	idleTimeoutMs: number | undefined,
+	request: AbortController,
+): {
+	run<T>(work: T | Promise<T>, discardLate?: (value: T) => void): Promise<T>;
+	remainingStartMs(): number | undefined;
+} {
+	const startedAt = Date.now();
+	const remaining = (): number | undefined =>
+		startTimeoutMs === undefined ? idleTimeoutMs : Math.max(0, startTimeoutMs - (Date.now() - startedAt));
+	const timeoutError = (): Error =>
+		startTimeoutMs === undefined
+			? new StreamIdleTimeoutError(idleTimeoutMs ?? 0)
+			: new StreamStartTimeoutError(startTimeoutMs);
+	return {
+		run<T>(work: T | Promise<T>, discardLate?: (value: T) => void): Promise<T> {
+			const budget = remaining();
+			// Only the bound ends a step here. A caller abort is not raced: the step sees it through the request
+			// signal and ends the way it did before this bound existed (the turn then reads aborted), so an abort
+			// and a timeout never compete for the same step.
+			if (budget === undefined) return Promise.resolve(work);
+			return new Promise<T>((resolve, reject) => {
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				let settled = false;
+				const finish = (complete: () => void): void => {
+					if (settled) return;
+					settled = true;
+					if (timer !== undefined) clearTimeout(timer);
+					complete();
+				};
+				// Handle the work's outcome first, so work that settles after the turn ended neither goes unhandled
+				// nor leaks: a late value is handed to discardLate, a late rejection is dropped.
+				Promise.resolve(work).then(
+					(value) => {
+						if (settled) {
+							// The turn already ended; the value is only cleaned up. A cleanup that throws must not
+							// become an unhandled rejection of a request nobody waits for any more.
+							try {
+								discardLate?.(value);
+							} catch {}
+							return;
+						}
+						finish(() => resolve(value));
+					},
+					(error: unknown) => finish(() => reject(error)),
+				);
+				timer = setTimeout(() => {
+					const error = timeoutError();
+					finish(() => reject(error));
+					// Abort after rejecting so the failure reads as the timeout, and the hung step is told to stop.
+					request.abort(error);
+				}, budget);
+			});
+		},
+		// A start bound already spent before the stream answered still ends the first read at once.
+		remainingStartMs: () => (startTimeoutMs === undefined ? undefined : Math.max(1, remaining() ?? 1)),
+	};
 }
 
 function normalizeTimeoutMs(timeoutMs: number | undefined): number | undefined {
@@ -826,9 +955,13 @@ function createAssistantEventReader(
 	onIdleTimeout?: (error: Error) => void,
 	streamStartTimeoutMs?: number,
 	stream?: Pick<AssistantMessageEventStream, "hasPendingLocalWork">,
+	// The bound the error names, when the timer only gets what is left of it (the steps before the stream used
+	// the rest); the error must name the configured bound, which users raise.
+	configuredStartTimeoutMs?: number,
 ): AssistantEventReader {
 	const idleTimeoutMs = normalizeTimeoutMs(timeoutMs);
 	const startTimeoutMs = normalizeTimeoutMs(streamStartTimeoutMs);
+	const reportedStartTimeoutMs = configuredStartTimeoutMs ?? startTimeoutMs;
 	let sawFirstEvent = false;
 	let removeAbortListener: (() => void) | undefined;
 	let abortPromise: Promise<typeof ABORTED> | undefined;
@@ -856,7 +989,7 @@ function createAssistantEventReader(
 			const useStartBound = !sawFirstEvent && startTimeoutMs !== undefined;
 			const readTimeoutMs = useStartBound ? startTimeoutMs : idleTimeoutMs;
 			const makeTimeoutError = useStartBound
-				? (ms: number) => new StreamStartTimeoutError(ms)
+				? (ms: number) => new StreamStartTimeoutError(reportedStartTimeoutMs ?? ms)
 				: (ms: number) => new StreamIdleTimeoutError(ms);
 			const result = await readNextAssistantEvent(
 				iterator,

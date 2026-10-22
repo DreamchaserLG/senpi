@@ -4,6 +4,7 @@
  * this directory so `import.meta.url` resolves relative paths exactly as before.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { access, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isBundledNode } from "../../config.ts";
@@ -45,6 +46,53 @@ function resolveDeclaredCliEntry(modulePath: string): string | undefined {
 				for (const candidate of candidates) {
 					const entry = resolve(dir, candidate);
 					if (existsSync(entry)) return entry;
+				}
+			} catch {}
+			return undefined;
+		}
+		const parent = dirname(dir);
+		if (parent === dir) return undefined;
+		dir = parent;
+	}
+	return undefined;
+}
+
+const existsAsync = (path: string): Promise<boolean> =>
+	access(path).then(
+		() => true,
+		() => false,
+	);
+
+/**
+ * `resolveCliMainPath` without blocking the event loop: the per-session tool child (senpi#3566) resolves its entry on
+ * the RPC session path, where a synchronous read is not allowed. Same decision, same order.
+ */
+export async function resolveCliMainPathAsync(
+	modulePath: string = fileURLToPath(import.meta.url),
+	bundled: boolean = isBundledNode,
+): Promise<string> {
+	const declared = bundled ? await resolveDeclaredCliEntryAsync(modulePath) : undefined;
+	if (declared !== undefined) return declared;
+	const extension = modulePath.endsWith(".ts") ? ".ts" : ".js";
+	const unbundled = resolve(dirname(modulePath), "..", "..", `cli-main${extension}`);
+	if (await existsAsync(unbundled)) return unbundled;
+	return (await resolveDeclaredCliEntryAsync(modulePath)) ?? unbundled;
+}
+
+async function resolveDeclaredCliEntryAsync(modulePath: string): Promise<string | undefined> {
+	let dir = dirname(modulePath);
+	for (let depth = 0; depth < 8; depth += 1) {
+		const manifestPath = resolve(dir, "package.json");
+		if (await existsAsync(manifestPath)) {
+			try {
+				const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+					bin?: Record<string, string> | string;
+				};
+				const declaredBin = manifest.bin;
+				const candidates = typeof declaredBin === "string" ? [declaredBin] : Object.values(declaredBin ?? {});
+				for (const candidate of candidates) {
+					const entry = resolve(dir, candidate);
+					if (await existsAsync(entry)) return entry;
 				}
 			} catch {}
 			return undefined;

@@ -107,6 +107,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		idleExitMs: policy.coldStart === "persistent" ? Number.POSITIVE_INFINITY : policy.idleExitMs,
 		internalSocket,
 		...(internalSecret ? { internalSecret } : {}),
+		instanceId,
 		settled: () => state.shuttingDown,
 		onActivity: () => owner.activity(),
 	});
@@ -134,7 +135,12 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// death notification. Errors on it must not crash the supervisor.
 	child.stdio[HOST_CHILD_WATCH_FD]?.on("error", () => {});
 	// The CHILD's own identity, so a reader can tell "supervisor gone, child still running" apart.
-	if (child.pid !== undefined) void recordChildPid(generation.childPidFile, child.pid);
+	if (child.pid !== undefined)
+		void recordChildPid(
+			generation.childPidFile,
+			child.pid,
+			() => child.exitCode === null && child.signalCode === null,
+		);
 	child.once("exit", (code, signal) => {
 		// Recorded BEFORE any shutdown it triggers: `shutdown` ends in `process.exit`. A stop the
 		// supervisor is performing itself is recorded too, as the engine stop it is.
@@ -160,6 +166,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		child,
 		() => state.shuttingDown,
 		() => admission.stop(),
+		{ file: generation.childDrainRequestFile, sender: supervisorSender(instanceId) },
 	);
 	const server = createPublicProxy({
 		internalSocket,
@@ -240,8 +247,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 				() => {
 					state.endpointReplaced = true;
 				},
+				{ file: paths.pointerFile, instanceId },
 			),
 		);
+		watchers.push(await drain.acceptRequests(generation));
 	} catch (cause) {
 		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
 	}

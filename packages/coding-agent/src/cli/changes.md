@@ -1,3 +1,133 @@
+## 2026-10-19 - A bare - forces the piped-stdin read (senpi#3715)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: a bare `-` argument sets `Args.readStdin` instead of failing as `Unknown option: -`, and the help text documents it.
+
+### Why
+
+- Print mode now stops waiting for a silent stdin pipe after 2 s when a prompt argument is given (senpi#3715); `-` is the explicit way to wait for a slow producer anyway. Regression: `test/suite/regressions/issue-3715-print-stdin-open-pipe.test.ts`.
+
+### Why an extension could not handle it
+
+- Argument parsing runs before any extension loads, and a bare `-` was rejected there as an unknown short option.
+
+### Expected merge conflict zones
+
+- LOW: the `Args` field list, the short-option branch of `parseArgs`, and the `--print` help line.
+
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the help text says `PI_SHARE_VIEWER_URL` has no default and documents `PI_DISABLE_SHARE`.
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- LOW: the environment-variable list in `args.ts` help.
+
+## 2026-10-18 - --tool-runtime selects where heavy tool work runs (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: `Args.toolRuntime`, one parse branch for `--tool-runtime <in-process|child>` (an unknown value pushes the parse error "--tool-runtime must be in-process or child" and sets nothing) and one help line. The default and the `SENPI_TOOL_RUNTIME` fallback live in the fork-only `cli/tool-runtime.ts` (`resolveToolRuntime`), not here.
+
+### Why
+
+The per-session tool child (senpi#3566) needs one switch every mode reads. The flag is plumbing only in this step: it changes no execution.
+
+### Why an extension could not handle it
+
+CLI flags that the host process itself reads before any extension loads are parsed in core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the `Args` interface beside `sessionRuntime`, the parse switch beside `--session-runtime`, and the help block.
+
+## 2026-10-15 - senpi host session unload (senpi#3225)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-session-command.ts`: `unload <ref> [--interrupt] [--force] [--clear-queue] [--children refuse|detach]`.
+
+### Why
+
+The CLI reaches every host session command.
+
+### Why an extension could not handle it
+
+Host CLI parsing is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/host-session-command.ts`: the action list and parse switch.
+
+## 2026-10-13 - Treat a trailing print flag like an explicit mode after the retired command (senpi#3167)
+
+### What changed
+
+- `args.ts`: `--verbose app-server -p` now keeps `app-server` as the print prompt, exactly like `--verbose app-server --mode json`. The retired-command rejection applies only when neither an explicit mode nor print mode was requested.
+
+### Why
+
+The Opus review of #3223 found that the two explicit-mode spellings disagreed: a trailing `--mode` kept the prompt, while a trailing `-p` rejected it.
+
+### Why an extension could not handle it
+
+Argument parsing runs before any extension loads, so only the CLI parser can decide whether a positional word is a prompt.
+
+### Expected merge conflict zones
+
+The retired-command check near the end of `parseArgs` in `args.ts`.
+
+## 2026-10-13 - Reject retired commands after leading options (senpi#3167)
+
+### What changed
+
+Reject an implicit app-server command after recognized leading options before it can become a model prompt. Keep explicit modes, including a mode supplied after the positional argument, explicit print values, delimiter-separated text, option values and non-command prompt tokens unchanged.
+
+### Why
+
+The initial retirement guard checked only the first raw argument, so a former invocation such as `--verbose app-server` could silently become a prompt.
+
+### Why an extension could not handle it
+
+Argument rejection must happen before model-runtime or extension initialization.
+
+### Expected merge conflict zones
+
+The positional and final-validation branches in `args.ts`, and the focused `3167-retired-app-server.test.ts` regression cases.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Reject the retired app-server command before runtime creation, remove its lazy dispatch and help entries, and drop its project-trust mode conversion. Explicit prompt text and Native RPC arguments retain their normal parsing.
+
+- `packages/coding-agent/src/cli/args.ts`
+- `packages/coding-agent/src/cli/deferred-commands.ts`
+- `packages/coding-agent/src/cli/project-trust.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-10 - Session control CLI over the shared host (senpi#3073)
 
 ### What changed

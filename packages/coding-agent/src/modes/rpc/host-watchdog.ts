@@ -30,8 +30,14 @@ export const HOST_SCRATCH_DIR_ENV = "SENPI_RPC_HOST_SCRATCH_DIR";
 export const HOST_PUBLIC_SOCKET_ENV = "SENPI_RPC_HOST_PUBLIC_SOCKET";
 /** Fallback binding when no inherited fd is available: poll this pid. */
 export const HOST_WATCH_PPID_ENV = "SENPI_RPC_HOST_WATCH_PPID";
-/** Poll cadence for the ppid fallback. */
+/** Poll cadence for the ppid fallback when it is the only binding. */
 export const HOST_WATCH_PPID_INTERVAL_MS = 250;
+/**
+ * Poll cadence for the ppid check while the inherited pipe is armed (senpi#3738). EOF on the pipe is
+ * the primary signal and arrives from kqueue/epoll at once; the ppid check then only backs it up, so
+ * an idle host does not wake four times a second for a signal the pipe already delivers.
+ */
+export const HOST_WATCH_PPID_BACKUP_INTERVAL_MS = 5_000;
 export const HOST_CLEANUP_PATHS_ENV = "SENPI_RPC_HOST_CLEANUP_PATHS";
 
 export interface HostWatchdogConfig {
@@ -144,8 +150,19 @@ export function armHostWatchdog(
 	const disarm = (): void => {
 		for (const stop of disarmers.splice(0)) stop();
 	};
-	if (config.fd !== undefined) disarmers.push(watchFdForEof(config.fd, fire));
-	if (config.ppid !== undefined) disarmers.push(watchPpid(config.ppid, fire));
+	const ppid = config.ppid;
+	let stopPpid: (() => void) | undefined;
+	const armPpid = (intervalMs: number): void => {
+		if (ppid === undefined) return;
+		stopPpid?.();
+		stopPpid = watchPpid(ppid, fire, intervalMs);
+	};
+	disarmers.push(() => stopPpid?.());
+	// A pipe that cannot be read (never inherited, or failed later) leaves the ppid check as the only
+	// binding, so it goes back to the fast cadence.
+	const pipeArmed =
+		config.fd !== undefined && watchFdForEof(config.fd, fire, disarmers, () => armPpid(HOST_WATCH_PPID_INTERVAL_MS));
+	armPpid(pipeArmed ? HOST_WATCH_PPID_BACKUP_INTERVAL_MS : HOST_WATCH_PPID_INTERVAL_MS);
 	return disarm;
 }
 
@@ -162,7 +179,12 @@ export function armHostWatchdog(
  * handoff) would hang in exit until something killed it. With a socket the same EOF arrives from
  * kqueue/epoll and nothing holds the exit.
  */
-function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
+function watchFdForEof(
+	fd: number,
+	fire: (reason: string) => void,
+	disarmers: Array<() => void>,
+	onUnavailable: () => void,
+): boolean {
 	let stream: Socket;
 	let streamFailed = false;
 	let fired = false;
@@ -175,7 +197,7 @@ function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
 		// The watchdog owns this inherited read end; destroying the socket releases it.
 		stream = new Socket({ fd, readable: true, writable: false });
 	} catch {
-		return () => {};
+		return false;
 	}
 	stream.resume();
 	const onEnd = (): void => fireOnce(`supervisor pipe fd ${fd} closed`);
@@ -184,18 +206,20 @@ function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
 	};
 	const onError = (): void => {
 		streamFailed = true;
+		onUnavailable();
 	};
 	stream.once("end", onEnd);
 	// Win32 pipe teardown may report close without end; POSIX invalid-fd close is
 	// not supervisor death and remains inert.
 	if (process.platform === "win32") stream.once("close", onClose);
 	stream.once("error", onError);
-	return () => {
+	disarmers.push(() => {
 		stream.off("end", onEnd);
 		stream.off("close", onClose);
 		stream.off("error", onError);
 		stream.destroy();
-	};
+	});
+	return true;
 }
 
 /**
@@ -203,7 +227,7 @@ function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
  * to init because the supervisor died. Polling covers the case where no extra
  * fd could be inherited.
  */
-function watchPpid(supervisorPid: number, fire: (reason: string) => void): () => void {
+function watchPpid(supervisorPid: number, fire: (reason: string) => void, intervalMs: number): () => void {
 	// Tests and embedders may bind the watchdog to this process itself; that
 	// is a valid live binding rather than evidence of supervisor loss.
 	if (supervisorPid === process.pid) return () => {};
@@ -218,7 +242,7 @@ function watchPpid(supervisorPid: number, fire: (reason: string) => void): () =>
 		if (process.ppid !== supervisorPid) {
 			fire(`supervisor pid ${supervisorPid} is gone (ppid=${process.ppid})`);
 		}
-	}, HOST_WATCH_PPID_INTERVAL_MS);
+	}, intervalMs);
 	timer.unref?.();
 	return () => clearInterval(timer);
 }

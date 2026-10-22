@@ -59,6 +59,8 @@ export interface HostStatusReport {
 	readonly zombies: number | null;
 	readonly rss_mb: number | null;
 	readonly host_rss_mb: number | null;
+	/** The supervisor's and host's memory footprint (`phys_footprint` / `RssAnon`), which RSS understates (senpi#3110). */
+	readonly host_footprint_mb: number | null;
 	readonly open_fds: number | null;
 	/**
 	 * Whether the ANSWERING generation's memory sampler reads pressure right now (RSS above
@@ -157,6 +159,7 @@ export async function probeHostStatus(
 		zombies: metrics.zombies,
 		rss_mb: metrics.rss_mb,
 		host_rss_mb: metrics.host_rss_mb,
+		host_footprint_mb: metrics.host_footprint_mb,
 		open_fds: metrics.open_fds,
 		memory_pressure: host?.memory_pressure ?? null,
 		env_keys: await readDaemonEnvKeys(paths),
@@ -219,4 +222,10 @@ export function hostSummary(host: HostProtocolInfo | undefined): Record<string, 
 	};
 }
 
-const UNOBSERVED_METRICS: HostProcessMetrics = { rss_mb: null, host_rss_mb: null, open_fds: null, zombies: null };
+const UNOBSERVED_METRICS: HostProcessMetrics = {
+	rss_mb: null,
+	host_rss_mb: null,
+	host_footprint_mb: null,
+	open_fds: null,
+	zombies: null,
+};

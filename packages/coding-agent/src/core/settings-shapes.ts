@@ -12,6 +12,12 @@ export interface PromptCacheSettings {
 	keepAlive?: PromptCacheKeepAliveSettings;
 }
 
+export interface HandoffHintSettings {
+	enabled?: boolean; // default: true (offer "start fresh with a handoff" when a large session's cache has expired)
+	minContextTokens?: number; // default: 200000 (no hint below this context size)
+	minSavingUsd?: number; // default: 1 (no hint unless a fresh session saves at least this much on the next reply)
+}
+
 export type TodoFirstTurnPlan = "force" | "remind" | "off";
 
 export interface TodoSettings {
@@ -60,4 +66,9 @@ export interface OpenAISettings {
 
 export interface ProviderConcurrencySettings {
 	maxConcurrency?: number; // default: unlimited; 0 disables the cap
+}
+
+export interface TurnDeadlineSettings {
+	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; renewed only by tool execution events and admitted user input
+	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables; hard cap from prompt accept
 }

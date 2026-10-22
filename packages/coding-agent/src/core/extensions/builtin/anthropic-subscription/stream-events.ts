@@ -93,6 +93,12 @@ function closeContentBlock(context: StreamEventContext, event: Extract<StreamEve
 
 export function applyStreamEvent(context: StreamEventContext, event: StreamEvent): void {
 	if (event.type === "message_start") {
+		// Turn identity (oh-my-openagent#10547): a senpi assistant message is one Anthropic response, because the
+		// SDK turn ends at the first tool_use (PreToolUse deny hook) and tool-less requests run maxTurns 1. Its
+		// `message.id` is the id Claude Code writes as `message.id` on every transcript line of that response, so
+		// usage readers pair the two stores by it. The first id wins on every lane (here and the SDK `assistant`
+		// branch in stream.ts), so both lanes always record the same id.
+		context.output.responseId ??= event.message.id || undefined;
 		updateUsage(context.model, context.output, event.message.usage);
 	} else if (event.type === "content_block_start") {
 		startContentBlock(context, event);

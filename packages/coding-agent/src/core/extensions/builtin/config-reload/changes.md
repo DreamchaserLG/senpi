@@ -1,5 +1,24 @@
 # config-reload Extension Changes
 
+## 2026-10-19 - Quit does not wait on watch-worker teardown (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`: on `reason: "quit"`, `session_shutdown` cancels the watches as before but no longer awaits their disposal; failures that arrive later go to the config-reload log as `watcher_error` with path `shutdown`. Reload, new, resume and fork still join it.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/watch-event-source.ts`: the last unsubscribe calls `worker.unref()` before `terminate()`.
+
+### Why
+
+- `terminate()` returns only when the worker's current native call returns, so a worker busy in watch setup held quit until the 10 s handler cap (senpi#3711). On Bun 1.4.3 a worker blocked for 4 s made `await terminate()` take 3918 ms, while `unref()` + `terminate()` + `process.exit` took 132 ms, also with a live recursive FSEvents watch in the worker, so the #1656 exit hang does not recur with watches in the worker. On an RPC host that keeps running after closing a session, the watches are already cancelled synchronously and the unref'd worker finishes stopping on its own.
+
+### Why an extension could not handle it
+
+- The event source and its worker lifecycle are internal to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` `session_shutdown` and the helper after it; `watch-event-source.ts` `RecursiveWatchWorker` and the last-unsubscribe branch.
+
 ## 2026-10-12 - Routine config keys exclude migrated state (senpi#3178)
 
 ### What changed

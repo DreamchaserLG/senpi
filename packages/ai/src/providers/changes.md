@@ -1,3 +1,77 @@
+## 2026-10-16 - Xiaomi MiMo compat covers mimo-v2.6-pro (senpi v2026.10.16 release)
+
+### What changed
+
+- `packages/ai/src/providers/all.ts`: the Xiaomi MiMo compat normalization (reasoning content on assistant messages, DeepSeek thinking format, thinking cannot be disabled) applies to `mimo-v2.6-pro` as well as `mimo-v2.5-pro`.
+
+### Why
+
+- `packages/ai/src/providers/all.ts`: models.dev marked `mimo-v2.5-pro` deprecated, so a regenerated catalog drops it and `mimo-v2.6-pro` becomes the xiaomi default. Its generated entry already carries the same compat; the normalization keeps that guaranteed if a future regeneration loses it.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/providers/all.ts`: built-in model normalization runs when the bundled catalog is loaded, before any extension.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/all.ts`: `normalizeBuiltinModel` and the Xiaomi provider/id sets above it.
+
+## 2026-10-15 - Faux provider reports configurable response headers (senpi#3370)
+
+### What changed
+
+`RegisterFauxProviderOptions.responseHeaders` sets the headers every scripted response reports through `onResponse` (default none, unchanged behaviour).
+
+- `packages/ai/src/providers/faux.ts`
+
+### Why
+
+Tests of code that reads provider response headers (subscription limit windows) need a provider that sends them, without a network call.
+
+### Why an extension could not handle it
+
+The faux provider is the in-tree test transport; an extension cannot change what it passes to `onResponse`.
+
+### Expected merge conflict zones
+
+The `onResponse` calls in the faux core and the options interface.
+
+## 2026-10-14 - OpenCode Go registers the Google Generative AI transport (senpi#3342)
+
+### What changed
+
+- `packages/ai/src/providers/opencode-go.ts`: `opencodeGoProvider()` registers `google-generative-ai` (`withOpenCodeSessionHeader(googleGenerativeAIApi())`) beside its Anthropic Messages and OpenAI Completions/Responses transports, the same registration the OpenCode Zen provider (`opencode.ts`) already has. The provider's API union gains `google-generative-ai`.
+
+### Why
+
+- The refreshed models.dev catalog lists an OpenCode Go model in a `google-generative-ai` API group. Without a transport for it the typed catalog no longer fit the provider (TS2322), main stopped type-checking, and the v2026.10.14 release could not be cut. Registering the transport gives that model a working route instead of filtering it out.
+
+### Why an extension could not handle it
+
+- The builtin provider factory owns its transport map; an extension can register a separate provider but cannot add a transport to a builtin provider's catalog models.
+
+### Expected merge conflict zones
+
+- LOW: the import block, the API type union, and the `api` map of `opencodeGoProvider()`.
+
+## 2026-10-14 - The direct anthropic provider offers no Claude subscription OAuth (senpi#3259)
+
+### What changed
+
+- `packages/ai/src/providers/anthropic.ts`: `anthropicProvider()` no longer registers the "Anthropic (Claude Pro/Max)" OAuth method; it keeps API-key, `ANTHROPIC_AUTH_TOKEN`, env and workload-identity auth. Claude subscriptions sign in through the coding-agent `anthropic-subscription` lane, which runs the same OAuth flow (`loadAnthropicOAuth`) behind the Claude Agent SDK.
+
+### Why
+
+- Anthropic bills a Claude subscription token sent straight to the Messages API as a third-party app: every request is refused with "Third-party apps now draw from your extra usage, not your plan limits", so a user who signed in this way could never use their plan (senpi#3259). The Agent SDK lane runs requests through Claude Code, the path that draws from plan limits.
+
+### Why an extension could not handle it
+
+- Login surfaces (TUI `/login`, RPC `get_auth_providers`, `AuthStorage.getOAuthProviders()`) enumerate `builtinProviders()` auth methods directly; an extension can add a provider but cannot remove a builtin provider's OAuth method.
+
+### Expected merge conflict zones
+
+- LOW: the `auth` block of `anthropicProvider()` and its two OAuth imports.
+
 ## 2026-10-11 - Keep unverified xAI search opt-in (senpi#3122 review)
 
 ### What changed

@@ -1,3 +1,135 @@
+## 2026-10-21 - AssistantMessage.failureSource (senpi#3866)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `failureSource?: "local"`.
+
+### Why
+
+- A run can fail in local code (the session's pending-input journal, a local file) with no provider request involved. The agent marks that failure so a session never retries the model or walks the fallback chain on it (omo#10781).
+
+### Why an extension could not handle it
+
+- `AssistantMessage` is the public message contract in `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: after `abortSource` in `AssistantMessage` in `packages/ai/src/types.ts`.
+
+## 2026-10-18 - AnthropicMessagesCompat.supportsGzipRequestBody (senpi#3643)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AnthropicMessagesCompat` gains optional `supportsGzipRequestBody`.
+
+### Why
+
+- Lets a model or provider opt in or out of gzip request bodies (senpi#3643).
+
+### Why an extension could not handle it
+
+- The compat type is part of the public model contract in `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: the end of `AnthropicMessagesCompat` in `packages/ai/src/types.ts`.
+
+## 2026-10-17 - Export the provider credential env names (senpi#3531)
+
+### What changed
+
+- `packages/ai/src/env-api-keys.ts`: the provider-to-variable map is the module-level `API_KEY_ENV_VARS`, read by `getApiKeyEnvVars` exactly as before. New exports:
+  - `apiKeyEnvProviders()`: every provider id `getApiKeyEnvVars` maps.
+  - `providerCredentialEnvNames()`: every name `getEnvApiKey` can read, meaning those variables plus the Vertex ADC and Bedrock names.
+
+### Why
+
+senpi#3531: the RPC host daemon's environment allowlist was a separate hand-written list. It dropped credential names the lookup reads (`COPILOT_GITHUB_TOKEN`, `HF_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, every numbered slot), so a host never saw credentials a direct process used. The daemon now derives its list from these exports.
+
+### Why an extension could not handle it
+
+The map is private to `pi-ai`; a consumer can only enumerate it through an export.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/env-api-keys.ts`: the map moved out of `getApiKeyEnvVars`, and the two exports sit above it.
+
+## 2026-10-16 - Image generation results carry the provider diagnostic (omo#10285)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantImages` gains optional `providerDiagnostic`, the same bounded classification `AssistantMessage` already carries.
+- `packages/ai/src/api/openai-images.ts`: the SDK images call runs inside `awaitProviderTransport` with `openAICompatibleProviderDiagnosticFromError`, as the chat adapters' calls do, and a failed request sets `providerDiagnostic` from `readProviderDiagnostic(error)`.
+
+### Why
+
+The coding agent's `generate_image` tool needs the HTTP status of a rejected images request (404/405 means the provider has no images endpoint) to move past such a gateway. Reading it from the formatted `errorMessage` would be guessing from prose.
+
+### Why an extension could not handle it
+
+`AssistantImages` is the `pi-ai` result type; only the adapter that made the request sees the SDK error.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the `AssistantImages` field list, beside `errorMessage`.
+- `packages/ai/src/api/openai-images.ts`: the request callback and the `catch` block of `generateImages`.
+
+## 2026-10-15 - ProviderDiagnostic gains the network category and structured_transport evidence (senpi#3228)
+
+### What changed
+
+- `packages/ai/src/provider-diagnostic.ts`: `ProviderDiagnosticCategory` adds `network`; `ProviderDiagnosticEvidence` adds `structured_transport`; `sanitizeProviderDiagnostic` accepts a transport diagnostic only with no status and a code from the allowlist.
+
+### Why
+
+See `utils/changes.md` (senpi#3228): connection failures need a category clients can act on.
+
+### Why an extension could not handle it
+
+The diagnostic type and its boundary validation are part of the `pi-ai` contract.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/provider-diagnostic.ts`: the category and evidence unions and `sanitizeProviderDiagnostic`.
+
+## 2026-10-15 - Bill usage with the cost card in force (senpi#3378)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `ModelCostCard` (the rates plus `tiers`) and `ModelCostEffectiveRate` (`effectiveFrom` plus a card); `ModelCost` gains optional `effectiveRates`.
+- `packages/ai/src/models.ts`: `calculateCost(model, usage, atMs = Date.now())` bills with `costCardAt(model.cost, atMs)` and takes the tiers from that card.
+- `packages/ai/src/index.ts`: re-exports the new fork file `model-cost.ts` (`costCardAt`).
+
+### Why
+
+- senpi#3378: the provider moves the 2026-10-13 Argon model from $2/$10 to $4/$20 per 1M tokens on 2026-12-01 08:00Z. A single static card under-reports every request after that instant by 2x until a catalog refresh, and a session loaded before the refresh keeps the old card even after it.
+
+### Why an extension could not handle it
+
+- `calculateCost` is the single billing function every wire adapter calls; an extension cannot change how a builtin adapter bills.
+
+### Expected merge conflict zones
+
+- LOW: the first lines of `calculateCost`, the `ModelCost` interface block in `types.ts`, and the export list in `index.ts`.
+
+## 2026-10-14 - Map-less generation-4 rows offer only the levels the provider accepts (senpi#3292 review)
+
+### What changed
+
+- `packages/ai/src/models.ts`: new `inferThinkingLevelMap` returns the row's own map, else the OpenAI inference, else `inferGoogleThinkingLevelMap` from the fork-only `packages/ai/src/google-thinking-generation.ts`. `getSupportedThinkingLevels` reads it, so a generation-4-or-later Google row without a `thinkingLevelMap` offers only `low`, `medium` and `high`, and `clampThinkingLevel` raises `off` and `minimal` to `low`.
+
+### Why
+
+Custom `models.json` and discovered rows usually carry no map. Before this, such a row still offered `off` (sent as a zero budget) and `minimal`, both rejected with HTTP 400; the review of #3293 found the fix only worked for rows that shipped a map.
+
+### Why an extension could not handle it
+
+Supported levels and clamping are computed in the core model runtime before any adapter or extension sees the request.
+
+### Expected merge conflict zones
+
+- LOW: the import block of `packages/ai/src/models.ts` and the line in `getSupportedThinkingLevels` that reads the inferred map.
+
 ## 2026-10-11 - Usage-limit advice retains structured cause (senpi#3131 review)
 
 ### What changed

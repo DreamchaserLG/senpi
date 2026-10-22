@@ -214,6 +214,9 @@ export function streamAnthropicSubscription(
 						{ model, output, blocks, stream, customToolNameToPi: resolvedTools.customToolNameToPi },
 						message.event,
 					);
+				} else if (message.type === "assistant") {
+					// Same first-id-wins turn identity as applyStreamEvent's message_start (oh-my-openagent#10547).
+					output.responseId ??= message.message.id || undefined;
 				} else if (message.type === "system" && message.subtype === "compact_boundary") {
 					// The query was started with native auto-compact off: a boundary here means Claude
 					// Code compacted anyway. Fail the turn loudly instead of letting a second owner

@@ -2,6 +2,7 @@ import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { omitInlineMedia } from "./media-placeholders.ts";
 import { SocketEventSinkActor } from "./socket-event-fanout.ts";
+import { EVENT_RESYNC_CAPABILITY, type ResyncReason, type RpcSessionResyncRequired } from "./socket-peer-recovery.ts";
 
 export type RawWriter = (chunk: string) => void;
 export type BackpressureWaiter = () => Promise<void>;
@@ -126,6 +127,12 @@ export class SessionEventFanout {
 		if (!registered) return;
 		this.connectionCapabilities.set(id, new Set(capabilities));
 		this.registeredCapabilityConnections.add(id);
+		if (capabilities.includes(EVENT_RESYNC_CAPABILITY)) {
+			registered.actor.enableRecovery((reason) => {
+				const attached = [...(this.connectionSessions.get(id) ?? [])];
+				return () => this.resyncSnapshot(id, reason, attached);
+			});
+		} else registered.actor.disableRecovery();
 	}
 
 	clearConnectionCapabilities(id: string): void {
@@ -180,6 +187,19 @@ export class SessionEventFanout {
 		for (const { actor } of this.connections.values()) actor.enqueue(line);
 	}
 
+	connectionIds(): readonly string[] {
+		return [...this.connections.keys()];
+	}
+
+	attachedConnections(sessionId: string): readonly string[] {
+		return [...this.connections.keys()].filter((id) => this.connectionSessions.get(id)?.has(sessionId));
+	}
+
+	/** Pending `question` frames a session has asked and nobody answered yet. */
+	pendingQuestionCount(sessionId: string): number {
+		return this.pendingQuestions.get(sessionId)?.size ?? 0;
+	}
+
 	/** Deliver one line to the connections attached to a session, never to the rest of the fanout. */
 	deliverToSession(sessionId: string, line: string): void {
 		for (const [id, { actor }] of this.connections)
@@ -229,5 +249,25 @@ export class SessionEventFanout {
 		const placeholders = this.connectionHas(id, MEDIA_PLACEHOLDERS_CAPABILITY);
 		for (const record of this.sessionSnapshots.get(sessionId) ?? [])
 			actor.enqueue(placeholders ? snapshotPlaceholderLine(record) : record.line);
+	}
+
+	private resyncSnapshot(id: string, reason: ResyncReason, attached: readonly string[]): readonly object[] {
+		const placeholders = this.connectionHas(id, MEDIA_PLACEHOLDERS_CAPABILITY);
+		const current = this.connectionSessions.get(id) ?? new Set<string>();
+		return [...new Set([...attached, ...current])].map((sessionId) => {
+			const records = this.sessionSnapshots.get(sessionId) ?? [];
+			const latest = records.findLast((record) => record.source?.message != null);
+			// The producer may mutate its partial object after emission. The serialized
+			// record, not that object, fixes the recovery cut before later deltas enqueue.
+			const frozen: unknown = latest === undefined ? undefined : JSON.parse(latest.line);
+			const record: RpcSessionResyncRequired = {
+				type: "resync_required",
+				sessionId,
+				reason,
+				message: typeof frozen === "object" && frozen !== null && "message" in frozen ? frozen.message : null,
+				...(!current.has(sessionId) ? { closed: true as const } : {}),
+			};
+			return placeholders ? omitInlineMedia(record) : record;
+		});
 	}
 }

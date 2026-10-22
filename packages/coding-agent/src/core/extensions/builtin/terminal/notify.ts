@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "../../types.ts";
 import { sanitizeTerminalOutput } from "./output-format.ts";
-import type { TerminalRuntimeSession } from "./runtime-session.ts";
 import type { NotifyMode } from "./settings.ts";
+import type { TerminalExitView } from "./tools/context.ts";
 import { describeExit } from "./tools/spawn.ts";
 
 /** Modes that never wake the agent: one-shot, non-interactive runs. */
@@ -51,7 +51,7 @@ export function getTerminalNotificationDelivery(
 	};
 }
 
-function buildNotice(id: string, runtime: TerminalRuntimeSession): string {
+function buildNotice(id: string, runtime: TerminalExitView): string {
 	const status = describeExit(runtime) ?? "exited";
 	const code = runtime.exitResult?.exitCode;
 	const codeText = code === null || code === undefined ? "" : ` (exit code ${code})`;
@@ -83,7 +83,7 @@ export class TerminalNotifier {
 		this.deps = deps;
 	}
 
-	notifyCompletion(id: string, runtime: TerminalRuntimeSession): void {
+	notifyCompletion(id: string, runtime: TerminalExitView): void {
 		if (this.notified.has(id)) return;
 		const delivery = getTerminalNotificationDelivery(this.deps);
 		if (!delivery) return;

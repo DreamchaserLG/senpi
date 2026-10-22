@@ -51,7 +51,9 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		disposed = true;
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
-		await runtimeHost.dispose();
+		// Print mode ends right after: a signal calls process.exit, and the normal path returns to main, whose
+		// process exits once the loop drains (handles extensions leave open are reclaimed at shutdown, senpi#2292).
+		await runtimeHost.dispose({ processExit: true });
 	};
 
 	const registerSignalHandlers = (): void => {

@@ -37,7 +37,12 @@ import {
 	compactionReserveTokens,
 } from "./compaction-settings-access.ts";
 import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
-import { MAX_ENGINE_TURNS_PER_USER_INPUT, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW } from "./engine-turn-limit.ts";
+import type { ContextFileLimits } from "./context-files.ts";
+import {
+	MAX_ENGINE_TURNS_PER_RESUME_WINDOW,
+	MAX_ENGINE_TURNS_PER_USER_INPUT,
+	MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW,
+} from "./engine-turn-limit.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import {
 	CredentialStoreBusyError,
@@ -71,6 +76,7 @@ import {
 	ASK_USER_MAX_TIMEOUT_MINUTES,
 	ASK_USER_MIN_TIMEOUT_MINUTES,
 	type AskUserSettings,
+	type HandoffHintSettings,
 	type ImageSettings,
 	type LookAtSettings,
 	type MarkdownSettings,
@@ -114,6 +120,18 @@ export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
  * hung handler still must not hold quit/reload/new/resume hostage.
  */
 export const DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS = 10_000;
+/**
+ * Total wait across every `session_shutdown` handler when the process quits (senpi#3711). Above the OmO memory
+ * extension's own 1500 ms shutdown drain, whose first step flushes the memory journal.
+ */
+export const DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS = 2_000;
+/** Warn threshold for one handler of an agent lifecycle event the session awaits before persisting (senpi#3650). */
+export const DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS = 60_000;
+/**
+ * Hard cap for one such handler. Above the 15 min summarization budget a blocking compaction in a `message_end`
+ * handler may legitimately use; past it the host stops waiting so the turn is persisted and queued input delivered.
+ */
+export const DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS = 1_200_000;
 
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
@@ -192,6 +210,7 @@ export interface Settings {
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
 	compaction?: CompactionSettings & { model?: string };
+	contextFiles?: ContextFileLimits;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
 	fallback?: FallbackCircuitSettings;
@@ -210,6 +229,7 @@ export interface Settings {
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
 	enableAnalytics?: boolean; // default: false - opt-in analytics data sharing
+	enableSessionShare?: boolean; // default: true - false removes /share (global or project setting)
 	trackingId?: string; // analytics tracking identifier, generated when analytics is enabled
 	deviceId?: string; // stable UUID of this installation, created when a login first needs it; global setting only
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
@@ -224,11 +244,14 @@ export interface Settings {
 	maxSkillExpansionsPerPrompt?: number; // default: 5 - distinct skills one prompt may expand
 	terminal?: TerminalSettings;
 	promptCache?: PromptCacheSettings;
+	handoffHint?: HandoffHintSettings;
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;
 	/** Bounds on turns the engine starts without a user message (senpi#2967). */
-	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number };
+	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number; maxPerResumeWindow?: number };
+	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
+	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables
 	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
@@ -250,6 +273,9 @@ export interface Settings {
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
 	sessionShutdownHandlerWarnMs?: number; // Warn when one session_shutdown extension handler runs this long; 0 disables the warning
 	sessionShutdownHandlerTimeoutMs?: number; // Abort and skip a session_shutdown extension handler after this long; 0 disables the cap
+	sessionShutdownQuitBudgetMs?: number; // Total wait across all session_shutdown handlers on quit; 0 disables the total budget
+	extensionEventHandlerWarnMs?: number; // Report an agent lifecycle extension handler still running after this long; 0 disables the warning
+	extensionEventHandlerTimeoutMs?: number; // Stop waiting on an agent lifecycle extension handler after this long; 0 disables the cap
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
@@ -478,6 +504,8 @@ export function getInMemorySettingsPath(scope: SettingsScope): string {
 
 export interface SettingsManagerCreateOptions {
 	projectTrusted?: boolean;
+	/** The project trust exists only because the session runs Full access (senpi#3414): leaving it withdraws the trust. */
+	trustFromFullAccess?: boolean;
 }
 
 export interface SettingsStorage {
@@ -834,7 +862,7 @@ export class SettingsManager {
 			initialErrors.push(toSettingsError("project", projectLoad.error, settingsPaths.project));
 		}
 
-		return new SettingsManager(
+		const manager = new SettingsManager(
 			storage,
 			globalLoad.settings,
 			projectLoad.settings,
@@ -845,6 +873,8 @@ export class SettingsManager {
 			initialSources,
 			settingsPaths,
 		);
+		manager.trustFromFullAccess = options.trustFromFullAccess === true;
+		return manager;
 	}
 
 	/** Create an in-memory SettingsManager (no file I/O) */
@@ -1087,14 +1117,23 @@ export class SettingsManager {
 		};
 	}
 
-	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number } {
+	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number; maxPerResumeWindow: number } {
 		const configured = this.settings.engineTurns;
 		const limit = (value: unknown, fallback: number): number =>
 			typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback;
 		return {
 			maxPerUserInput: limit(configured?.maxPerUserInput, MAX_ENGINE_TURNS_PER_USER_INPUT),
+			maxPerResumeWindow: limit(configured?.maxPerResumeWindow, MAX_ENGINE_TURNS_PER_RESUME_WINDOW),
 			maxToolFreePerMinute: limit(configured?.maxToolFreePerMinute, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW),
 		};
+	}
+
+	getTurnInactivityMs(): number | undefined {
+		return this.settings.turn_inactivity_ms;
+	}
+
+	getTurnMaxRuntimeMs(): number | undefined {
+		return this.settings.turn_max_runtime_ms;
 	}
 
 	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
@@ -1111,12 +1150,35 @@ export class SettingsManager {
 		return this.projectTrusted;
 	}
 
+	/**
+	 * True when this session's project trust came only from its Full access preset (never asked, never
+	 * saved): leaving Full access withdraws it, and going back restores it (senpi#3414, #3420).
+	 */
+	private trustFromFullAccess = false;
+
+	isTrustFromFullAccess(): boolean {
+		return this.trustFromFullAccess && this.projectTrusted;
+	}
+
+	/** True when a Full-access-only trust was withdrawn in this session and Full access may restore it. */
+	canRestoreFullAccessTrust(): boolean {
+		return this.trustFromFullAccess && !this.projectTrusted;
+	}
+
+	/** Counts project-trust changes; a reload compares it before installing what it loaded (#3420). */
+	private trustEpoch = 0;
+
+	getTrustEpoch(): number {
+		return this.trustEpoch;
+	}
+
 	setProjectTrusted(trusted: boolean): void {
 		if (this.projectTrusted === trusted) {
 			return;
 		}
 
 		this.projectTrusted = trusted;
+		this.trustEpoch += 1;
 		this.modifiedProjectFields.clear();
 		this.modifiedProjectNestedFields.clear();
 
@@ -1837,6 +1899,42 @@ export class SettingsManager {
 		this.save();
 	}
 
+	/**
+	 * Total time the host waits on all `session_shutdown` handlers together when the
+	 * process quits; each handler's own cap still applies inside it. 0 disables it.
+	 */
+	getSessionShutdownQuitBudgetMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.sessionShutdownQuitBudgetMs, "sessionShutdownQuitBudgetMs") ??
+			DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS
+		);
+	}
+
+	setSessionShutdownQuitBudgetMs(budgetMs: number): void {
+		if (!Number.isFinite(budgetMs) || budgetMs < 0) {
+			throw new Error(`Invalid sessionShutdownQuitBudgetMs setting: ${String(budgetMs)}`);
+		}
+		this.globalSettings.sessionShutdownQuitBudgetMs = Math.floor(budgetMs);
+		this.markModified("sessionShutdownQuitBudgetMs");
+		this.save();
+	}
+
+	/** How long one agent lifecycle event handler may run before the host reports it as stalled. 0 disables. */
+	getExtensionEventHandlerWarnMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.extensionEventHandlerWarnMs, "extensionEventHandlerWarnMs") ??
+			DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS
+		);
+	}
+
+	/** Hard cap on one agent lifecycle event handler; past it the session's event queue moves on. 0 disables. */
+	getExtensionEventHandlerTimeoutMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.extensionEventHandlerTimeoutMs, "extensionEventHandlerTimeoutMs") ??
+			DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS
+		);
+	}
+
 	getProviderRetrySettings(): {
 		timeoutMs?: number;
 		maxRetries?: number;
@@ -2124,6 +2222,10 @@ export class SettingsManager {
 		this.globalSettings.enableInstallTelemetry = enabled;
 		this.markModified("enableInstallTelemetry");
 		this.save();
+	}
+
+	getEnableSessionShare(): boolean {
+		return this.settings.enableSessionShare ?? true;
 	}
 
 	getEnableAnalytics(): boolean {

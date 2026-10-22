@@ -25,6 +25,7 @@ const STATUS_FIELDS = [
 	"generation",
 	"generations",
 	"handover",
+	"host_footprint_mb",
 	"host_rss_mb",
 	"instanceId",
 	"launchProfile",
@@ -141,6 +142,8 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 			generation: 0,
 		});
 		expect(Object.keys(status.sessions as Record<string, unknown>).sort()).toEqual(SESSION_COUNT_FIELDS);
+		// The host's own footprint, the number its sampler acts on; RSS hides compressed and swapped pages (senpi#3110).
+		expect(status.host_footprint_mb).toBeGreaterThan(0);
 		expect(status.sessions).toEqual({
 			total: 0,
 			interactive: 0,

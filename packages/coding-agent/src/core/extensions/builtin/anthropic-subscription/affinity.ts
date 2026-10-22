@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { applyAccountOrder } from "@earendil-works/pi-ai/auth/pool/select";
 import { activeModelBlockUntil, pruneModelBlocks } from "../../../credential-pool/model-scope.ts";
 import type { AccountSlot } from "./accounts.ts";
 
@@ -8,15 +9,35 @@ export type AffinityOptions = {
 	affinityKey?: string;
 	sessionId?: string;
 	pinnedAccount?: string;
+	/** Where `pinnedAccount` came from, so guidance for an unusable pin says where to change it. */
+	pinSource?: PinSource;
 	/**
 	 * The account this session's SDK transcript lives under. It is kept while it can serve, so the
 	 * session does not move accounts and re-send its whole conversation (senpi#2891).
 	 */
 	preferredAccount?: string;
+	/** When false, a blocked pin, resident account, or HRW winner is never skipped. */
+	readonly accountFallback?: boolean;
+	/** The user's account order (senpi#3591): tried after the pin and the session's own account, before HRW. */
+	accountOrder?: readonly string[];
 	now?: number;
 	/** The requested model; an account blocked only for another model stays eligible for it. */
 	model?: string;
 };
+
+/**
+ * The one account a request may use when account fallback is off (senpi#3465): its name, and whether it
+ * is still configured. A pin or a session's resident account can name an account that was later removed.
+ */
+export type UnavailableAccount = {
+	readonly name: string;
+	readonly configured: boolean;
+	/** Set when the account is a pin: a CLI or settings pin outranks `/claude-account pin`, so that advice would do nothing. */
+	readonly pinnedBy?: PinSource;
+};
+
+/** The origin of an account pin, highest precedence first (`resolveClaudeAccountPin`). */
+export type PinSource = "cli" | "settings" | "stored";
 
 export class AllAccountsBlockedError extends Error {
 	readonly soonestUnblockAt: number | undefined;
@@ -32,8 +53,15 @@ export class AllAccountsBlockedError extends Error {
 	 * chain moves only this model and keeps the provider for the others.
 	 */
 	readonly limitedModel: string | undefined;
+	/** Set only when account fallback is off, so the guidance names that account instead of the whole pool. */
+	readonly unavailableAccount: UnavailableAccount | undefined;
 
-	constructor(soonestUnblockAt: number | undefined, blockReason?: "auth_error", limitedModel?: string) {
+	constructor(
+		soonestUnblockAt: number | undefined,
+		blockReason?: "auth_error",
+		limitedModel?: string,
+		unavailableAccount?: UnavailableAccount,
+	) {
 		const until = soonestUnblockAt === undefined ? undefined : new Date(soonestUnblockAt).toISOString();
 		super(
 			limitedModel !== undefined && until !== undefined
@@ -46,6 +74,7 @@ export class AllAccountsBlockedError extends Error {
 		this.name = "AllAccountsBlockedError";
 		this.soonestUnblockAt = soonestUnblockAt;
 		this.blockReason = blockReason;
+		this.unavailableAccount = unavailableAccount;
 	}
 }
 
@@ -69,7 +98,7 @@ export function rendezvousOrder(key: string, accounts: readonly AccountSlot[]): 
 }
 
 function isAccountBlocked(account: AccountSlot, now: number): boolean {
-	return account.blockReason === "auth_error" || (account.blockedUntil !== undefined && account.blockedUntil > now);
+	return account.blockedUntil !== undefined && account.blockedUntil > now;
 }
 
 /** Whether the account can serve `model` now: no account-level block and no live block on that model. */
@@ -77,12 +106,16 @@ export function isBlockedFor(account: AccountSlot, now: number, model?: string):
 	return isAccountBlocked(account, now) || activeModelBlockUntil(account.modelBlocks, model, now) !== undefined;
 }
 
-/** Removes elapsed rate/capacity blocks but deliberately retains auth blocks until login refreshes the slot. */
+/**
+ * Removes elapsed blocks, auth blocks included: an auth block lasts until its
+ * re-probe time (senpi#3264), and one persisted before re-probe times existed
+ * has no expiry and clears at once, so the next request probes the account.
+ */
 export function clearExpiredBlocks(accounts: readonly AccountSlot[], now = Date.now()): AccountSlot[] {
 	return accounts.map((account) => {
 		let available = account;
-		if (account.blockReason !== "auth_error" && account.blockedUntil !== undefined && account.blockedUntil <= now) {
-			const { blockedUntil: _blockedUntil, blockReason: _blockReason, ...rest } = account;
+		if (account.blockReason !== undefined && (account.blockedUntil === undefined || account.blockedUntil <= now)) {
+			const { blockedUntil: _blockedUntil, blockReason: _blockReason, blockedAt: _blockedAt, ...rest } = account;
 			available = rest;
 		}
 		if (available.modelBlocks === undefined) return available;
@@ -107,7 +140,7 @@ function selectUnblocked(
 			? undefined
 			: accounts.find((account) => account.name === options.preferredAccount);
 	if (preferred && !isBlockedFor(preferred, now, options.model)) return preferred;
-	return rendezvousOrder(getAffinityKey(options), accounts).find(
+	return applyAccountOrder(options.accountOrder, rendezvousOrder(getAffinityKey(options), accounts)).find(
 		(account) => !isBlockedFor(account, now, options.model),
 	);
 }
@@ -142,17 +175,34 @@ function limitedModel(accounts: readonly AccountSlot[], now: number, model: stri
 /** Selects a pinned or HRW-ranked account with no provider-global selection state. */
 export function selectAccount(accounts: readonly AccountSlot[], options: AffinityOptions = {}): AccountSlot {
 	const now = options.now ?? Date.now();
-	const selected = selectUnblocked(accounts, options, now);
+	let candidates = accounts;
+	let unavailableAccount: UnavailableAccount | undefined;
+	if (options.accountFallback === false) {
+		const name =
+			options.pinnedAccount ??
+			options.preferredAccount ??
+			applyAccountOrder(options.accountOrder, rendezvousOrder(getAffinityKey(options), accounts))[0]?.name;
+		candidates = accounts.filter((account) => account.name === name);
+		const pinnedBy = options.pinnedAccount !== undefined ? options.pinSource : undefined;
+		if (name !== undefined)
+			unavailableAccount = {
+				name,
+				configured: candidates.length > 0,
+				...(pinnedBy === undefined ? {} : { pinnedBy }),
+			};
+	}
+	const selected = selectUnblocked(candidates, options, now);
 	if (selected) return selected;
 
 	// A stale persisted rate-limit entry must not dead-end the pool. Retry once
 	// against the cleared view before reporting the earliest available account.
-	const cleared = clearExpiredBlocks(accounts, now);
+	const cleared = clearExpiredBlocks(candidates, now);
 	const afterClear = selectUnblocked(cleared, options, now);
 	if (afterClear) return afterClear;
 	throw new AllAccountsBlockedError(
-		soonestUnblockAt(accounts, now, options.model),
-		accounts.some((account) => account.blockReason === "auth_error") ? "auth_error" : undefined,
-		limitedModel(accounts, now, options.model),
+		soonestUnblockAt(candidates, now, options.model),
+		candidates.some((account) => account.blockReason === "auth_error") ? "auth_error" : undefined,
+		limitedModel(candidates, now, options.model),
+		unavailableAccount,
 	);
 }

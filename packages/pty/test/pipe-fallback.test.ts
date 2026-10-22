@@ -240,13 +240,29 @@ describe("PipeFallbackSession Windows process-tree cleanup", () => {
 });
 
 describe("terminateChildTree", () => {
+	it("never signals a child that never started", () => {
+		// senpi#3706: on Node < 24.22 / 26.10, kill() on a child without a pid signals the caller's own process group.
+		const signals: NodeJS.Signals[] = [];
+		const child = {
+			pid: undefined,
+			kill: (signal?: NodeJS.Signals) => {
+				signals.push(signal ?? "SIGTERM");
+				return true;
+			},
+		};
+
+		expect(terminateChildTree(child, "SIGTERM")).toBe("none");
+		expect(signals).toEqual([]);
+	});
+
 	it("falls back to a direct kill when no process-group signal is available", () => {
 		// The branch Windows always takes (and POSIX takes once the group is
 		// gone). Every stop path routes through here, so losing the fallback
 		// would leave timed-out children running forever.
 		const signals: NodeJS.Signals[] = [];
 		const child = {
-			pid: undefined,
+			// A pid above every platform's pid_max, so the group signal fails with ESRCH.
+			pid: 2 ** 22 + 1,
 			kill: (signal?: NodeJS.Signals) => {
 				signals.push(signal ?? "SIGTERM");
 				return true;

@@ -37,7 +37,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -112,7 +112,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Check
         run: npm run check
@@ -187,7 +187,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
@@ -229,7 +229,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install system dependencies
         run: |
@@ -321,8 +321,116 @@ jobs:
         run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
 
 
+  # senpi#3604: main-screen mouse tracking is gated on WT_SESSION on win32, and the ask-user hint
+  # names Windows Terminal's Shift selection bypass. Run the wheel-yield and hint tests on Windows.
+  tui-mouse-windows:
+    name: TUI mouse wheel and hint (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      - name: Run main-screen mouse tests
+        run: node ../../scripts/run-tests.mjs node --test --import tsx --import ./test/setup-multiplexer-env.mjs test/tui-main-screen-mouse.test.ts
+        working-directory: packages/tui
+
+      - name: Run ask-user widget mouse tests
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/ask-user-widget-mouse.test.ts
+        working-directory: packages/coding-agent
+
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
   # Durable scheduled prompts: rename claims, runner leases, ungated delivery locks, taskkill
   # timeouts and cmd.exe `--exec` hooks all behave differently on Windows.
+  # senpi#3566 todo 4 (Windows half): the tool child's Job Object containment against the real kernel32. These tests need
+  # bun:ffi, so vitest runs under Bun here; under Node they skip themselves, which the last step refuses.
+  tool-child-windows:
+    name: Tool child Job Object (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.3"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      - name: Run tool child Windows tests under Bun
+        shell: bash
+        run: node ../../scripts/run-tests.mjs bun --bun ../../node_modules/vitest/vitest.mjs run src/modes/rpc/tool-child/windows-job.win32.test.ts src/modes/rpc/tool-child/launch-barrier.win32.test.ts src/modes/rpc/tool-child/child-containment.test.ts src/modes/rpc/tool-child/windows-breakaway.test.ts src/modes/rpc/tool-child/windows-command-line.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tool-child-win32.json
+        working-directory: packages/coding-agent
+
+      # A skipped suite exits 0: fail unless both real-kernel files executed and every test in them passed.
+      - name: Require the real-kernel tests to have executed
+        shell: bash
+        run: |
+          for name in windows-job.win32.test.ts launch-barrier.win32.test.ts; do
+            node -e '
+              const r = JSON.parse(require("fs").readFileSync("vitest-tool-child-win32.json", "utf8"));
+              const file = r.testResults.find((t) => t.name.split("\\").join("/").endsWith(process.argv[1]));
+              const passed = file ? file.assertionResults.filter((a) => a.status === "passed").length : 0;
+              const other = file ? file.assertionResults.filter((a) => a.status !== "passed").length : 0;
+              console.log(process.argv[1] + " passed=" + passed + " other=" + other);
+              if (passed === 0 || other !== 0) process.exit(1);
+            ' "$name"
+          done
+        working-directory: packages/coding-agent
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Tool child Job Object (Windows)"
+            if [ -f vitest-tool-child-win32.json ]; then
+              node -e 'const r = JSON.parse(require("fs").readFileSync("vitest-tool-child-win32.json", "utf8")); console.log("- tests: " + r.numPassedTests + " passed, " + r.numFailedTests + " failed, " + r.numPendingTests + " skipped");'
+            else
+              echo "- no test report was written"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+        working-directory: packages/coding-agent
+
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
   schedule-windows:
     name: Scheduled prompts (Windows)
     runs-on: windows-latest
@@ -375,7 +483,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -409,8 +517,8 @@ jobs:
         run: node ../../scripts/run-tests.mjs vitest run test/suite/host-cli-win32.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
-      - name: Run app-server daemon tests
-        run: node ../../scripts/run-tests.mjs vitest run test/suite/app-server-daemon.test.ts --reporter=verbose
+      - name: Run shared process identity tests
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/process-identity.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       # endpoint.json written and read back on Windows paths: registry_version, endpoint_kind, and a
@@ -465,7 +573,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install archive tool
         shell: pwsh
@@ -532,7 +640,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -592,7 +700,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -637,7 +745,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -653,7 +761,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -722,7 +830,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -738,7 +846,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -808,7 +916,7 @@ jobs:
           python-version: "3.12.10"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Snapshot OS temp before tests
@@ -885,7 +993,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install system dependencies
         run: |
@@ -961,7 +1069,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -1012,10 +1120,13 @@ jobs:
         codemode-gate,
         test-coding-agent,
         rpc-owner-lifetime,
+        macos-combined,
         grep-native-contract,
         hooks-trust-storage-windows,
+        tui-mouse-windows,
         schedule-windows,
         rpc-windows,
+        tool-child-windows,
         compiled-extensions-windows,
         claude-executable-windows,
         webview-kernel,
@@ -1049,6 +1160,7 @@ jobs:
             echo "- codemode-gate: ${{ needs.codemode-gate.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
             echo "- rpc-owner-lifetime: ${{ needs.rpc-owner-lifetime.result }}"
+            echo "- macos-combined: ${{ needs.macos-combined.result }}"
             echo "- grep-native-contract: ${{ needs.grep-native-contract.result }}"
             echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
             echo "- schedule-windows: ${{ needs.schedule-windows.result }}"
@@ -1061,12 +1173,247 @@ jobs:
             echo "- test-workspaces: ${{ needs.test-workspaces.result }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # One runner per head, with an independent temp owner for each former macOS leg (#3130).
+  # WebView runs last: its SIGSTOP/SIGKILL Chrome tests can wedge hosted macOS runners (#2290).
+  macos-combined:
+    name: macOS combined
+    runs-on: macos-latest
+    # Former job budgets: 20 + 20 + 15 + 30 + 20 minutes, plus 15 for shared setup.
+    # Each part keeps its old job cap as step timeouts (the terminal part's two steps share its 30),
+    # so one hung part fails only itself; the job cap is the sum of part caps plus setup margin.
+    timeout-minutes: 115
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.3"
+
+      - name: Install dependencies and build workspace entries
+        id: install
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+
+      - name: Show the crash-handling environment
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern 2>/dev/null || sysctl -n kern.corefile 2>/dev/null || echo n/a)"
+          echo "ulimit -c: $(ulimit -c)"
+          ( bun -e 'process.kill(process.pid, "SIGSEGV")' >/dev/null 2>&1; echo "bun SIGSEGV exit status: $?" ) &
+          start=$(date +%s); wait; echo "bun SIGSEGV took $(( $(date +%s) - start ))s to exit"
+
+      # Process mode spawns its kernel child with bun on both platforms; a platform where the child cannot start
+      # (senpi#2706: a Linux spawn's stdout is a socket) fails here instead of shipping.
+
+      - name: Snapshot OS temp before tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        id: process_test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/process-test-temp-before.json --export-env
+
+      - name: Run the process-mode kernel suite
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.process_test_temp_snapshot.outcome == 'success' }}
+        id: process
+        timeout-minutes: 20
+        run: node ../../scripts/run-tests.mjs vitest run test/js-process-kernel.test.ts --reporter=verbose --reporter=json --outputFile=vitest-process.json
+        working-directory: packages/senpi-codemode
+
+      # Runs whatever the suite's outcome: a failed run is when a kernel child is most likely to leak.
+
+      - name: Fail on any orphaned kernel child
+        if: always() && steps.process_test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: |
+          orphans=$(ps -eo pid,ppid,command | grep '[p]rocess-entry.js' | awk '$2 == 1' || true)
+          if [ -n "$orphans" ]; then echo "$orphans"; echo "::error::kernel children outlived the suite"; exit 1; fi
+
+      - name: Require the process-mode suite to have executed
+        if: always() && steps.process_test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("vitest-process.json", "utf8"));
+            const results = r.testResults.flatMap((file) => file.assertionResults);
+            const passed = results.filter((a) => a.status === "passed").length;
+            const failed = results.filter((a) => a.status === "failed").length;
+            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed");
+            // A skip is allowed only for a Linux-only case off Linux (named, so a newly skipped test still fails here).
+            const linuxOnly = /When a Linux kernel child|SENPI_KERNEL_CORE_DUMPS=1|parent is a subreaper/;
+            const unexpected = skipped.filter((a) => process.platform === "linux" || !linuxOnly.test(a.title));
+            console.log("process-mode suite: passed=" + passed + " failed=" + failed + " skipped=" + skipped.length);
+            for (const a of unexpected) console.log("unexpected skip: " + a.title);
+            if (passed < 30 || failed !== 0 || unexpected.length !== 0) process.exit(1);
+          '
+        working-directory: packages/senpi-codemode
+
+      - name: Check OS temp after tests
+        if: always() && steps.process_test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/process-test-temp-before.json
+
+      - name: Require the POSIX exit-event compiler
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          command -v cc >/dev/null || { echo "::error::Missing C compiler 'cc' on PATH for POSIX process-exit tests"; exit 1; }
+          cc --version
+
+      - name: Snapshot OS temp before tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        id: rpc_test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/rpc-test-temp-before.json --export-env
+
+      - name: Supervisor owner, normal-stop and compiler regressions
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.rpc_test_temp_snapshot.outcome == 'success' }}
+        id: rpc
+        timeout-minutes: 15
+        working-directory: packages/coding-agent
+        run: >
+          node ../../scripts/run-tests.mjs vitest run
+          test/suite/regressions/3044-rpc-owner-lifetime.test.ts
+          test/suite/regressions/3045-owner-review.test.ts
+          test/suite/regressions/3054-supervisor-child-exit.test.ts
+          test/suite/regressions/3054-process-exit-compiler.test.ts
+          test/suite/regressions/3054-legacy-drain-deadline.test.ts
+
+      - name: Check OS temp after tests
+        if: always() && steps.rpc_test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/rpc-test-temp-before.json
+
+
+      - name: Snapshot OS temp before tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        id: terminal_test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/terminal-test-temp-before.json --export-env
+
+      - name: PTY package tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.terminal_test_temp_snapshot.outcome == 'success' }}
+        id: terminal_pty
+        timeout-minutes: 15
+        run: npm run test --workspace @earendil-works/pi-pty
+
+      - name: Terminal extension + shell resolution tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.terminal_test_temp_snapshot.outcome == 'success' }}
+        id: terminal_extension
+        timeout-minutes: 15
+        shell: bash
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts test/suite/regressions/issue-1229-win-fswatch-noncanonical-abort.test.ts
+        working-directory: packages/coding-agent
+
+      - name: Check OS temp after tests
+        if: always() && steps.terminal_test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/terminal-test-temp-before.json
+
+      - name: Snapshot OS temp before tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        id: inspector_test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/inspector-test-temp-before.json --export-env
+
+      - name: Run Inspector handoff regression
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.inspector_test_temp_snapshot.outcome == 'success' }}
+        id: inspector
+        timeout-minutes: 20
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/regressions/inspector-endpoint-handoff.test.ts
+        working-directory: packages/coding-agent
+
+      - name: Summarize Inspector handoff
+        if: always() && steps.inspector_test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: |
+          {
+            echo "## Inspector handoff"
+            echo "- OS: ${{ runner.os }}"
+            echo "- Node: 24"
+            echo "- Test: inspector-endpoint-handoff.test.ts"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check OS temp after tests
+        if: always() && steps.inspector_test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/inspector-test-temp-before.json
+
+      - name: Snapshot OS temp before tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        id: webview_test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/webview-test-temp-before.json --export-env
+
+      - name: Run eval kernel WebView suites (Bun)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.webview_test_temp_snapshot.outcome == 'success' }}
+        id: webview
+        timeout-minutes: 20
+        shell: bash
+        env:
+          SENPI_WEBVIEW_READINESS_LOG: ${{ runner.temp }}/webview-readiness.log
+        run: |
+          out="$RUNNER_TEMP/vitest-webview.txt"
+          bun ../../scripts/run-tests.mjs vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts test/js-kernel-webview-readiness.test.ts --reporter=verbose --reporter=hanging-process --reporter=json --outputFile=vitest-webview.json > "$out" 2>&1 &
+          suite=$!
+          for _ in $(seq 1 540); do kill -0 "$suite" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$suite" 2>/dev/null; then
+            cat "$out"
+            echo "::error::WebView suites still running after 9 minutes; the last finished test is above"
+            if command -v tasklist >/dev/null; then tasklist //FO CSV | grep -iE 'chrome|bun|node|powershell|tasklist|taskkill' || true; else ps -axo pid,ppid,etime,command | grep -iE 'chrom|bun|node' || true; fi
+            cat "$SENPI_WEBVIEW_READINESS_LOG" 2>/dev/null || true
+            kill "$suite" 2>/dev/null || true
+            exit 1
+          fi
+          status=0
+          wait "$suite" || status=$?
+          cat "$out"
+          exit "$status"
+        working-directory: packages/senpi-codemode
+
+      # senpi#2353: one line per Chrome launch (time to attach, or the stalled phase and the retirement).
+
+      - name: Show the WebView readiness log
+        if: always() && steps.webview_test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: cat "$RUNNER_TEMP/webview-readiness.log" 2>/dev/null || echo "no readiness log"
+
+      - name: Require the WebView suites to have executed
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.webview_test_temp_snapshot.outcome == 'success' }}
+        shell: bash
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("vitest-webview.json", "utf8"));
+            const results = r.testResults.flatMap((file) => file.assertionResults);
+            const passed = results.filter((a) => a.status === "passed").length;
+            const failed = results.filter((a) => a.status === "failed").length;
+            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed").length;
+            const allowedSkips = process.platform === "win32" ? 1 : 0;
+            console.log("webview suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped);
+            if (passed < 10 || failed !== 0 || skipped > allowedSkips) process.exit(1);
+          '
+        working-directory: packages/senpi-codemode
+
+      - name: Check OS temp after tests
+        if: always() && steps.webview_test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/webview-test-temp-before.json
+
+
   terminal-cross-os:
     name: Terminal tools (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -1109,7 +1456,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:

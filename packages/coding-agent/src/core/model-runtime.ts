@@ -97,6 +97,7 @@ import { createProviderSemaphores } from "./provider-concurrency.ts";
 import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
 import type { SettingsManager } from "./settings-manager.ts";
+import { limitAccountOf, withLimitCapture } from "./subscription-limits/limit-store.ts";
 import {
 	createVirtualModel,
 	findLatestResponse,
@@ -329,6 +330,16 @@ export class ModelRuntime implements Models {
 		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
 		this.models = createModels({ credentials, modelsStore });
 		this.rebuildProviders();
+	}
+
+	/**
+	 * The AuthStorage this runtime's providers register into, when it was built on one. A session
+	 * built on a shared runtime must read this same store, or extension OAuth providers are never
+	 * listed (senpi#3434).
+	 */
+	get authStorage(): DefaultAuthStorage | undefined {
+		const store = this.credentials.backingStore;
+		return store instanceof DefaultAuthStorage ? store : undefined;
 	}
 
 	static async create(options: CreateModelRuntimeOptions = {}): Promise<ModelRuntime> {
@@ -854,20 +865,36 @@ export class ModelRuntime implements Models {
 	}
 
 	getProviderAuthStatus(providerId: string): AuthStatus {
-		if (this.credentials.hasRuntimeApiKey(providerId)) return { configured: true, source: "runtime" };
-		if (this.snapshot.storedProviders.has(providerId)) return { configured: true, source: "stored" };
+		return this.resolveProviderAuth(providerId).status;
+	}
+
+	/**
+	 * The provider's auth status plus whether it is a non-stored sign-in (#3537). `signIn` is set
+	 * only by the last branch, the provider's own check resolving `type: "oauth"`, so a runtime key,
+	 * a stored credential or a configured models.json/extension key always wins first.
+	 */
+	resolveProviderAuth(providerId: string): { status: AuthStatus; signIn: boolean } {
+		if (this.credentials.hasRuntimeApiKey(providerId)) {
+			return { status: { configured: true, source: "runtime" }, signIn: false };
+		}
+		if (this.snapshot.storedProviders.has(providerId)) {
+			return { status: { configured: true, source: "stored" }, signIn: false };
+		}
 		const configured = configuredRequestAuthStatus(
 			this.config.getProvider(providerId),
 			this.extensionProviders.get(providerId),
 		);
-		if (configured) return configured;
+		if (configured) return { status: configured, signIn: false };
 		const check = this.snapshot.auth.get(providerId);
-		if (!check) return { configured: false };
+		if (!check) return { status: { configured: false }, signIn: false };
 		return {
-			configured: true,
-			source: "environment",
-			label: check.source,
-			...(check.ambient ? { ambient: true } : {}),
+			status: {
+				configured: true,
+				source: "environment",
+				label: check.source,
+				...(check.ambient ? { ambient: true } : {}),
+			},
+			signIn: check.type === "oauth",
 		};
 	}
 
@@ -1068,8 +1095,12 @@ export class ModelRuntime implements Models {
 				options,
 				rejectedAccess === undefined ? slotAuth : { ...slotAuth, rejectedAccess },
 			);
+			const capturing = {
+				...prepared,
+				options: withLimitCapture(prepared.options, prepared.model.provider, limitAccountOf(slotAuth)),
+			};
 			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
-				send(prepared),
+				send(capturing),
 			);
 			return {
 				stream: wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages)),

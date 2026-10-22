@@ -1,3 +1,133 @@
+## 2026-10-21 - A run that failed in the queued-input port is marked local (senpi#3866)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `takeQueuedMessages` and `createLoopConfig` call the owner's `queuedInputPort` through `localFailurePort` (new `packages/agent/src/local-failure.ts`), which remembers every error the port's `claim`, `release` or `commitConsumption` raised. `handleRunFailure` stamps the failure message of a run that ended on such an error with `failureSource: "local"` (not on an abort).
+
+### Why
+
+- `packages/agent/src/agent.ts`: on Windows the coding-agent's pending-input journal failed its fsync with EPERM inside `commitConsumption`. `handleRunFailure` turned it into an ordinary `stopReason: "error"` message stamped with the current model, and the session took it for a model hard error and walked its whole fallback chain (omo#10781). The port is local bookkeeping, never a provider request, so its failures say so.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent.ts`: the failure message is built inside the agent from the thrown error; only the agent knows the error came from the port.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent.ts`, the import block, the `port` line in `takeQueuedMessages`, the `queuedInputPort` line in `createLoopConfig`, and the spread list of `handleRunFailure`'s failure message.
+
+## 2026-10-17 - Queued input's consumption is committed before a provider sees it (senpi#3549)
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentLoopConfig.commitQueuedConsumption(queue, messages)`, awaited with the drained queued messages before any of them enters the context.
+- `packages/agent/src/agent-loop.ts`: `runLoop` remembers which queue the pending messages were drained from and awaits `commitQueuedConsumption` before inserting them; a rejection restores them to that queue and fails the attempt, so no provider request carries them.
+- `packages/agent/src/agent.ts`: an optional `AgentOptions.queuedInputPort` with `claim` (the native drain runs under the owner's gate), `release` (the native restore, likewise) and `commitConsumption`. The loop's queue polls and restores go through it, and so do the runs started from a queue (`continue()` after an assistant message, `continueWithQueuedMessages()`, the drain after `agent_end`): `takeQueuedMessages` claims, commits, and releases on a failed commit. Without a port every queue path behaves as before.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: the coding-agent session journals a pending input's delivery; a message must not reach a provider before that record is durable, or a crash would leave it sent but still pending (desktop #2838).
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the drain-to-context step happens inside the loop, with no hook between them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts`, the queue drains in `runLoop` (each now goes through `drainSteering` / `drainFollowUp`) and the insertion before the next request.
+- MEDIUM: `packages/agent/src/agent.ts` `continue`, `continueWithQueuedMessages`, `runQueuedMessagesAfterAgentEnd` (their drains now go through `runQueuedMessages` / `takeQueuedMessages`) and `createLoopConfig`.
+- LOW: `packages/agent/src/agent.ts` `AgentOptions`; `packages/agent/src/types.ts` `AgentLoopConfig`.
+
+## 2026-10-17 - A caller's plain abort reason is carried as the turn's message (senpi#3510)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `abortError` keeps the caller's own words as the error message: a non-empty string reason (`controller.abort("user stop")`) or an object's non-empty `message`, capped at 500 characters with an ellipsis. An `Error` reason is kept as before (uncapped); a blank, empty, or any other reason still gets "Request was aborted".
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: a client that aborts with a reason expects to see it; the reason was dropped unless it was an `Error`.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the abort error is built inside the agent loop's request path.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, `abortError`.
+
+## 2026-10-17 - A caller-aborted turn past the pre-stream bound carries the abort's message (senpi#3481)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse`'s failure path gives a turn the caller aborted the abort's own error (`abortError(signal.reason)`) when the error it ended on is the pre-stream bound's `StreamStartTimeoutError` / `StreamIdleTimeoutError`. The `stopReason` was already `aborted`; only the message changes. Every other failure keeps its error.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: a turn aborted while a pre-stream step never finished ended at the bound and told the user a provider timed out and to raise a timeout setting; the user had stopped it.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the terminal assistant message is built inside one provider request in the agent loop.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, the `createTerminalFailureAssistantMessage` call in `streamAssistantResponse`.
+
+## 2026-10-16 - The pre-stream bound leaves a caller abort as it was (fixes the #3472 regression)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `createPreStreamBound`'s `run()` no longer races the caller's abort. Only the bound ends a pre-stream step; a caller abort reaches the step through the request signal and the request proceeds as it did before #3472 (the provider is still called with the aborted signal, and the turn reads aborted).
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: #3472 made `run()` reject the moment the caller aborted, so an abort during the context transform or key lookup ended the turn before the provider call. That changed the caller's abort semantics and broke `post-compaction-stale-usage-queue-exemption.test.ts` ("does not resurrect deferred work after InteractiveMode abort clears the visible queue": one provider call instead of two).
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the bound and the request it aborts are internal to one provider request in the agent loop.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, `createPreStreamBound`'s `run()`.
+
+## 2026-10-16 - The start bound covers the work before a provider stream (senpi#3471)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` runs the context transform, the API key lookup and the stream function under `createPreStreamBound`: the start bound (or, without one, the idle bound) now starts before them, and a step that does not finish in time ends the turn with `StreamStartTimeoutError` (or `StreamIdleTimeoutError`) and aborts the request, whose signal the transform now receives. The first stream read gets only the rest of the start budget, but its timeout error still names the configured bound (which `retry.ts` parses and users raise). A caller abort still ends the turn as aborted; work that settles after the turn ended is handled (no unhandled rejection), and a stream returned after the bound fired is closed.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: those three awaits ran before any bound existed, so a key lookup or a provider that never returned a stream left the turn waiting forever on every surface (TUI, desktop, RPC), with no failure to show (omo-desktop-app #2856).
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the bound and the request it aborts are internal to one provider request in the agent loop; no hook sees that request before its stream starts.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, the top of `streamAssistantResponse`'s `try` and the start-timeout argument of `createAssistantEventReader`.
+
+## 2026-10-15 - Remove or replace one queued message by identity (senpi#1971)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `PendingMessageQueue.remove/replace` and `Agent.removeQueuedMessage/replaceQueuedMessage` act on one exact message object; false once it was drained into a turn.
+
+### Why
+
+The session's dequeue/edit must reach the queue the agent drains, not only its own visible lists.
+
+### Why an extension could not handle it
+
+The queues are private agent-core state.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/agent.ts`: `PendingMessageQueue` and the queue methods next to `clearSteeringQueue`.
+
 ## 2026-10-07 - Terminal auth failures preserve retry diagnostics (senpi#2893)
 
 ### What changed

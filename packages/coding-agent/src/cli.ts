@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import "./valid-cwd.ts";
+import "./internal-role.ts";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
