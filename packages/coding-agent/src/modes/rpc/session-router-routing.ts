@@ -2,7 +2,6 @@ import { VERSION } from "../../config.ts";
 
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
-import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
 
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 
@@ -20,7 +19,7 @@ import { dispatchSessionBinding } from "./session-held.ts";
 import { moveSession } from "./session-move-commands.ts";
 import { releaseSession } from "./session-release.ts";
 import { releaseConnection } from "./session-router-attachments.ts";
-import { CLIENT_CAPABILITIES_NOT_APPLIED, declareConnectionCapabilities } from "./session-router-capabilities.ts";
+import { answerSetClientInfo } from "./session-router-capabilities.ts";
 import { close, tearDownReleased, tearDownUnloaded } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
@@ -190,28 +189,7 @@ export async function dispatch(
 			command,
 		);
 	}
-	if (command.type === "set_client_info" && !command.sessionId) {
-		const connection = host.writer.currentConnection();
-		if (
-			command.capabilities !== undefined &&
-			!host.connectionRoles.declare(roleConnection(connection), command.capabilities)
-		)
-			return {
-				id: command.id,
-				type: "response",
-				command: "set_client_info",
-				success: false,
-				error: CONNECTION_ROLE_FIXED,
-			} as RpcResponse;
-		// A width-only call (a resize) keeps the declaration it does not carry.
-		if (
-			connection !== undefined &&
-			command.capabilities !== undefined &&
-			!(await declareConnectionCapabilities(host, connection, command.capabilities))
-		)
-			return error(command.id, command.type, CLIENT_CAPABILITIES_NOT_APPLIED);
-		return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
-	}
+	if (command.type === "set_client_info") return answerSetClientInfo(host, command);
 	if (command.type === "subscribe_sessions") {
 		const connection = host.writer.currentConnection();
 		const { answer, activate } = answerSubscribeSessions(command, connection, host.writer.status);

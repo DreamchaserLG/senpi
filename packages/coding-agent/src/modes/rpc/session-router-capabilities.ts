@@ -1,4 +1,7 @@
+import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
+import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RouterContext } from "./session-router-context.ts";
+import { code, detail, error } from "./session-router-errors.ts";
 
 /**
  * Per-connection client capabilities on a shared host (omo-desktop-app#4042). A connection that never declared
@@ -61,15 +64,67 @@ export function recomputeSessionCapabilities(host: RouterContext, sessionId: str
 	return applySessionCapabilities(host, sessionId, effectiveSessionCapabilities(host, sessionId));
 }
 
-/** Records a connection's own declaration and recomputes every session it is attached to. */
+async function recomputeAttachedSessions(host: RouterContext, connection: string): Promise<boolean> {
+	const sessions = [...(host.sessionsByConnection.get(connection)?.keys() ?? [])];
+	const applied = await Promise.all(sessions.map((sessionId) => recomputeSessionCapabilities(host, sessionId)));
+	return applied.every(Boolean);
+}
+
+/**
+ * Records a connection's own declaration and recomputes every session it is attached to. While they change, a
+ * connection that had declared admits both sets, so no record either set allows is lost; the new set becomes its
+ * filter only once every session took it. A refusal restores the earlier declaration, filter and sessions.
+ */
 export async function declareConnectionCapabilities(
 	host: RouterContext,
 	connection: string,
 	capabilities: readonly string[],
 ): Promise<boolean> {
+	const previous = host.pendingCapabilities.get(connection);
 	host.pendingCapabilities.set(connection, [...capabilities]);
-	host.writer.setConnectionCapabilities(connection, capabilities, true);
-	const sessions = [...(host.sessionsByConnection.get(connection)?.keys() ?? [])];
-	const applied = await Promise.all(sessions.map((sessionId) => recomputeSessionCapabilities(host, sessionId)));
-	return applied.every(Boolean);
+	if (previous !== undefined)
+		host.writer.setConnectionCapabilities(connection, [...new Set([...previous, ...capabilities])], true);
+	if (await recomputeAttachedSessions(host, connection)) {
+		host.writer.setConnectionCapabilities(connection, capabilities, true);
+		return true;
+	}
+	if (previous === undefined) host.pendingCapabilities.delete(connection);
+	else host.pendingCapabilities.set(connection, previous);
+	await recomputeAttachedSessions(host, connection);
+	if (previous !== undefined) host.writer.setConnectionCapabilities(connection, previous, true);
+	return false;
+}
+
+/**
+ * Every `set_client_info` on a shared host, connection-level or session-scoped, is answered here: the senpi#3811
+ * role check first, then the declaration. A session-scoped call is answered by the host rather than its binding,
+ * because a worker isolate cannot wait for a capability change it would itself have to apply.
+ */
+export async function answerSetClientInfo(
+	host: RouterContext,
+	command: Extract<RpcCommand, { type: "set_client_info" }>,
+): Promise<RpcResponse> {
+	const scope = command.sessionId === undefined ? {} : { sessionId: command.sessionId };
+	const answered = { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
+	if (command.sessionId !== undefined) {
+		try {
+			host.registry.getForCommand(command.sessionId, command.type);
+		} catch (cause) {
+			return error(command.id, command.type, code(cause), detail(cause));
+		}
+	}
+	const connection = host.writer.currentConnection();
+	// A width-only call (a resize) keeps the declaration it does not carry.
+	if (command.capabilities === undefined) return { ...answered, ...scope };
+	if (!host.connectionRoles.declare(roleConnection(connection), command.capabilities))
+		return { ...error(command.id, command.type, CONNECTION_ROLE_FIXED), ...scope };
+	// A stdio host has one client and no connection id, so its session-scoped declaration is that session's set.
+	const applied =
+		connection !== undefined
+			? await declareConnectionCapabilities(host, connection, command.capabilities)
+			: command.sessionId === undefined ||
+				(await applySessionCapabilities(host, command.sessionId, command.capabilities));
+	return applied
+		? { ...answered, ...scope }
+		: { ...error(command.id, command.type, CLIENT_CAPABILITIES_NOT_APPLIED), ...scope };
 }

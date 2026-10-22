@@ -1470,6 +1470,28 @@ re-register `capabilities` after every reconnect. `width` is accepted for compat
 renders no extension components, so a component factory passed to `setWidget`, `setHeader`, or `setFooter` never
 reaches the wire.
 
+On a shared host, client capabilities are per connection, whether `set_client_info` carries a `sessionId` or not:
+
+- **The declaration is the connection's own.** A `set_client_info` that carries `capabilities` replaces it; one without
+  `capabilities` (a resize) keeps it. A connection that never declared counts as the host default
+  (`SENPI_RPC_CLIENT_CAPABILITIES` at launch). The `interactive_user` role check runs first, so a refused declaration
+  (`connection_role_fixed`) changes nothing.
+- **A session answers with the union** of the declarations of the connections attached to it now. The host recomputes it
+  on open, attach, release, disconnect and every declaration. A session with nobody attached keeps its set, so a
+  retained session's pending questions are replayed to the client that reattaches.
+- **Capability-gated records go to declarers.** `extension_ui_request { method: "question" }` (and its replay on
+  attach), `extension_event` and `extension_ui_request { method: "custom_unsupported" }` reach an attached connection only
+  when it declared the matching capability. A connection that never declared receives them as before. Mirror
+  subscribers ([`subscribe_sessions`](#subscribe_sessions) `mirror`) are read-only observers and receive mirrored records
+  unfiltered.
+- **Withdrawing `question` cancels.** When `question` leaves a session's set (its last declarer withdrew it or left), each
+  pending structured question is settled once as `question_resolved` with outcome `cancelled`; later questions degrade to
+  single dialogs sent to the prompting connection.
+- **A worker session** gets its set through the host-to-isolate `session_capabilities` message, which applies to that
+  isolate's one session.
+- **A declaration a session could not take** answers `client_capabilities_not_applied`; the connection keeps its earlier
+  declaration and the sessions their earlier sets.
+
 ### Session kind and context (`open_session`)
 
 `open_session` accepts two additive, opaque per-session fields. Both are inert inside the host: they never take part in
@@ -2501,6 +2523,8 @@ codes or code prefixes in `error`:
 - `invalid_path` (relative `sessionPath`/`cwd`)
 - `open_failed: <detail>`. `open_failed: model_unavailable: <reason>` means the open named a model (`provider`/`modelId`) that could not be resolved, for example an unknown provider; the session is not opened, rather than running on the default model. The in-process runtime adds `errorData { reason: "model_unavailable", requestedModel }`; a worker runtime relays the same error text, so match on the prefix
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
+- `client_capabilities_not_applied: <reason>` (`set_client_info` whose declared capabilities a session the connection is attached to could not take; the earlier declaration stays)
+- `connection_role_fixed: <reason>` (`set_client_info` that changes an `interactive_user` role the connection already declared)
 - `invalid_subscription: <reason>` (`subscribe_sessions` with a malformed `sessions`, `mirror` or flag; `errorData { reason, action }`)
 - `unknown_subscription: <reason>` (`unsubscribe_sessions` naming a subscription this connection does not hold)
 - `subscription_limit: <reason>` (`subscribe_sessions` on a connection that already holds the documented maximum of 64 subscriptions; `errorData { reason, action }`)
@@ -5134,7 +5158,7 @@ Set the text in the input editor. Fire-and-forget.
 
 #### question
 
-Present one or more questions to the user. Requires the `question` client capability (advertised in `set_client_info`). Questions are broadcast to all attached connections, not just the requester. Pending questions survive the assistant message and are replayed to connections that attach later via `open_session` state.
+Present one or more questions to the user. Requires the `question` client capability (advertised in `set_client_info`). Questions go to every attached connection that declared `question` and to attached connections that never declared, not just the requester; see [Client information](#client-information). Pending questions survive the assistant message and are replayed to connections that attach later via `open_session` state.
 
 ```json
 {
