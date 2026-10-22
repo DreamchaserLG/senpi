@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "@code-yeongyu/senpi";
+import { type ExtensionContext, SettingsManager } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
@@ -90,7 +90,10 @@ export async function createRuntime(
 	const executeTool = createExecuteTool(pi, activeTools);
 	const create = options.createSessionManager ?? createCodemodeSessionManager;
 	const sessionId = sessionIdFrom(event);
-	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...kernelPathEntry() };
+	const sessionEnv = {
+		...sessionEnvironmentFrom(ctx),
+		...kernelPathEntry({ shellPath: SettingsManager.create(ctx.cwd).getShellPath() }),
+	};
 	const configuredPoolWidth = settings.parallelPoolWidth;
 	const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
 	const pythonEnvironments =

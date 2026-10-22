@@ -52,7 +52,7 @@ describe("kernelPathEntry (omo#10894)", () => {
 		const entry = kernelPathEntry({
 			platform: "win32",
 			env: { Path: inheritedPath },
-			resolveGitBash: () => gitBash,
+			resolveBash: () => gitBash,
 			withBundledBun: unchangedEnv,
 		});
 
@@ -66,7 +66,7 @@ describe("kernelPathEntry (omo#10894)", () => {
 		const entry = kernelPathEntry({
 			platform: "win32",
 			env: { PATH: [system32, gitBin.toUpperCase(), gitCmd].join(";") },
-			resolveGitBash: () => gitBash,
+			resolveBash: () => gitBash,
 			withBundledBun: unchangedEnv,
 		});
 
@@ -77,7 +77,7 @@ describe("kernelPathEntry (omo#10894)", () => {
 		const entry = kernelPathEntry({
 			platform: "win32",
 			env: { Path: inheritedPath },
-			resolveGitBash: () => undefined,
+			resolveBash: () => undefined,
 			withBundledBun: unchangedEnv,
 		});
 
@@ -88,7 +88,53 @@ describe("kernelPathEntry (omo#10894)", () => {
 		const entry = kernelPathEntry({
 			platform: "win32",
 			env: { Path: inheritedPath },
-			resolveGitBash: () => "C:\\Windows\\System32\\bash.exe",
+			resolveBash: () => "C:\\Windows\\System32\\bash.exe",
+			withBundledBun: unchangedEnv,
+		});
+
+		expect(entry).toEqual({});
+	});
+
+	it("puts the configured shellPath's Git bin first, over the default Git install, through getShellConfig", () => {
+		const portableBin = join(root, "PortableGit", "bin");
+		const portableBash = fakeExe(portableBin, "bash");
+		fakeExe(portableBin, "sh");
+
+		const entry = kernelPathEntry({
+			platform: "win32",
+			env: { Path: inheritedPath },
+			shellPath: portableBash,
+			withBundledBun: unchangedEnv,
+		});
+
+		expect(entry.Path?.split(";")).toEqual([portableBin, system32, gitCmd]);
+		expect(windowsWhich("bash", entry.Path ?? "")).toBe(portableBash);
+	});
+
+	it("leaves PATH unchanged when the bash lives in a usr\\bin with coreutils that would shadow System32", () => {
+		const usrBin = join(root, "msys64", "usr", "bin");
+		const usrBash = fakeExe(usrBin, "bash");
+		fakeExe(usrBin, "sh");
+		fakeExe(usrBin, "find");
+		fakeExe(usrBin, "sort");
+
+		const entry = kernelPathEntry({
+			platform: "win32",
+			env: { Path: inheritedPath },
+			resolveBash: () => usrBash,
+			withBundledBun: unchangedEnv,
+		});
+
+		expect(entry).toEqual({});
+	});
+
+	it("leaves PATH unchanged when the bash directory has no sh.exe beside it", () => {
+		const lone = fakeExe(join(root, "tools"), "bash");
+
+		const entry = kernelPathEntry({
+			platform: "win32",
+			env: { Path: inheritedPath },
+			resolveBash: () => lone,
 			withBundledBun: unchangedEnv,
 		});
 
@@ -99,7 +145,7 @@ describe("kernelPathEntry (omo#10894)", () => {
 		const entry = kernelPathEntry({
 			platform,
 			env: { PATH: "/usr/bin:/bin" },
-			resolveGitBash: () => gitBash,
+			resolveBash: () => gitBash,
 			withBundledBun: unchangedEnv,
 		});
 
@@ -111,7 +157,7 @@ describe("kernelPathEntry (omo#10894)", () => {
 		const entry = kernelPathEntry({
 			platform: "win32",
 			env: { Path: inheritedPath },
-			resolveGitBash: () => gitBash,
+			resolveBash: () => gitBash,
 			withBundledBun: (env) => ({ ...env, Path: [bunDir, env.Path].join(";") }),
 		});
 

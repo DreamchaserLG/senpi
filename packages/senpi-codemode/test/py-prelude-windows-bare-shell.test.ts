@@ -17,6 +17,15 @@ wsl = r"C:\WINDOWS\System32\bash.exe"
 git_first = lambda name: git_bash if name in ("bash", "sh") else None
 wsl_only = lambda name: wsl
 resolve = lambda name: shell_path(name, git_first, r"C:\Windows")
+class Recorder:
+    def __init__(self, args, *rest, **kwargs):
+        self.args = args
+popen = ns["_bare_shell_popen"](Recorder, resolve)
+popen_args = [
+    popen(["bash", "-c", "x"], shell=False).args,
+    popen("bash -c x", shell=True).args,
+    popen(["bash", "-c", "x"], executable="other.exe").args,
+]
 print("RESULT " + json.dumps({
     "gitFirst": shell_path("bash", git_first, r"C:\Windows"),
     "wslOnly": shell_path("bash", wsl_only, r"C:\Windows"),
@@ -25,6 +34,7 @@ print("RESULT " + json.dumps({
     "commandLine": with_shell("bash -lc 'echo hi'", resolve),
     "absolute": with_shell([git_bash, "-c", "x"], resolve),
     "other": with_shell(["git", "status"], resolve),
+    "popen": popen_args,
 }))
 `;
 
@@ -42,6 +52,7 @@ describe.skipIf(!(await hasPython3()))("Python prelude bare bash/sh on Windows (
 			commandLine: `"${gitBash}" -lc 'echo hi'`,
 			absolute: [gitBash, "-c", "x"],
 			other: ["git", "status"],
+			popen: [[gitBash, "-c", "x"], "bash -c x", ["bash", "-c", "x"]],
 		});
 	});
 });

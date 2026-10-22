@@ -1,11 +1,15 @@
+import { existsSync } from "node:fs";
 import { win32 } from "node:path";
 import { getShellConfig, withBundledBunCommands } from "@code-yeongyu/senpi";
 
 export interface KernelPathEnvOptions {
 	readonly platform?: NodeJS.Platform;
 	readonly env?: NodeJS.ProcessEnv;
-	/** Resolves the Git Bash `bash.exe` the bash tool would use; undefined when there is none. */
-	readonly resolveGitBash?: () => string | undefined;
+	/** The `shellPath` setting the bash tool passes to `getShellConfig`. */
+	readonly shellPath?: string | undefined;
+	/** Resolves the bash the bash tool would use; undefined when there is none. */
+	readonly resolveBash?: (shellPath: string | undefined) => string | undefined;
+	readonly isFile?: (path: string) => boolean;
 	readonly withBundledBun?: (env: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
 }
 
@@ -18,7 +22,11 @@ export function kernelPathEntry(options: KernelPathEnvOptions = {}): Record<stri
 	const withBun = (options.withBundledBun ?? withBundledBunCommands)(base);
 	const env =
 		(options.platform ?? process.platform) === "win32"
-			? withGitBashFirst(withBun, (options.resolveGitBash ?? resolveGitBashFromShellConfig)())
+			? withGitBashFirst(
+					withBun,
+					(options.resolveBash ?? resolveBashFromShellConfig)(options.shellPath),
+					options.isFile ?? existsSync,
+				)
 			: withBun;
 	if (env === base) return {};
 	const pathKey = pathKeyOf(env);
@@ -28,10 +36,17 @@ export function kernelPathEntry(options: KernelPathEnvOptions = {}): Record<stri
 
 // A bare `bash` in a cell resolves through the kernel's PATH, where a default Git for Windows install
 // lists only Git\cmd, so System32\bash.exe (the WSL launcher) won and booted WSL (omo#10894). The kernel
-// gets the directory of the bash the bash tool runs, so `bash` and `sh` resolve to Git Bash first.
-function withGitBashFirst(env: NodeJS.ProcessEnv, gitBash: string | undefined): NodeJS.ProcessEnv {
-	if (gitBash === undefined || isWslLauncher(gitBash)) return env;
-	const dir = win32.dirname(gitBash);
+// gets the directory of the bash the bash tool runs, so `bash` and `sh` resolve to Git Bash first. Only a
+// Git-style `bin` directory qualifies: a usr\bin with coreutils would shadow System32's find/sort/timeout
+// for every kernel child, so any other bash leaves PATH alone.
+function withGitBashFirst(
+	env: NodeJS.ProcessEnv,
+	bash: string | undefined,
+	isFile: (path: string) => boolean,
+): NodeJS.ProcessEnv {
+	if (bash === undefined || isWslLauncher(bash)) return env;
+	const dir = win32.dirname(bash);
+	if (!isGitBashBinDir(dir, isFile)) return env;
 	const pathKey = pathKeyOf(env);
 	const rest = (env[pathKey] ?? "")
 		.split(win32.delimiter)
@@ -39,12 +54,20 @@ function withGitBashFirst(env: NodeJS.ProcessEnv, gitBash: string | undefined): 
 	return { ...env, [pathKey]: [dir, ...rest].join(win32.delimiter) };
 }
 
-function resolveGitBashFromShellConfig(): string | undefined {
+const SHELLS = ["bash.exe", "sh.exe"] as const;
+const SYSTEM32_TOOLS = ["find.exe", "sort.exe", "timeout.exe"] as const;
+
+function isGitBashBinDir(dir: string, isFile: (path: string) => boolean): boolean {
+	const file = (name: string) => isFile(`${dir}${dir.includes("/") && !dir.includes("\\") ? "/" : "\\"}${name}`);
+	return SHELLS.every(file) && !SYSTEM32_TOOLS.some(file);
+}
+
+function resolveBashFromShellConfig(shellPath: string | undefined): string | undefined {
 	try {
-		const config = getShellConfig();
+		const config = getShellConfig(shellPath);
 		return config.kind === "bash" || config.kind === "sh" ? config.shell : undefined;
 	} catch {
-		// getShellConfig throws when no bash exists (or SENPI_GIT_BASH_PATH is missing); the bash tool
+		// getShellConfig throws when no bash exists (or a configured path is missing); the bash tool
 		// reports that itself, and the kernel keeps the inherited PATH.
 		return undefined;
 	}

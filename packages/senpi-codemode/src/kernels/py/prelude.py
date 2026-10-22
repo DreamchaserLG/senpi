@@ -1807,16 +1807,24 @@ def _with_windows_bare_shell(args: Any, resolve: Callable[[str], str | None] = _
     return args
 
 
-class _WindowsBareShellPopen(subprocess.Popen):
-    def __init__(self, args: Any, *rest: Any, **kwargs: Any) -> None:
-        if not rest and not kwargs.get("shell") and kwargs.get("executable") is None:
-            args = _with_windows_bare_shell(args)
-        super().__init__(args, *rest, **kwargs)
+def _bare_shell_popen(base: type, resolve: Callable[[str], str | None] = _windows_bare_shell_path) -> type:
+    class BareShellPopen(base):
+        def __init__(self, args: Any, *rest: Any, **kwargs: Any) -> None:
+            if not rest and not kwargs.get("shell") and kwargs.get("executable") is None:
+                args = _with_windows_bare_shell(args, resolve)
+            super().__init__(args, *rest, **kwargs)
+
+    return BareShellPopen
 
 
 def _install_windows_bare_shell_resolution() -> None:
-    if os.name == "nt":
-        subprocess.Popen = _WindowsBareShellPopen
+    if os.name != "nt":
+        return
+    subprocess.Popen = _bare_shell_popen(subprocess.Popen)
+    # asyncio's Windows transport spawns through its own Popen subclass, looked up at call time.
+    from asyncio import windows_utils
+
+    windows_utils.Popen = _bare_shell_popen(windows_utils.Popen)
 
 
 def _shell(command: str, argv: list[str] | None = None) -> ShellResult:

@@ -4,10 +4,11 @@
 
 ### What changed
 
-- `packages/senpi-codemode/src/extension/kernel-path-env.ts`: new `kernelPathEntry`, the PATH override every kernel child gets through the session environment. It keeps the bundled `bun` directory (omo#9362), and on win32 it also puts the directory of the bash `getShellConfig` resolves (`SENPI_GIT_BASH_PATH`, then the Git for Windows install) first, once. A missing bash or the `System32`/`Sysnative` WSL launcher leaves PATH unchanged, and other platforms are unchanged.
-- `packages/senpi-codemode/src/extension/runtime-factory.ts`: the session environment uses `kernelPathEntry` in place of the local `bundledBunPathEntry`.
-- `packages/senpi-codemode/src/kernels/py/prelude.py`: on Windows the kernel resolves a bare `bash`/`sh` in `subprocess.Popen` argv or command lines through PATH (`shutil.which`), skipping the WSL launcher, and `%%bash`/`%%sh` run that bash with `-c` instead of going through cmd.exe. POSIX is unchanged.
-- `packages/senpi-codemode/test/kernel-path-env.test.ts`, `test/py-prelude-windows-bare-shell.test.ts`: Windows lookup is simulated with temp-dir PATHs and fake `bash.exe`/`sh.exe` files, plus the prelude helpers with fake resolvers.
+- `packages/senpi-codemode/src/extension/kernel-path-env.ts`: new `kernelPathEntry`, the PATH override every kernel child gets through the session environment. It keeps the bundled `bun` directory (omo#9362). On win32 it resolves the same bash the bash tool uses, `getShellConfig(shellPath)`: the `shellPath` setting, then `SENPI_GIT_BASH_PATH`, then the Git for Windows install. It puts that bash's directory first, once, only when the directory is a Git-style `bin` that holds `bash.exe` and `sh.exe` and no `find.exe`/`sort.exe`/`timeout.exe` that would shadow System32 for every kernel child. A missing bash, the `System32`/`Sysnative` WSL launcher, or any other directory leaves PATH unchanged, and other platforms are unchanged.
+- `packages/senpi-codemode/src/extension/runtime-factory.ts`: the session environment uses `kernelPathEntry` in place of the local `bundledBunPathEntry`, passing `SettingsManager.create(ctx.cwd).getShellPath()`, the setting the terminal extension's bash tool reads.
+- `packages/senpi-codemode/src/kernels/py/prelude.py`: on Windows the kernel resolves a bare `bash`/`sh` in `subprocess.Popen` and `asyncio.windows_utils.Popen` (used by `asyncio.create_subprocess_exec`) argv or command lines through PATH (`shutil.which`), skipping the WSL launcher, and `%%bash`/`%%sh` run that bash with `-c` instead of going through cmd.exe. POSIX is unchanged.
+- `packages/senpi-codemode/test/kernel-path-env.test.ts`, `test/py-prelude-windows-bare-shell.test.ts`: Windows lookup is simulated with temp-dir PATHs and fake `bash.exe`/`sh.exe` files, including a configured `shellPath` and a usr\bin-like directory with coreutils. The prelude helpers and the Popen subclass factory run with fake resolvers.
+- `packages/senpi-codemode/.gitignore`: ignore `__pycache__/` and `*.pyc` so a compiled prelude never gets committed.
 
 ### Why
 
