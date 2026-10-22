@@ -25,7 +25,7 @@ import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
 import { acknowledgePrompt, otherRequestsSettled, sessionMemory } from "./session-router-observation.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
-import { openWithBarrier } from "./session-router-open.ts";
+import { bindDeclaredCapabilities, openWithBarrier } from "./session-router-open.ts";
 import {
 	answerSetSessionContext,
 	answerSubscribeSessions,
@@ -205,6 +205,7 @@ export async function dispatch(
 		if (connection !== undefined) {
 			host.pendingCapabilities.set(connection, command.capabilities ?? []);
 			host.writer.setConnectionCapabilities(connection, command.capabilities ?? []);
+			if (command.capabilities !== undefined) await bindDeclaredCapabilities(host, connection);
 		}
 		return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 	}

@@ -16,6 +16,26 @@
 
 - LOW: the `record_user_activity` case of `handleCommand` in `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
 
+## 2026-10-22 - A session's client capabilities follow the connection that answers it (omo-desktop-app#4042)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: new `bindDeclaredCapabilities(host, connection, sessionIds?)` applies a connection's declared client capabilities to the bindings of the sessions it is attached to, through the binding's own session-scoped `set_client_info`, and skips a binding that already holds them. That command carries an internal id, and each binding writes through `withoutRebindReplies`, which drops the reply to it (logging a failed one to stderr), so a client never receives a response it did not ask for. `open` records the capabilities each binding was created with and every later session-scoped declaration, and calls it after an open, so a declared connection that attaches through `open_session` (or declared while the binding was being created) rebinds the session.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: the connection-level `set_client_info` calls it after the senpi#3811 role check and the connection update, only when the command carries `capabilities`.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`: `bindingCapabilities`, a `WeakMap` from each live binding to the capabilities it currently answers with.
+
+### Why
+
+- A binding's capabilities were fixed by its first opener. A session opened by a socket that never sent `set_client_info` kept empty capabilities for its whole life, so every `question` degraded to single dialogs even after the connection answering it declared `question`. Only attached connections rebind; an observer is never in `sessionsByConnection`, and a refused role declaration returns before any update. Regression: `test/suite/regressions/issue-4042-session-capabilities-follow-connection.test.ts`.
+
+### Why an extension could not handle it
+
+- Session bindings and the connection-level `set_client_info` live in the multi-session router; no extension runs there.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files; the binding creation block of `open` and the connection-level `set_client_info` branch of `dispatch`.
+
 ## 2026-10-21 - RpcClient can publish session context (senpi#3905)
 
 ### What changed

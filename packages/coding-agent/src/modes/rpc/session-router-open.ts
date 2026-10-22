@@ -4,7 +4,7 @@ import { clearHandoverParkedSession, type HandoverParkedEntry } from "./host-han
 import { parkedOpenCommand } from "./host-handover-parked-open.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
-
+import type { SessionEventWriter } from "./session-event-writer.ts";
 import { sessionHeldCheck } from "./session-held.ts";
 import type { OpenRpcSession } from "./session-registry.ts";
 import { forgetSessionOwnership, releaseOwnedSession, releaseOwnerAttachment } from "./session-router-attachments.ts";
@@ -80,6 +80,51 @@ export function reopenParked(host: RouterContext, entry: HandoverParkedEntry): P
 	});
 }
 
+/** The id of the router's own capability update: its reply belongs to no client and never reaches one. */
+const CAPABILITY_REBIND_ID = "senpi-internal:capability-rebind";
+
+/** The session's writer, minus the reply to the router's own capability update (a failure is logged). */
+function withoutRebindReplies(writer: SessionEventWriter, sessionId: string): SessionEventWriter {
+	const enqueue = (target: string, value: object): boolean => {
+		if (!("id" in value) || value.id !== CAPABILITY_REBIND_ID) return writer.enqueue(target, value);
+		if ("success" in value && value.success === false)
+			process.stderr.write(
+				`senpi rpc host: client capabilities not applied to ${sessionId}: ${JSON.stringify(value)}\n`,
+			);
+		return true;
+	};
+	return new Proxy(writer, {
+		get: (target, property, receiver) => (property === "enqueue" ? enqueue : Reflect.get(target, property, receiver)),
+	});
+}
+
+/**
+ * A connection that declared its client capabilities answers the sessions it is attached to with them, so a
+ * session first opened by a connection that declared none does not stay degraded for its whole life
+ * (omo-desktop-app#4042). Only attached connections reach here, so an observer never rebinds a session. The
+ * update runs through the binding's own session-scoped `set_client_info`, the path both runtimes already
+ * take (it reads only `capabilities`), and is skipped while the binding already holds those capabilities.
+ */
+export async function bindDeclaredCapabilities(
+	host: RouterContext,
+	connection: string,
+	sessionIds: Iterable<string> = host.sessionsByConnection.get(connection)?.keys() ?? [],
+): Promise<void> {
+	const declared = host.pendingCapabilities.get(connection);
+	if (declared === undefined || host.connectionRoles.rolesOf(connection) === undefined) return;
+	for (const sessionId of [...sessionIds]) {
+		const binding = host.bindings.get(sessionId);
+		if (binding === undefined) continue;
+		const current = host.bindingCapabilities.get(binding);
+		if (current?.length === declared.length && declared.every((capability) => current.includes(capability))) continue;
+		await binding
+			.handle({ id: CAPABILITY_REBIND_ID, type: "set_client_info", sessionId, capabilities: declared })
+			.catch((cause: unknown) =>
+				process.stderr.write(`senpi rpc host: client capabilities not applied to ${sessionId}: ${String(cause)}\n`),
+			);
+	}
+}
+
 export async function open(
 	host: RouterContext,
 	command: Extract<RpcCommand, { type: "open_session" }>,
@@ -138,32 +183,34 @@ export async function open(
 			host.sessionsByConnection.set(owner, owned);
 		}
 		if (!host.bindings.has(openedSession.sessionId)) {
-			host.bindings.set(
+			const capabilities =
+				owner !== undefined
+					? (host.pendingCapabilities.get(owner) ?? host.connectionOptions?.capabilities ?? [])
+					: host.connectionOptions?.capabilities;
+			const binding = await host.createBinding(
 				openedSession.sessionId,
-				await host.createBinding(
-					openedSession.sessionId,
-					entry,
-					host.writer,
-					() => void close(host, { type: "close_session", sessionId: openedSession.sessionId }),
-					{
-						...host.connectionOptions,
-						capabilities:
-							owner !== undefined
-								? (host.pendingCapabilities.get(owner) ?? host.connectionOptions?.capabilities ?? [])
-								: host.connectionOptions?.capabilities,
-						connectionRoles: host.connectionRoles,
-						clientInfo: {
-							setCapabilities: (connectionId, capabilities) => {
-								if (connectionId !== undefined) {
-									host.writer.setConnectionCapabilities(connectionId, capabilities);
-									host.pendingCapabilities.set(connectionId, [...capabilities]);
-								}
-							},
-							connectionId: () => host.writer.currentConnection(),
+				entry,
+				withoutRebindReplies(host.writer, openedSession.sessionId),
+				() => void close(host, { type: "close_session", sessionId: openedSession.sessionId }),
+				{
+					...host.connectionOptions,
+					capabilities,
+					connectionRoles: host.connectionRoles,
+					clientInfo: {
+						setCapabilities: (connectionId, capabilities) => {
+							if (connectionId !== undefined) {
+								host.writer.setConnectionCapabilities(connectionId, capabilities);
+								host.pendingCapabilities.set(connectionId, [...capabilities]);
+							}
+							const bound = host.bindings.get(openedSession.sessionId);
+							if (bound !== undefined) host.bindingCapabilities.set(bound, [...capabilities]);
 						},
+						connectionId: () => host.writer.currentConnection(),
 					},
-				),
+				},
 			);
+			host.bindings.set(openedSession.sessionId, binding);
+			host.bindingCapabilities.set(binding, capabilities ?? []);
 			if (entry.worker) entry.worker.bindingReady = true;
 			// Wake the drain sweep the moment a session settles, so a handoff parks it
 			// without waiting for the next timer tick. Both hooks are OPTIONAL: an
@@ -199,6 +246,8 @@ export async function open(
 			});
 			host.writer.status.publish(openedSession.sessionId, "open", "client");
 		}
+		// An opener that attaches to a live binding, or declared while that binding was being created, answers it now.
+		if (owner !== undefined) await bindDeclaredCapabilities(host, owner, [openedSession.sessionId]);
 		if (!host.draining && owner !== undefined && host.releasedConnections.has(owner)) {
 			releaseOwnerAttachment(host, owner, openedSession.sessionId);
 			await releaseOwnedSession(host, openedSession.sessionId);
