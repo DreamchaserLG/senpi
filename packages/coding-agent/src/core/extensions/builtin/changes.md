@@ -1,3 +1,21 @@
+## 2026-10-21 - The TPS notice uses the shared generation-window rule (senpi#3879)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: `reasonedBeforeFirstDelta` and `STREAMED_DELTA_TYPES` now come from `@earendil-works/pi-agent-core` (`packages/agent/src/response-timing.ts`); the local copies are gone. Behavior is unchanged.
+
+### Why
+
+- The persisted response timing (senpi#3879) and the TPS notice must measure the same window; one shared rule keeps them from drifting (review of senpi#3884).
+
+### Why an extension could not handle it
+
+- It is an extension already; the change only removes a duplicated helper.
+
+### Expected merge conflict zones
+
+- LOW: the imports and helper block at the top of `tps.ts`.
+
 ## 2026-10-21 - Distinguish human question answers from automatic timeouts (senpi#3853)
 
 ### What changed

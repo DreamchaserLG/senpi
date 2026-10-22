@@ -39,9 +39,9 @@ test("shared setup preserves the toolchain pins and installs and builds once", (
 	assert.equal(install.run, "npm ci --ignore-scripts\nnpm run build\n");
 	assert.equal(combined.steps.filter((step) => step.run?.includes("npm ci")).length, 1);
 	assert.equal(combined.steps.filter((step) => step.run?.includes("npm run build")).length, 1);
-	// A hung part may hold the scarce macOS runner only for its own old cap; the job cap is the sum of the
-	// part caps plus setup margin, so no single hang can stretch the job beyond that.
-	assert.equal(combined["timeout-minutes"], originals.reduce((sum, name) => sum + jobs[name]["timeout-minutes"], 10));
+	// A hung suite may hold the scarce macOS runner only for its own step cap; the job cap is the sum of
+	// the suite step caps plus setup margin, so no single hang can stretch the job beyond that.
+	assert.equal(combined["timeout-minutes"], suites.reduce((sum, step) => sum + step["timeout-minutes"], 10));
 });
 
 test("all original commands and execution guards remain with WebView last", () => {
@@ -57,11 +57,14 @@ test("all original commands and execution guards remain with WebView last", () =
 			assert.equal(replacement.run, step.run, step.name);
 			assert.equal(replacement["working-directory"], step["working-directory"], step.name);
 			assert.deepEqual(replacement.env, step.env, step.name);
+			if (step["timeout-minutes"] !== undefined) {
+				assert.equal(replacement["timeout-minutes"], step["timeout-minutes"], `${step.name} keeps its own old step cap`);
+			}
 			assert.ok(replacement["timeout-minutes"] > 0, step.name);
 			partBudget += replacement["timeout-minutes"];
 			assert.equal(replacement["continue-on-error"], undefined, step.name);
 		}
-		assert.equal(partBudget, original["timeout-minutes"], `${name} suite steps share its old job cap`);
+		assert.ok(partBudget <= original["timeout-minutes"], `${name} suite steps stay within its old job cap`);
 		for (const step of original.steps.filter((candidate) =>
 			/Require the .*executed|orphaned kernel|readiness log|exit-event compiler/.test(candidate.name))) {
 			assert.ok(combined.steps.some((candidate) => candidate.name === step.name && candidate.run === step.run), step.name);
@@ -97,4 +100,9 @@ test("suite conditions survive earlier failures but refuse failed installs, snap
 		const run = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5000 });
 		assert.equal(run.status, result === "success" ? 0 : 1, run.stdout + run.stderr);
 	}
+});
+
+test("the WebView executed check runs only after a passing WebView suite, as on base", () => {
+	const check = combined.steps.find((step) => step.name === "Require the WebView suites to have executed");
+	assert.equal(check.if, "${{ !cancelled() && steps.webview.outcome == 'success' }}");
 });

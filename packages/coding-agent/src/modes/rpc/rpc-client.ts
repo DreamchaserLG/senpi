@@ -1169,6 +1169,13 @@ export class RpcClient {
 		await this.send({ type: "set_session_name", name });
 	}
 
+	/**
+	 * Report that the user started typing a draft, so a first-activity prompt-cache prewarm can run (senpi#3859).
+	 */
+	async recordDraftActivity(): Promise<void> {
+		await this.send({ type: "record_user_activity", kind: "draft" });
+	}
+
 	async importJsonl(inputPath: string, cwdOverride?: string): Promise<{ cancelled: boolean }> {
 		const response = await this.send({ type: "import_jsonl", inputPath, cwdOverride });
 		return this.getData(response);

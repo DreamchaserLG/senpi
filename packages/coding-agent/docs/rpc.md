@@ -334,6 +334,19 @@ run state, and replace its streaming preview from `message`. A read-only request
 retried. A closed-handle snapshot retires that session, not the connection.
 Another overflow during recovery produces another gap and a newer snapshot.
 
+#### interactive_user
+
+A client that advertises `interactive_user` in `set_client_info` declares that the connection belongs to a person's
+client. The role is the connection's authority over pausing: only such a connection may Stop a session (`intent:
+"stop"`) or release a Stop with its input (senpi#3811). It does not change an input's origin: every `prompt`, `steer`
+and `follow_up` is a person's input by its entry point, whatever the role. The role belongs to the connection, not to a session:
+on a shared host every connection attached to a session keeps its own role, and a stdio host's one client is a
+single connection. Only the client's own `set_client_info`
+declares it (at connection level or for a session); the host's launch capabilities and
+`SENPI_RPC_CLIENT_CAPABILITIES` never do. It is bound at the connection's first declaration; a later `set_client_info`
+that adds or drops it is refused with `connection_role_fixed`, so the heartbeat must repeat the same list. A client that dispatches input on its own (for example a queued follow-up it sends later)
+should use a second connection without the role.
+
 #### media_placeholders
 
 A client that advertises `media_placeholders` in `set_client_info` tells the host it does not want
@@ -920,13 +933,23 @@ daemon the same way instead of each re-implementing the decision:
 ```
 senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
 senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
-senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>]] [--force] [--socket <path>]
+senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>]] [--force]
+                      [--expected-generation <json>] [--socket <path>]
 senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
                       [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
 senpi host gc         [--json] [--agent-dir <dir>]
 senpi host session <open|close|model|prompt|steer|abort|read|state|list|wait> ...   (see "Driving sessions from the CLI")
 ```
+
+`host stop --force --expected-generation '{"instanceId":…,"generation":…,"pid":…,"processStartTime":…}'` stops only the
+generation the operator confirmed (the identity `host status` reports). It takes the endpoint lock and refuses
+`stale_generation` without signalling when another generation holds the endpoint, and `unknown_owner` when the process
+cannot be proven. `processStartTime` is `null` on platforms that record none (Windows); there a registration and
+confirmation that are both null bind pid, instance id and generation, and the stop proves the same process before
+signalling: its live start time (read with a 10 s budget) must be no later than the registration was written, so a
+reused pid is refused `unknown_owner`, and an answering host must report the confirmed instance id. It cannot be
+combined with `--drain`.
 
 The contract is machine-first: EXACTLY ONE JSON line on stdout and nothing else, diagnostics on stderr,
 and an exit code that classifies the outcome without parsing the line.
@@ -3899,6 +3922,23 @@ Response:
 ```
 
 The current session name is available via `get_state` in the `sessionName` field. To set the initial name when starting RPC mode, pass `--name <name>` or `-n <name>` to the `senpi --mode rpc` process.
+
+#### record_user_activity
+
+Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument`. On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`.
+
+```json
+{"type": "record_user_activity", "sessionId": "rpc-1", "kind": "draft"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "record_user_activity",
+  "success": true
+}
+```
 
 #### wake
 
