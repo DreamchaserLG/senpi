@@ -1053,13 +1053,13 @@ function originOf(
 	return options?.inputOrigin ?? inputOriginOf(options?.source);
 }
 
-/** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
 /** A human input about to be queued or admitted (senpi#3811 design 4.4). */
 export interface HumanInputAdmittedEvent {
 	readonly kind: "prompt" | "steer" | "follow_up" | "answer" | "resume";
 	readonly at: number;
 }
 
+/** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
 export interface QueuedInputOptions extends ClientMessageIdentity {
 	/**
 	 * Recovery-ordered enqueue position. A reconnecting client replays its pending
@@ -6534,12 +6534,14 @@ export class AgentSession {
 		}
 	}
 
-	/** Explicit user Resume; attachment alone must never call this. */
 	/**
-	 * Subscribe to human input as it enters the session: called synchronously, before the input is queued or
-	 * admitted, for TUI input, `interactive_user` RPC prompt/steer/follow_up, human question answers and
-	 * `resumeSession`. Never called for automatic deliveries (extension messages, wakes, continuations, input from
-	 * a connection without the role). A throwing listener does not block the input.
+	 * Subscribe to human input as it enters the session: called synchronously for every input whose origin is a
+	 * person (TUI input, RPC prompt/steer/follow_up, human question answers, `resumeSession`). Origin comes from
+	 * the entry point, never from the connection's `interactive_user` role, which only decides authority. Never
+	 * called for automatic deliveries (extension messages, wakes, continuations). A throwing listener does not block
+	 * the input. Timing: a call means a person sent it, not that it took effect: `prompt` reports before checks that
+	 * can still throw, `resumeSession` reports even when nothing is paused, and TUI messages queued during
+	 * compaction report when they are delivered.
 	 */
 	onHumanInputAdmitted(listener: (event: HumanInputAdmittedEvent) => void): () => void {
 		this._humanInputListeners.add(listener);
@@ -6567,6 +6569,7 @@ export class AgentSession {
 		}
 	}
 
+	/** Explicit user Resume; attachment alone must never call this. */
 	async resumeSession(): Promise<void> {
 		this._humanInputAdmitted("resume");
 		const input = this.externalAdmission.beginInput();

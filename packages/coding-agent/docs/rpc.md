@@ -391,9 +391,12 @@ Another overflow during recovery produces another gap and a newer snapshot.
 A client that advertises `interactive_user` in `set_client_info` declares that the connection belongs to a person's
 client. The role is the connection's authority over pausing: only such a connection may Stop a session (`intent:
 "stop"`) or release a Stop with its input (senpi#3811). It does not change an input's origin: every `prompt`, `steer`
-and `follow_up` is a person's input by its entry point, whatever the role. The role is bound at the connection's first
-declaration; a later `set_client_info` that adds or drops it is refused with `connection_role_fixed`, so the heartbeat
-must repeat the same list. A client that dispatches input on its own (for example a queued follow-up it sends later)
+and `follow_up` is a person's input by its entry point, whatever the role. The role belongs to the connection, not to a session:
+on a shared host every connection attached to a session keeps its own role, and a stdio host's one client is a
+single connection. Only the client's own `set_client_info`
+declares it (at connection level or for a session); the host's launch capabilities and
+`SENPI_RPC_CLIENT_CAPABILITIES` never do. It is bound at the connection's first declaration; a later `set_client_info`
+that adds or drops it is refused with `connection_role_fixed`, so the heartbeat must repeat the same list. A client that dispatches input on its own (for example a queued follow-up it sends later)
 should use a second connection without the role.
 
 #### media_placeholders

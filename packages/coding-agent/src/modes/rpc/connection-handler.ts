@@ -68,6 +68,7 @@ import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.
 import { ClientAdmissions } from "./client-admissions.ts";
 import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
+import { CONNECTION_ROLE_FIXED, ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import {
 	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
@@ -76,7 +77,6 @@ import {
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
 	EVAL_CELLS_CAPABILITY,
 	EXTENSION_EVENTS_CAPABILITY,
-	INTERACTIVE_USER_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	QUESTION_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
@@ -148,6 +148,8 @@ export { buildRpcSessionState } from "./rpc-session-state.ts";
 export interface RpcConnectionOptions {
 	/** Client capability flags from the handshake (e.g. custom_unsupported opt-in). */
 	capabilities?: readonly string[];
+	/** The host's per-connection role registry; a single-connection process keeps its own. */
+	connectionRoles?: ConnectionRoles;
 	/** Called instead of requesting process shutdown for a session-owned binding. */
 	shutdownHandler?: () => void;
 	/** Session registries own runtime disposal themselves. */
@@ -326,8 +328,7 @@ export function createRpcConnectionHandler(
 	options: RpcConnectionOptions = {},
 ): RpcConnectionHandler {
 	let clientCapabilities = options.capabilities;
-	// Bound to the connection at its first declaration; no later command can change who it speaks for.
-	let interactiveUser: boolean | undefined = options.capabilities?.includes(INTERACTIVE_USER_CAPABILITY);
+	const connectionRoles = options.connectionRoles ?? new ConnectionRoles();
 	const routingSessionId = options.sessionId;
 	// True only while THIS connection's own command drives a replacement; the issuer
 	// already learns the new identity from its command response.
@@ -1194,14 +1195,8 @@ export function createRpcConnectionHandler(
 
 			case "set_client_info":
 				if (command.capabilities !== undefined) {
-					const declares = command.capabilities.includes(INTERACTIVE_USER_CAPABILITY);
-					if (interactiveUser !== undefined && interactiveUser !== declares)
-						return error(
-							id,
-							"set_client_info",
-							"connection_role_fixed: interactive_user cannot change after it is declared",
-						);
-					interactiveUser = declares;
+					if (!connectionRoles.declare(roleConnection(options.clientInfo?.connectionId()), command.capabilities))
+						return error(id, "set_client_info", CONNECTION_ROLE_FIXED);
 				}
 				if (options.clientInfo && command.capabilities !== undefined) {
 					clientCapabilities = command.capabilities;

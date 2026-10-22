@@ -70,19 +70,26 @@ The `respond` closure in `connection-question-bridge.ts`.
 
 ### What changed
 
-`connection-handler.ts` binds a connection's `interactive_user` capability at its first `set_client_info` declaration; a later change is refused with `connection_role_fixed`. The role is the connection's authority (who may Stop a session or release a pause, senpi#3811); it does not change an input's origin, which stays classified at the entry point. `custom-capability.ts` exports `INTERACTIVE_USER_CAPABILITY`.
+- `packages/coding-agent/src/modes/rpc/connection-roles.ts` (new): `ConnectionRoles` records each connection's `interactive_user` role at its first explicit `set_client_info` and refuses a different later declaration with `connection_role_fixed`; launch capabilities never declare a role. `roleConnection` keys a line with no connection id (a stdio host, and the worker isolate serving it) to the sole connection, so a stdio client's role is still declared once and fixed; `clear` forgets every role when a worker isolate's session ends.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `set_client_info` case declares through the shared registry for the current connection (a single-connection process keeps its own); the handler no longer seeds the role from `options.capabilities`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: owns the host's one `ConnectionRoles`, passes it to every session binding, declares on the connection-level `set_client_info` path, and releases the role when the connection goes.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: exports `INTERACTIVE_USER_CAPABILITY`, documented as authority only.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `session-worker-protocol.ts`, `session-worker.ts`, `session-binding.ts`: the worker runtime sends each connection's declared roles with `bind` and `command`; the isolate adopts them into its own registry, and a declaration made inside the isolate is reported back to the host's registry (a refused report is logged as drift). Every declare, read and adopt goes through `roleConnection`, and the isolate clears its registry when it closes.
 
 ### Why
 
-Stop and pause authority must belong to a person's client, not to bots, scripts or task runners, which connect without the role.
+- Stop and pause authority must belong to a person's client, not to bots, scripts or task runners that connect without the role.
+- A shared host serves every connection attached to a session through one binding, so a per-session role let the first connection, or the host's launch defaults, decide for every later connection (review of senpi#3873).
+- The role is authority only; input origin stays classified at the entry point.
 
 ### Why an extension could not handle it
 
-Connection capabilities and input admission are core RPC.
+- Connection capabilities, the host router and input admission are core RPC.
 
 ### Expected merge conflict zones
 
-The `set_client_info` case in `connection-handler.ts`.
+- The `set_client_info` case in `connection-handler.ts`.
+- The connection-level `set_client_info` branch, `releaseConnection` and the binding options in `session-command-router.ts`.
 
 ## 2026-10-21 - Admit Resume promptly and preserve park context patches (senpi#3853)
 
