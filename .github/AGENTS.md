@@ -45,7 +45,8 @@ checks and their jobs, and `scripts/merge-queue-workflows.test.mjs` fails when a
 its `merge_group` trigger, a job name drifts from the required context, or an event filter would skip
 the job on the queue. Keep that file equal to the branch-protection setting.
 
-- `Check and test` (`ci.yml`) runs the full CI on the queue's merge commit.
+- `Check and test` (`ci.yml`) runs the full CI on the queue's merge commit, except the codemode baseline
+  review (`gate-baseline-review.ts`), which needs `GITHUB_BASE_REF` and already ran on the PR.
 - `Changelog gate` (`changelog-gate.yml`) runs only the whole-tree `changes.md` audit there; the per-PR
   check needs the PR's base, head and labels, which a merge group does not carry, and it already passed on the PR.
 - `Review claim gate` (`review-claims.yml`) re-reads the queued PR's claim labels (PR number from the
@@ -54,6 +55,9 @@ the job on the queue. Keep that file equal to the branch-protection setting.
   has no `head_ref`, GitHub counts a skipped required check as passing, and the guard already ran on the PR.
 
 Until a maintainer enables the queue, nothing changes for PRs or pushes.
+
+Enable it only after the PR-side macOS/Windows path scoping (senpi#3957) is on `main`: a queue run is a full run,
+so without that scoping every merge pays the hosted macOS/Windows matrix twice (once on the PR, once in the queue).
 
 Queue runs execute the queued PR's own workflow files in this repository's context, with its secrets and
 with whatever `permissions:` those files ask for. Queuing a PR therefore runs its workflow changes with
