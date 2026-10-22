@@ -3,7 +3,7 @@ import { EXTENSION_EVENTS_CAPABILITY, QUESTION_CAPABILITY } from "./custom-capab
 /**
  * The client capabilities one session handler answers with. On a shared host they are the union of the
  * attached connections' declarations, set by the router (omo-desktop-app#4042); a single-connection process
- * keeps its launch capabilities. Changing them re-subscribes extension events when `extension_events` comes
+ * starts with its launch capabilities and replaces them on a declaration. Changing them re-subscribes extension events when `extension_events` comes
  * or goes, and withdrawing `question` cancels the structured questions no attached connection can answer.
  */
 export class SessionClientCapabilities {
@@ -32,7 +32,7 @@ export class SessionClientCapabilities {
 		const hadEvents = this.has(EXTENSION_EVENTS_CAPABILITY);
 		const hadQuestion = this.has(QUESTION_CAPABILITY);
 		this.value = [...next];
-		if (hadEvents !== this.has(EXTENSION_EVENTS_CAPABILITY)) this.onExtensionEventsChanged();
 		if (hadQuestion && !this.has(QUESTION_CAPABILITY)) this.onQuestionWithdrawn();
+		if (hadEvents !== this.has(EXTENSION_EVENTS_CAPABILITY)) this.onExtensionEventsChanged();
 	}
 }
