@@ -8,6 +8,10 @@ name: Automation branch guard
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  # The merge queue requires this check on its merge commit too. A merge group has no head_ref, so the job
+  # below is skipped there, which GitHub counts as passing; the guard itself already ran on the PR.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read

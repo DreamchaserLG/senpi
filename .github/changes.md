@@ -3,6 +3,7 @@
 ### What changed
 
 - `.github/workflows/ci.yml`, `.github/workflows/changelog-gate.yml`, `.github/workflows/review-claims.yml`: each triggers on `merge_group` (`checks_requested`) and reports under the same required check name. The changelog gate checks out `github.sha` there and runs only the whole-tree changes.md audit; the review claim gate reads the queued PR number from the merge group head ref, fails closed without one, and runs with a read-only token.
+- `.github/workflows/automation-branch-guard.yml`: also triggers on `merge_group`; its job is skipped there (no `head_ref`), which counts as passing for the fourth required check.
 - `.github/required-checks.json`, `scripts/merge-queue-workflows.test.mjs`: the required-check list and a test that every listed workflow keeps its `merge_group` trigger and exact job name.
 
 ### Why

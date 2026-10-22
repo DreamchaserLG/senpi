@@ -15,6 +15,11 @@
 			"context": "Review claim gate",
 			"workflow": "review-claims.yml",
 			"job": "gate"
+		},
+		{
+			"context": "Automation branch carries only bot commits",
+			"workflow": "automation-branch-guard.yml",
+			"job": "guard"
 		}
 	]
 }
