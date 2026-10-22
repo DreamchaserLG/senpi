@@ -110,7 +110,10 @@ describe("goal loop with an async ask-user question", () => {
 		expect(world.ask.deliveries).toHaveLength(1);
 		expect(String(world.ask.deliveries[0]?.content)).toContain(TIMEOUT_MARKER);
 		expect(String(world.ask.deliveries[0]?.content)).toContain("[Answer to question call-async-timeout]");
-		expect(world.ask.deliveries[0]?.options).toEqual({ deliverAs: "followUp" });
+		expect(world.ask.deliveries[0]?.options).toEqual({
+			deliverAs: "followUp",
+			details: { origin: "ask-user-answer", requestId: "call-async-timeout" },
+		});
 
 		// That follow-up is the single wake: the drained wake source must not stack
 		// a continuation prompt on top of it.
@@ -143,7 +146,10 @@ describe("goal loop with an async ask-user question", () => {
 		expect(world.ask.deliveries).toEqual([
 			{
 				content: "[Answer to question call-async-answered]\nLibrary: OAuth",
-				options: { deliverAs: "followUp" },
+				options: {
+					deliverAs: "followUp",
+					details: { origin: "ask-user-answer", requestId: "call-async-answered" },
+				},
 			},
 		]);
 
