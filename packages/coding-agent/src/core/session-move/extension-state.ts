@@ -37,6 +37,17 @@ export function movedStateDir(sessionFile: string, moveId: MoveId): string {
 	return join(dirname(sessionFile), MOVE_STATE, "in", `${basename(sessionFile, ".jsonl")}.${parseMoveId(moveId)}`);
 }
 
+/**
+ * Whether an import left any state folder for this session. Every pending folder is a `movedStateDir`, so when none
+ * exists nothing can be pending and the session file need not be read (senpi#3985).
+ */
+function hasMovedStateFolder(sessionFile: string): boolean {
+	const incoming = join(dirname(sessionFile), MOVE_STATE, "in");
+	if (!existsSync(incoming)) return false;
+	const prefix = `${basename(sessionFile, ".jsonl")}.`;
+	return readdirSync(incoming).some((name) => name.startsWith(prefix));
+}
+
 interface EntryLike {
 	readonly type: string;
 	readonly customType?: string;
@@ -92,7 +103,7 @@ export function prepareOutgoingState(
  * newest `session_moved_in` counts, and only until a `session_move_state_restored` for that move is written.
  */
 export function pendingMovedState(sessionFile: string): { readonly moveId: MoveId; readonly dir: string } | undefined {
-	if (!existsSync(sessionFile)) return undefined;
+	if (!existsSync(sessionFile) || !hasMovedStateFolder(sessionFile)) return undefined;
 	const entries: readonly EntryLike[] = loadEntriesFromFile(sessionFile);
 	const movedIn = entries.findLast((entry) => entry.type === "custom" && entry.customType === SESSION_MOVED_IN);
 	const moveId = movedIn === undefined ? undefined : moveIdOf(movedIn);
