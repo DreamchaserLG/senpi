@@ -1,3 +1,21 @@
+## 2026-10-23 - A usage limit is not a billing pin (senpi#3038)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/billing.ts` (fork-only): `BILLING_ERROR_PATTERN` no longer matches `usage_limit_reached` or "usage limit has been reached". An account usage limit now falls back as an account limit (`transient` with `limit: "account"`), parks the original until its reset, and `maybeRestorePrimary` returns to it at the first turn boundary after that. `usage_not_included` (the plan does not include the model) stays billing and keeps pinning.
+
+### Why
+
+- A usage limit is a window that resets. Pinning on it held the session on the fallback model for the rest of the session, long after the subscription's limit had reset and its pool slot block had expired.
+
+### Why an extension could not handle it
+
+- The fallback reason is chosen inside `agent-session.ts` from this pattern before any extension sees the failure.
+
+### Expected merge conflict zones
+
+- LOW: the pattern list in `core/retry-fallback/billing.ts`; the module is fork-local.
+
 ## 2026-10-20 - Contain project skill links and retain security notices (senpi#3796)
 
 ### What changed

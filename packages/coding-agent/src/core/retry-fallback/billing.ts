@@ -4,11 +4,11 @@
  * one is always pinned: the candidate becomes the session model for the rest of
  * the session instead of reverting after the billing cooldown.
  *
- * The OpenAI hard-quota exhaustion family (`usage_limit_reached`,
- * `usage_not_included`, "usage limit has been reached") is inlined here to keep
- * this module import-free; its single source of truth is
- * `USAGE_LIMIT_EXHAUSTION` in `@earendil-works/pi-ai`'s `utils/retry.ts`
- * (senpi#1969).
+ * A usage limit (`usage_limit_reached`, "usage limit has been reached") is NOT
+ * billing: it is a window that resets, so pinning on it kept a session off its
+ * subscription long after the reset (senpi#3038). It still switches at once as an
+ * account limit and parks the original until its reset. `usage_not_included`
+ * stays here: the plan does not include the model, and no reset changes that.
  */
 const BILLING_ERROR_PATTERN = new RegExp(
 	[
@@ -18,12 +18,8 @@ const BILLING_ERROR_PATTERN = new RegExp(
 		"purchase credits",
 		"credits[-_ ]required",
 		"credits are required",
-		// OpenAI hard-quota exhaustion (senpi#1969). Inlined to keep this module
-		// import-free; the single source of truth is USAGE_LIMIT_EXHAUSTION in
-		// @earendil-works/pi-ai utils/retry.ts.
-		"usage_limit_reached",
+		// OpenAI plan entitlement (senpi#1969): the model is not in the plan at all.
 		"usage_not_included",
-		"usage limit has been reached",
 	].join("|"),
 	"i",
 );

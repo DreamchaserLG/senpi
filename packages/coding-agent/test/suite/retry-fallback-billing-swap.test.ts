@@ -22,6 +22,13 @@ const terminalNonBillingError = "Error: provider rejected the request permanentl
 // account-quota exhaustion arrives as a 429 usage_limit_reached.
 const usageLimitExhaustedError =
 	'OpenAI API error (429): {"type":"usage_limit_reached","message":"The usage limit has been reached"}';
+// A plan that does not include the model at all: no reset brings it back (senpi#1969).
+const usageNotIncludedError =
+	'429 {"error":{"type":"usage_not_included","message":"This model is not included in your current plan"}}';
+const WALL_EPOCH = Date.UTC(2026, 9, 23, 8, 0);
+// The ChatGPT subscription body for a spent 5-hour window that resets in one hour.
+const usageLimitResetIn = (wallMs: number, ms: number) =>
+	`429 {"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_at":${Math.floor((wallMs + ms) / 1000)}}}`;
 
 const billingError = () => fauxAssistantMessage("", { stopReason: "error", errorMessage: creditBalanceError });
 const creditsRequiredBillingError = () =>
@@ -30,10 +37,11 @@ const usageLimitBillingError = () =>
 	fauxAssistantMessage("", { stopReason: "error", errorMessage: usageLimitExhaustedError });
 const hardError = () => fauxAssistantMessage("", { stopReason: "error", errorMessage: terminalNonBillingError });
 
-async function createChainHarness(now: () => number, maxRetries = 0): Promise<Harness> {
+async function createChainHarness(now: () => number, maxRetries = 0, wallNow?: () => number): Promise<Harness> {
 	const harness = await createHarness({
 		models: [{ id: "faux-1" }, { id: "faux-2" }],
 		fallbackNow: now,
+		...(wallNow === undefined ? {} : { fallbackWallNow: wallNow }),
 		settings: {
 			retry: { enabled: true, maxRetries, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
 		},
@@ -99,31 +107,63 @@ describe("retry fallback billing swap", () => {
 		expect(harness.session.model?.id).toBe("faux-2");
 	});
 
-	it("switches to the fallback on the first usage_limit_reached failure and pins it as billing", async () => {
-		let now = 0;
+	// senpi#3038: a usage limit is a window that resets, not a billing failure, so it must not pin.
+	it("switches on the first usage_limit_reached failure and returns to the primary once the limit resets", async () => {
+		const clock = { mono: 0, wall: WALL_EPOCH };
 		// 5 mirrors the senpi-default turn budget: the switch must happen on the
 		// FIRST failure without spending any of that same-model budget.
-		const harness = await createChainHarness(() => now, 5);
+		const harness = await createChainHarness(
+			() => clock.mono,
+			5,
+			() => clock.wall,
+		);
 		harnesses.push(harness);
 		harness.setResponses([
-			usageLimitBillingError(),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: usageLimitResetIn(clock.wall, 60 * 60_000) }),
 			fauxAssistantMessage("fallback answer"),
-			fauxAssistantMessage("still fallback"),
+			fauxAssistantMessage("fallback before the reset"),
+			fauxAssistantMessage("primary after the reset"),
 		]);
 
 		await harness.session.prompt("first");
 
 		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2"]);
-		expect(harness.eventsOfType("retry_fallback_applied").map((event) => event.reason)).toEqual(["billing"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([{ limit: "account" }]);
 
-		// Far past every cooldown: the billing-class switch must hold the fallback for
-		// the rest of the session instead of reverting into the quota-dead primary.
-		now += 31 * 60_000;
+		// Before the reset no request is spent on the spent primary.
+		clock.mono += 30 * 60_000;
+		clock.wall += 30 * 60_000;
+		await harness.session.prompt("second");
+		expect(harness.session.model?.id).toBe("faux-2");
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2", "faux-2"]);
+
+		// Past the reset the next turn tries the subscription again.
+		clock.mono += 31 * 60_000;
+		clock.wall += 31 * 60_000;
+		await harness.session.prompt("third");
+
+		expect(harness.session.model?.id).toBe("faux-1");
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2", "faux-2", "faux-1"]);
+	});
+
+	it("keeps a usage_not_included fallback pinned: the plan does not include the model", async () => {
+		let now = 0;
+		const harness = await createChainHarness(() => now);
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: usageNotIncludedError }),
+			fauxAssistantMessage("fallback answer"),
+			fauxAssistantMessage("still fallback"),
+		]);
+
+		await harness.session.prompt("first");
+		expect(harness.session.model?.id).toBe("faux-2");
+
+		now += 24 * 60 * 60_000;
 		await harness.session.prompt("second");
 
 		expect(harness.eventsOfType("retry_fallback_reverted")).toEqual([]);
 		expect(harness.session.model?.id).toBe("faux-2");
-		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2", "faux-2"]);
 	});
 
 	it("fails on the first attempt when no fallback is configured, keeping the error turn", async () => {
@@ -186,7 +226,9 @@ describe("isBillingErrorMessage", () => {
 		["purchase credits", "Please purchase credits to continue using this API", true],
 		["anthropic credits_required 429", creditsRequiredError, true],
 		["credits_required error code only", '429 {"error_code":"credits_required"}', true],
-		["openai usage_limit_reached 429", usageLimitExhaustedError, true],
+		// senpi#3038: a usage limit resets with its window; it is not billing.
+		["openai usage_limit_reached 429", usageLimitExhaustedError, false],
+		["usage limit sentence", "The usage limit has been reached", false],
 		[
 			"openai usage_not_included",
 			'429 {"error":{"type":"usage_not_included","message":"This model is not included in your current plan"}}',
