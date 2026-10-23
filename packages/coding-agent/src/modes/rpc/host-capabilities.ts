@@ -31,6 +31,7 @@ import {
 	SESSION_KIND_CAPABILITY,
 	SESSION_RELOCATION_CAPABILITY,
 	SESSION_STATUS_CAPABILITY,
+	TOOL_BARRIER_CAPABILITY,
 	WARM_CAPABILITY,
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
@@ -71,6 +72,7 @@ export function multiSessionHostCapabilities(options: {
 			EVAL_CELLS_CAPABILITY,
 			AUTH_KEY_VERIFY_CAPABILITY,
 			QUEUED_MESSAGE_REVISION_CAPABILITY,
+			TOOL_BARRIER_CAPABILITY,
 			USER_ACTIVITY_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,

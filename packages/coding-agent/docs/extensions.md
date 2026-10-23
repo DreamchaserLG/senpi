@@ -2467,6 +2467,17 @@ pi.setActiveTools([...new Set([...active, "my_custom_tool"])]); // Keep current 
 pi.setActiveTools(["read", "bash"]); // Switch to read-only
 ```
 
+### pi.armToolBarrier(spec) / pi.releaseToolBarrier(id)
+
+Hold the workspace-changing tools of a turn until you are ready, for example while you capture a checkpoint of the workspace. `pi.armToolBarrier({ id, deadlineMs })` arms the session's tool barrier; while it is armed, every tool not declared `workspaceEffect: "read"` waits before it runs. Armed while the session is idle (for example from `before_agent_start`), it belongs to the next turn. It opens on `pi.releaseToolBarrier(id)` (which returns `false`, a no-op, when no barrier with that id is armed), when its turn ends, or after `deadlineMs` (1..600000), which emits the `tool_barrier_expired` session event. Stop ends the wait. `id` is 1-256 characters; arming again replaces the id and ceiling while calls already waiting keep waiting.
+
+```typescript
+pi.on("before_agent_start", () => {
+  pi.armToolBarrier({ id: "checkpoint", deadlineMs: 30_000 });
+  void captureCheckpoint().finally(() => pi.releaseToolBarrier("checkpoint"));
+});
+```
+
 `pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, `kernelPrelude`, `permissionParser`, and `sourceInfo`.
 
 Typical `sourceInfo.source` values:
@@ -3249,6 +3260,7 @@ Add these fields to `pi.registerTool(...)`:
 - **`searchKeywords`**: Synonyms or domain terms, indexed with the same weight as the tool name. Never sent to the model.
 - **`searchGroup`**: Organizational filter group. Defaults to your extension's label.
 - **`namespace`** and **`annotations`**: Optional grouping and behavior hints, for example from an MCP server.
+- **`workspaceEffect`**: `"read" | "write"`. A `"read"` tool runs while a tool barrier is armed (see `pi.armToolBarrier`); any other tool, including one that leaves this unset, waits for the barrier's release. Declare `"read"` only for tools that never change files, processes or other workspace state.
 - **`outputSchema`**: Optional schema for `structuredContent`; a result can also set `isError`.
 - **`allowLazyActivation`**: Default `true`. If `false`, the tool is hidden from `tool_search` completely and cannot be lazily activated during code mode execution. Explicit activation via `pi.setActiveTools()` is still allowed.
 

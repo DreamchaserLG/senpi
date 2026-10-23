@@ -417,6 +417,28 @@ Session creation and `--session` resolution run in core before any extension is 
 
 - `packages/coding-agent/src/core/retry-fallback/settings.ts`: import and the release-gated `DEFAULT_FALLBACK_CHAINS` entry.
 
+## 2026-10-19 - Session tool barrier (senpi#3717)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `armToolBarrier({ id, deadlineMs })` / `releaseToolBarrier(id)` over the new fork-only `tool-barrier.ts`. `preflightToolCall` (every tool call, nested `ctx.executeTool` calls and the Cursor exec bridge included) waits on an armed barrier, racing the run's abort signal, before the extension `tool_call` hook, unless the tool definition declares `workspaceEffect: "read"`; a waiting call emits `tool_barrier_waiting`, and a ceiling that passes emits `tool_barrier_expired`. `beforeToolCall` forwards the loop's signal into `preflightToolCall`. `PromptOptions.toolBarrier` is validated before acceptance and armed right before the `started` disposition, so only a prompt that starts its own turn arms it. The barrier clears on the final `agent_end` (not one followed by an automatic retry), when the queued-input port commits a follow-up (a drained follow-up starts a new turn inside the same run), and on dispose. The extension actions bind `armToolBarrier`/`releaseToolBarrier`.
+- `packages/coding-agent/src/core/agent-session.ts` (#3722 review): `_emitAgentSettled` also clears the barrier when the run settles, so a retry that is cancelled during its backoff or declined, which settles without another `agent_end`, cannot leave it armed for a later turn.
+- `packages/coding-agent/src/core/agent-session.ts` (#3722 review LOW): `preflightToolCall` blocks a call that Stop released from the barrier (`{ block: true, reason: "Operation aborted" }`) without running the extension `tool_call` hooks: no permission prompt for a call that will not run, and a nested `executeTool` call (which honors only an explicit block) cannot run past a hook that would have denied it (#3722 delta review HIGH).
+- `packages/coding-agent/src/core/tool-barrier.ts` (new, fork-only): `ToolBarrier`, `ToolBarrierSpec`, `ToolWorkspaceEffect`, `toolBarrierSpecError`.
+
+### Why
+
+A client that captures a pre-turn workspace checkpoint had to finish the capture before sending the prompt, because a write tool could run before it was ready; that capture sat on the send-to-first-request path. A session tool barrier lets the prompt go out at once while workspace-changing tools wait for the client's release.
+
+### Why an extension could not handle it
+
+Tool preflight, the agent_end boundary and the queued-input port are AgentSession internals; an extension `tool_call` hook runs after preflight and cannot hold nested or bridge calls, and RPC needs one engine primitive rather than per-client logic.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_installAgentToolHooks` (`beforeToolCall` signal), `preflightToolCall` options and its first lines, the `agent_end` block of `_handleAgentEvent`, the `queuedInputPort` assignment in the constructor, `dispose()`, the `promptDisposition("started")` lines of `_prompt`, and the extension actions object.
+
+
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 
 ### What changed
@@ -11777,3 +11799,21 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 ### Expected merge conflict zones
 
 - LOW: `_recordQueuedInput`, the run-active edge in `_promptAgent`, the user `message_start` dequeue in `_processAgentEvent`, and the start of `_emitAgentSettled` in `agent-session.ts`; the `ALLOWED_DATA_KEY` pattern in `session-log.ts`.
+
+## 2026-10-23 - Release parked post-compaction input on every exit of the first response (senpi#4036 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: one `_releasePostCompactionDeferral()` disarms the post-compaction usage exemption and flushes the deferred steer/follow-up queues; `_consumePostCompactionUsageExemption` and the new `_releaseSpentPostCompactionExemption()` both go through it, so every consume releases what it held: the mid-run turn check (`prepareNextTurnWithContext` -> `_enforceCompactionBeforeProvider` -> `_checkCompaction`, reached when the first response calls a tool - the common case) and the pre-prompt checks, where the consume used to disarm without any later flush. At `agent_end` a spent exemption is released right after `_checkCompaction` and before the required-compaction admission re-sample (plus once more at the end of the block for paths that skip it), and the queued-continuation decision is recomputed with `_agentEndAllowsQueuedContinuation` so the run follows the same rules as one without a compaction. When a prompt ends without starting a run (`releaseStart(false)` with joined input), the parked input is flushed before `_drainJoinedInput()`; the exemption stays armed for the drained run's first response. A consumed exemption no longer continues the run when the first response ended in `error` or `aborted` (`allowsPostCompactionUsageExemptContinuation`): with retries off or the retry budget spent, the queued input waits for the next prompt as it does without a compaction. `_flushPostCompactionDeferredMessages` re-enqueues parked input at its original place (`_requeueAtOriginalPlace`, by the queued records' `enqueueOrder`), moving newer same-mode input behind it instead of appending the parked input last.
+
+### Why
+
+- Review of #4038 found three more exits of the same class: with threshold compaction off, an overflow-shaped first response (a `length` stop or over-window usage) returns before the consume, so the run did not continue the released input; the admission re-sample ran before the release and still read the armed exemption's `"threshold"` placeholder, failing `prompt()` with a false `RequiredCompactionError` after an aborted first response; and a first prompt handled without a run (an `input` hook, a command, a stop-hold, an admission rejection) left joined input parked because `_drainJoinedInput` only checks the agent queues.
+
+### Why an extension could not handle it
+
+- The exemption, the deferred queues, the start claim and the continuation decision are private `AgentSession` state decided inside `agent_end` handling and `_prompt`.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `agent_end` last-assistant block in `_processAgentEvent` (release placement, `releasedExemptionAllowsQueuedContinuation`, the exempt-continuation stop-reason gate, the continuation condition), `_consumePostCompactionUsageExemption`, `_flushPostCompactionDeferredMessages` / `_requeueAtOriginalPlace`, and `releaseStart` in `_prompt`.

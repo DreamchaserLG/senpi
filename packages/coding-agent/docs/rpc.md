@@ -1456,7 +1456,7 @@ Ends a subscription held by the same connection; a closed connection ends its su
 
 An attached connection patches the context a session publishes (on `list_sessions { include_workers: true }` and on `session_status` for subscribers with `include_context`). Keys match `^[a-z][a-z0-9_]{0,63}$`; values are strings of at most 256 characters, numbers, booleans, or `null` to delete; the patched context is at most 4096 bytes of JSON. The host's own keys (`host_socket`, `host_instance`, `shard_key`, `tree_key`) and the lineage keys (`parent_session_id`, `root_session_id`) are refused with `invalid_session_context` and `errorData { reason, action }`. The session's extensions keep reading the context the session was opened with, and a `childrenOf` subscription matches on that frozen open-time context, so no patch moves a session into or out of a supervisor's children view. The response carries the published `context`; subscribers with `include_context` receive a `session_status` with cause `context`.
 
-The SDK sends it with `RpcClient.setSessionContext(patch, sessionId?)`, which defaults to the attached session and rejects with an `RpcCommandError` carrying the code.
+The SDK sends it with `RpcClient.setSessionContext(patch, sessionId?)`, which defaults to the attached session and rejects with an `RpcCommandError` carrying the code. A client with no attached session that passes no `sessionId` refuses locally, without sending anything, with the same `RpcCommandError` and `errorCode: "session_not_attached"`.
 
 A connection without an attachment receives `errorCode: "session_not_attached"` with `errorData.reason: "this connection is not attached to that session"` and `errorData.action: "attach first with open_session { sessionPath }, then patch its context"`.
 
@@ -2726,6 +2726,28 @@ The prompt success response carries `data.disposition` (`"started"` | `"queued"`
 The `images` field is optional. Each image uses `ImageContent` format: `{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}`.
 The `message` field for `prompt`, `steer`, and `follow_up` is limited to 1,000,000 characters;
 image payloads are not counted toward this text limit.
+
+**Tool barrier** (capability `tool_barrier`): a client that captures a pre-turn workspace checkpoint can send the prompt at once and hold the turn's workspace-changing tools until its capture is done. `toolBarrier: {"id", "deadlineMs"}` arms the barrier for the turn this prompt starts; `id` is 1-256 characters and `deadlineMs` a whole number in 1..600000.
+
+```json
+{"id": "req-1", "type": "prompt", "message": "Fix the bug", "toolBarrier": {"id": "turn-42", "deadlineMs": 35000}}
+{"id": "req-1", "type": "response", "command": "prompt", "success": true, "data": {"disposition": "started", "toolBarrier": "armed"}}
+```
+
+- While the barrier is armed, a tool whose definition is not `workspaceEffect: "read"` waits after its `tool_execution_start` and before it runs, and the session emits `tool_barrier_waiting` once per waiting call. The built-in read-only tools (`read`, `grep`, `find`, `glob`, `ls`, `todo`, `web_search`, `webfetch`, `tool_search`, and the ask-user question tools) run at once; everything else, MCP and extension tools included, waits.
+- `data.toolBarrier` is `"armed"` when the prompt started its own turn (the barrier is armed before the response is written) and `"ignored"` when the prompt was queued into a running turn as steering or follow-up content, or handled by a command. Nothing is armed in the ignored case.
+- The barrier opens on `release_tool_barrier`, when its turn ends (the run's final `agent_end`, or a queued follow-up starting the next turn), or when `deadlineMs` passes, which emits `tool_barrier_expired`. A Stop (`abort`) ends the wait and settles the turn as aborted.
+- `steer` and `follow_up` never carry a barrier, and a prompt without `toolBarrier` behaves exactly as before.
+- A malformed `toolBarrier` is refused before the prompt is accepted.
+
+#### release_tool_barrier
+
+Open the tool barrier armed under `barrierId` (capability `tool_barrier`). It is idempotent: an id that was never armed, was already released, belonged to a turn that ended, or expired answers `released: false` and still succeeds.
+
+```json
+{"id": "req-2", "type": "release_tool_barrier", "barrierId": "turn-42"}
+{"id": "req-2", "type": "response", "command": "release_tool_barrier", "success": true, "data": {"released": true}}
+```
 
 #### steer
 
@@ -4346,6 +4368,8 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `tool_execution_start` | Tool begins execution |
 | `tool_execution_update` | Tool execution progress (streaming output) |
 | `tool_execution_end` | Tool completes |
+| `tool_barrier_waiting` | A workspace-changing tool call started waiting on the turn's tool barrier (`id`, `toolCallId`, `toolName`) |
+| `tool_barrier_expired` | The tool barrier's `deadlineMs` passed before a release; it opened by itself (`id`, `deadlineMs`) |
 | `queue_update` | Pending steering/follow-up queue changed |
 | `compaction_start` | Compaction begins |
 | `compaction_end` | Compaction completes |

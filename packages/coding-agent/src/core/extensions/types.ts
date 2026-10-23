@@ -94,6 +94,7 @@ import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo, SourceScope } from "../source-info.ts";
 import type { AccountLimits } from "../subscription-limits/limit-store.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import type { ToolBarrierSpec, ToolWorkspaceEffect } from "../tool-barrier.ts";
 import type { BashOperations } from "../tools/bash.ts";
 import type { EditToolDetails } from "../tools/edit.ts";
 import type {
@@ -1090,6 +1091,12 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 
 	/** Hints about what the tool does, for example from an MCP server. */
 	annotations?: ToolAnnotations;
+
+	/**
+	 * What a call can do to the workspace. `"read"` tools run while a tool barrier is armed; anything else,
+	 * including a tool that leaves this unset, waits for its release (senpi#3717).
+	 */
+	workspaceEffect?: ToolWorkspaceEffect;
 
 	/**
 	 * Whether registering the tool activates it. Default: `true` for `direct` and `model-only` tools;
@@ -2719,6 +2726,16 @@ export interface ExtensionAPI {
 	/** Get the names of the active tools, which are the tools declared to the model. */
 	getActiveTools(): string[];
 
+	/**
+	 * Arm the session's tool barrier (senpi#3717): until `releaseToolBarrier(id)`, the end of the turn it
+	 * belongs to, or `deadlineMs`, tools not declared `workspaceEffect: "read"` wait before they run.
+	 * Armed while idle, it belongs to the next turn.
+	 */
+	armToolBarrier(spec: ToolBarrierSpec): void;
+
+	/** Open the barrier armed under `id`; false (a no-op) when no barrier with that id is armed. */
+	releaseToolBarrier(id: string): boolean;
+
 	/** Get all configured tools with parameter schema, prompt guidelines, exposure, and source metadata. */
 	getAllTools(): ToolInfo[];
 
@@ -3341,6 +3358,9 @@ export interface ExtensionActions {
 	setSessionFastMode: SetSessionFastModeHandler;
 	/** Bound by `AgentSession`; a runtime bound without it keeps the pre-bind stub. */
 	sessionControl?: SessionControlActions;
+	/** Bound by `AgentSession` (senpi#3717); a runtime bound without them has no tool barrier. */
+	armToolBarrier?: (spec: ToolBarrierSpec) => void;
+	releaseToolBarrier?: (id: string) => boolean;
 }
 
 /**

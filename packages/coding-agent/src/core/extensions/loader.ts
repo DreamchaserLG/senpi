@@ -714,6 +714,17 @@ function createExtensionAPI(
 			return runtime.getActiveTools();
 		},
 
+		armToolBarrier(spec) {
+			assertActive();
+			if (!runtime.armToolBarrier) throw new Error("This runtime has no tool barrier (senpi#3717).");
+			runtime.armToolBarrier(spec);
+		},
+
+		releaseToolBarrier(id) {
+			assertActive();
+			return runtime.releaseToolBarrier?.(id) ?? false;
+		},
+
 		getAllTools() {
 			assertActive();
 			return runtime.getAllTools();

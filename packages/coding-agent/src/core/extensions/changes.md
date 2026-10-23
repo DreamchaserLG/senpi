@@ -187,6 +187,28 @@ The flag is the extension's way to tell the core pool not to wrap it; the core r
 
 `packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/runner.ts`: ExtensionContext, ExtensionContextActions, SessionEvent, event overloads, bindCore, createContext, and emit helpers.
 
+## 2026-10-19 - Tool barrier extension API and `workspaceEffect` (senpi#3717)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolDefinition.workspaceEffect?: "read" | "write"`; `ExtensionAPI.armToolBarrier(spec)` / `releaseToolBarrier(id)`; optional `ExtensionActions.armToolBarrier` / `releaseToolBarrier`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the `pi.armToolBarrier` / `pi.releaseToolBarrier` methods (arming throws on a runtime bound without the action; releasing answers false).
+- `packages/coding-agent/src/core/extensions/runner.ts`: `bindCore` copies the two optional actions into the runtime.
+
+### Why
+
+A client that captures a pre-turn workspace checkpoint had to finish the capture before sending the prompt, because a write tool could run before it was ready; that capture sat on the send-to-first-request path. A session tool barrier lets the prompt go out at once while workspace-changing tools wait for the client's release.
+
+### Why an extension could not handle it
+
+This is the public extension contract itself: the classification field and the arm/release methods have to exist on `ToolDefinition` and `ExtensionAPI`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolDefinition` after `annotations`, `ExtensionAPI` after `getActiveTools`, the end of `ExtensionActions`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the API object after `getActiveTools`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the optional-action lines after `sessionControl` in `bindCore`.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

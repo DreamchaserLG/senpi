@@ -73,7 +73,7 @@ import type {
 	RpcSlashCommand,
 	RpcUnloadAnswer,
 } from "./rpc-types.ts";
-import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
+import { RPC_ERROR_SESSION_NOT_ATTACHED, RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
 import {
 	readSocketSecret,
 	resolveSocketTransportAddress,
@@ -567,13 +567,23 @@ export class RpcClient {
 
 	/**
 	 * Patch the context the attached session publishes (`set_session_context`); `null` deletes a key.
-	 * Rejects with {@link RpcCommandError} carrying the host's code (`session_not_attached`, `invalid_session_context`).
+	 * Rejects with {@link RpcCommandError} carrying the host's code (`session_not_attached`, `invalid_session_context`);
+	 * a client with no attached session and no `sessionId` refuses locally with the same `session_not_attached` code.
 	 */
 	async setSessionContext(
 		patch: Record<string, string | number | boolean | null>,
 		sessionId = this.sessionId,
 	): Promise<void> {
-		if (!sessionId) throw new Error("set_session_context needs a session");
+		if (!sessionId) {
+			throw new RpcCommandError(
+				`${RPC_ERROR_SESSION_NOT_ATTACHED}: set_session_context needs a session`,
+				RPC_ERROR_SESSION_NOT_ATTACHED,
+				{
+					reason: "this client has no attached session",
+					action: "attach with openSession first, or pass a sessionId",
+				},
+			);
+		}
 		this.getData(await this.send({ type: "set_session_context", sessionId, patch }, false));
 	}
 

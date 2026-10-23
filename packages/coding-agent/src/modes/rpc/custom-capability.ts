@@ -38,6 +38,8 @@ export const ATTENDED_CAPABILITY = "attended";
 export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
 /** Opt-in: the client can present a multi-question `extension_ui_request{method:"question"}`. */
 export const QUESTION_CAPABILITY = "question";
+/** HOST capability: `prompt.toolBarrier` and `release_tool_barrier` are honored (senpi#3717). */
+export const TOOL_BARRIER_CAPABILITY = "tool_barrier";
 /**
  * Both directions, like `media_placeholders`: a host advertises it in `get_protocol_info` (its sessions send
  * `host_request` / `relocation_due`), and a client sends it in `set_client_info` to offer moving a session elsewhere.
