@@ -1,3 +1,22 @@
+## 2026-10-23 - Keep parked goal waits recoverable and interruptible (senpi#4050)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: arm a second deadline callback one second after the primary, cancel both as one generation, and retain scheduling state when a busy session or pending input declines delivery. `afterAgentSettled` retries overdue work without starting a turn over an active run. Direct-input holds, cancellation, drain-fire replacement and disposal retire both callbacks.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: the goal owns the configured interrupt key only while its wait is armed and the session is idle. Cancel the wait synchronously, then perform the same goal accounting and pause/block transition as `session_abort`. Unsubscribe on session replacement and shutdown.
+
+### Why
+
+The primary callback used to consume the only scheduling state before checking eligibility, so a declined wake was lost. Keyboard Escape did not reach a goal parked outside a run. A deliberately dropped primary callback also had no independent recovery deadline. The original Windows incident's exact trigger remains unconfirmed; pending-input store recovery is tracked separately in #4045.
+
+### Why an extension could not handle it
+
+The fix is inside the goal builtin and uses the existing terminal-input hook. The core contract that aborting a truly idle session emits no `session_abort` is preserved.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: scheduling, direct-input holds, settlement and timer cleanup. `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: session-start, user-abort and shutdown lifecycle handlers.
+
 ## 2026-10-21 - A user Stop pauses the goal with the session (senpi#3811)
 
 ### What changed

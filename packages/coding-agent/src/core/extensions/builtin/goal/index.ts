@@ -1,3 +1,4 @@
+import { getKeybindings, isKeyRelease } from "@earendil-works/pi-tui";
 import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../manual-continue.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
@@ -59,6 +60,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	let completedThisTurnGoalId: string | null = null;
 	let continuationPending = false;
 	let activeContext: ExtensionContext | undefined;
+	let unsubscribeWaitInterrupt: (() => void) | undefined;
 	const turnUsage = new TurnUsageTracker();
 	// No stale-ctx swallow here: GoalWaitTicker retires itself on a stale render
 	// (a ticker that keeps ticking against a retired ctx freezes the footer
@@ -154,6 +156,27 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		ctx.ui.setStatus("todo-waiting", undefined);
 		activeContext = ctx;
 		monitorContinuation.start(ctx);
+		unsubscribeWaitInterrupt?.();
+		unsubscribeWaitInterrupt = undefined;
+		if (ctx.mode === "tui") {
+			unsubscribeWaitInterrupt = ctx.ui.onTerminalInput((data) => {
+				if (
+					monitorContinuation.scheduledContinuation() === undefined ||
+					!ctx.isIdle() ||
+					isKeyRelease(data) ||
+					!getKeybindings().matches(data, "app.interrupt")
+				) {
+					return undefined;
+				}
+				monitorContinuation.cancelWait();
+				void onUserAbort(ctx).catch((error: unknown) => {
+					if (isStaleExtensionContextError(error)) return;
+					const message = error instanceof Error ? error.message : String(error);
+					ctx.ui.notify(`Could not stop the goal: ${message}. Try /goal pause.`, "error");
+				});
+				return { consume: true };
+			});
+		}
 		directInputLifecycle.reset();
 		todoOwedBackstop.resetChain();
 		const ref = goalStoreRef(ctx);
@@ -332,6 +355,11 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_abort", async (_event, ctx) => {
+		await onUserAbort(ctx);
+	});
+
+	async function onUserAbort(ctx: ExtensionContext): Promise<void> {
+		monitorContinuation.cancelWait();
 		continuationPending = false;
 		const goal = await readGoal(goalStoreRef(ctx));
 		if (goal?.status !== "active") return;
@@ -341,10 +369,12 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			clearAgentGoalAccounting();
 			refreshGoalUiBestEffort(ctx, stopped);
 		}
-	});
+	}
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		activeContext = undefined;
+		unsubscribeWaitInterrupt?.();
+		unsubscribeWaitInterrupt = undefined;
 		unsubscribeGoalStoreChanged();
 		if (agentGoalAccounting !== null) {
 			await accountCurrentAgentTurn(ctx, "active");
