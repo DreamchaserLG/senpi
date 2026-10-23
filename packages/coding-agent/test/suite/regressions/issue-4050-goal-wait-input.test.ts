@@ -64,9 +64,11 @@ describe("input during a parked goal wait", () => {
 		Reflect.deleteProperty(ui, "onTerminalInput");
 		const harness = await createHarness({ persistSession: true, extensionFactories: [goalExtension] });
 		harnesses.push(harness);
+		const errors: unknown[] = [];
 
-		await harness.session.bindExtensions({ mode, uiContext: ui });
+		await harness.session.bindExtensions({ mode, uiContext: ui, onError: (error) => errors.push(error) });
 
+		expect(errors).toEqual([]);
 		expect(harness.session.isIdle).toBe(true);
 	});
 
