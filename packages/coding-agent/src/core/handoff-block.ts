@@ -76,7 +76,10 @@ function slot(paragraph: string, hits: readonly LabelHit[], label: string): stri
 	if (at < 0) return undefined;
 	const start = hits[at]?.end ?? 0;
 	const end = hits[at + 1]?.start ?? paragraph.length;
-	const text = paragraph.slice(start, end).trim().replace(/\s+[-\u2013\u2014]$/u, "");
+	const text = paragraph
+		.slice(start, end)
+		.trim()
+		.replace(/\s+[-\u2013\u2014]$/u, "");
 	return text === "" ? undefined : text;
 }
 

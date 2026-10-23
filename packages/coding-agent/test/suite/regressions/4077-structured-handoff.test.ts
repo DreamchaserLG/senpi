@@ -51,11 +51,17 @@ describe("regression #4077: the handoff block is a structured part of the reply"
 
 	it("splits a GPT block into its outcome and You need slots", () => {
 		const [block] = findHandoffBlocks({ role: "assistant", content: [{ type: "text", text: GPT_BLOCK }] });
-		expect(block).toMatchObject({ shape: "gpt", outcome: "Redirect fixed for every user.", youNeed: "3/3 done, no blockers." });
+		expect(block).toMatchObject({
+			shape: "gpt",
+			outcome: "Redirect fixed for every user.",
+			youNeed: "3/3 done, no blockers.",
+		});
 	});
 
 	it("ignores model-only text parts and non-assistant messages", () => {
-		expect(findHandoffBlocks({ role: "assistant", content: [{ type: "text", text: BLOCK, audience: "model" }] })).toEqual([]);
+		expect(
+			findHandoffBlocks({ role: "assistant", content: [{ type: "text", text: BLOCK, audience: "model" }] }),
+		).toEqual([]);
 		expect(findHandoffBlocks({ role: "user", content: [{ type: "text", text: BLOCK }] })).toEqual([]);
 	});
 
@@ -64,7 +70,9 @@ describe("regression #4077: the handoff block is a structured part of the reply"
 		const [end] = harness.eventsOfType("message_end").filter((event) => event.message.role === "assistant");
 		expect(toJsonEvent(end)).toMatchObject({ handoffs: [{ now: "Report the fix.", next: "Open the PR." }] });
 		const rpcEnd = records.find(
-			(record) => Reflect.get(record, "type") === "message_end" && Reflect.get(Reflect.get(record, "message"), "role") === "assistant",
+			(record) =>
+				Reflect.get(record, "type") === "message_end" &&
+				Reflect.get(Reflect.get(record, "message"), "role") === "assistant",
 		);
 		expect(rpcEnd).toMatchObject({ handoffs: [{ ask: "fix the login redirect", contentIndex: 0 }] });
 		const persisted = harness.session.messages.at(-1);
