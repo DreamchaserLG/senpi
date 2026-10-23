@@ -7,6 +7,7 @@ export interface SessionQueuedInputPortOptions {
 	readonly ownerId: string;
 	readonly writerGeneration: number;
 	readonly nextAttemptId: () => string;
+	readonly clearGeneration?: () => number;
 }
 
 /**
@@ -16,11 +17,18 @@ export interface SessionQueuedInputPortOptions {
  */
 export function createSessionQueuedInputPort(options: SessionQueuedInputPortOptions): QueuedInputPort {
 	const attempts = new Map<AgentMessage, DeliveryToken>();
+	const retained = new Map<
+		"steering" | "followUp",
+		{ readonly messages: AgentMessage[]; readonly restorable: () => boolean }
+	>();
 
 	const reserve = async (tx: PendingInputTransaction, message: AgentMessage): Promise<boolean> => {
 		const clientMessageId = clientMessageIdOf(message);
 		const input = clientMessageId === undefined ? undefined : tx.current(clientMessageId);
 		if (clientMessageId === undefined || input === undefined) return true;
+		const previous = attempts.get(message);
+		if (input.phase === "sending" && previous !== undefined && input.attempt?.attemptId === previous.attemptId)
+			return true;
 		const token: DeliveryToken = {
 			ownerId: options.ownerId,
 			writerGeneration: options.writerGeneration,
@@ -28,9 +36,12 @@ export function createSessionQueuedInputPort(options: SessionQueuedInputPortOpti
 			attemptId: options.nextAttemptId(),
 			clientMessageId,
 		};
-		await tx.apply(clientMessageId, { type: "reserve", token });
-		if (tx.current(clientMessageId)?.attempt?.attemptId !== token.attemptId) return false;
 		attempts.set(message, token);
+		await tx.apply(clientMessageId, { type: "reserve", token });
+		if (tx.current(clientMessageId)?.attempt?.attemptId !== token.attemptId) {
+			attempts.delete(message);
+			return false;
+		}
 		return true;
 	};
 
@@ -72,11 +83,22 @@ export function createSessionQueuedInputPort(options: SessionQueuedInputPortOpti
 	};
 
 	return {
-		claim: (_queue, drain) =>
+		claim: (queue, drain) =>
 			options.store.transaction(async (tx) => {
 				const claimed: AgentMessage[] = [];
+				const pending = retained.get(queue);
+				if (pending !== undefined && !pending.restorable()) {
+					await cancelReleased(tx, pending.messages);
+					for (const message of pending.messages) attempts.delete(message);
+				}
+				const generation = options.clearGeneration?.();
+				const messages = [...(pending?.restorable() ? pending.messages : []), ...drain()];
+				// A failed reservation has already drained the native queue. Keep its exact message objects
+				// and tokens until a later claim recovers them; a clear in between still wins.
+				retained.set(queue, { messages, restorable: () => options.clearGeneration?.() === generation });
 				// A copy the store no longer authorizes (removed, delivered, failed) is stale and is not delivered.
-				for (const message of drain()) if (await reserve(tx, message)) claimed.push(message);
+				for (const message of messages) if (await reserve(tx, message)) claimed.push(message);
+				retained.delete(queue);
 				return claimed;
 			}),
 		commitConsumption: (_queue, messages) =>
@@ -87,15 +109,20 @@ export function createSessionQueuedInputPort(options: SessionQueuedInputPortOpti
 		// not put back natively, so it can never be delivered twice. A clear that won keeps the messages out of the
 		// queue and their records removed, in one record. Only a clear landing during the release's own append
 		// needs the second, removing record.
-		release: (_queue, messages, giveBack) =>
-			options.store.transaction(async (tx) => {
-				if (!giveBack.restorable()) {
-					await cancelClaims(tx, messages);
-					return;
-				}
-				await settle(tx, messages, "release");
-				if (!giveBack.restore()) await cancelReleased(tx, messages);
-			}),
+		release: (queue, messages, giveBack) =>
+			options.store
+				.transaction(async (tx) => {
+					if (!giveBack.restorable()) {
+						await cancelClaims(tx, messages);
+						return;
+					}
+					await settle(tx, messages, "release");
+					if (!giveBack.restore()) await cancelReleased(tx, messages);
+				})
+				.catch((error: unknown) => {
+					retained.set(queue, { messages, restorable: () => giveBack.restorable() });
+					throw error;
+				}),
 	};
 }
 
