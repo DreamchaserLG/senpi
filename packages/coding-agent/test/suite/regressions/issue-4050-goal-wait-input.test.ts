@@ -59,6 +59,17 @@ async function parkedSession() {
 
 // senpi#4050: exercise the real session input and terminal-input boundaries, not handcrafted dispositions.
 describe("input during a parked goal wait", () => {
+	it.each(["tui", "rpc", "print"] as const)("starts a %s host without terminal-input capability", async (mode) => {
+		const ui = createTestUiContext();
+		Reflect.deleteProperty(ui, "onTerminalInput");
+		const harness = await createHarness({ persistSession: true, extensionFactories: [goalExtension] });
+		harnesses.push(harness);
+
+		await harness.session.bindExtensions({ mode, uiContext: ui });
+
+		expect(harness.session.isIdle).toBe(true);
+	});
+
 	it("delivers new user input with steer semantics immediately and cancels the old wait", async () => {
 		const { harness, timerStates } = await parkedSession();
 		harness.setResponses([fauxAssistantMessage("Handled the user's request.")]);

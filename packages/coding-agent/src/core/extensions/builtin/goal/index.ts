@@ -158,7 +158,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		monitorContinuation.start(ctx);
 		unsubscribeWaitInterrupt?.();
 		unsubscribeWaitInterrupt = undefined;
-		if (ctx.mode === "tui") {
+		if (ctx.mode === "tui" && ctx.hasUI && typeof ctx.ui.onTerminalInput === "function") {
 			unsubscribeWaitInterrupt = ctx.ui.onTerminalInput((data) => {
 				if (
 					monitorContinuation.scheduledContinuation() === undefined ||
