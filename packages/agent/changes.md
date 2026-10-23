@@ -1,22 +1,20 @@
-## 2026-10-23 - Bound raw subscriber waits without losing ordering (senpi#4054)
+## 2026-10-23 - Document bounded raw subscriber waits (senpi#4054)
 
 ### What changed
 
-- `packages/agent/src/agent.ts`: give each asynchronous subscriber a configurable finite deadline and a run-owned abort/release race. Keep registration-order awaits inside the budget. A timeout identifies the listener, marks a local failure, aborts the run, and retires that listener only from the current run's remaining events. Later rejection stays observed. The core still owns finalization and the next run retains the subscription.
-- `packages/agent/src/local-failure.ts`: share the existing local-failure marker with subscriber deadline errors so they cannot enter provider fallback.
 - `packages/agent/README.md`: document the budget and the subscriber's obligation to stop its own asynchronous work on the supplied signal.
 
 ### Why
 
-A raw `Agent.subscribe` promise was awaited without a bound. The core never reached `finishRun`, session settlement stayed busy, and neither queued input nor Escape could recover it. The existing extension-handler budget did not cover raw core listeners.
+Subscribers need to know their finite per-callback budget and how to stop their own work when the owner releases its wait.
 
 ### Why an extension could not handle it
 
-The wait is inside core event dispatch, below extension lifecycle budgets. Releasing it must retain core ownership, error classification and event ordering.
+This documents the core subscription API, below extension lifecycle budgets.
 
 ### Expected merge conflict zones
 
-`AgentOptions`, subscriber registration/dispatch, run creation/finalization and abort handling in `agent.ts`; local error classification in `local-failure.ts`.
+The event subscription example in `packages/agent/README.md`.
 
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
