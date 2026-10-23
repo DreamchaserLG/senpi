@@ -81,9 +81,11 @@ afterEach(() => {
 	for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
+// senpi#4058: a discarded attempt must not supply the retained reply's identity or usage.
 for (const lane of ["ambient", "managed", "resident"] as const) {
-	for (const streamed of [true, false]) {
-		it(`${lane}: response identity and usage belong to the retained ${streamed ? "streamed" : "result-only"} attempt`, async () => {
+	for (const reply of ["streamed", "result-only", "no-usage"] as const) {
+		it(`${lane}: response identity and usage belong to the retained ${reply} attempt`, async () => {
+			const streamed = reply === "streamed";
 			let attempts = 0;
 			const directory = mkdtempSync(join(tmpdir(), "retry-response-"));
 			directories.push(directory);
@@ -169,12 +171,12 @@ for (const lane of ["ambient", "managed", "resident"] as const) {
 								event: { type: "content_block_stop", index: 0 },
 							} satisfies SDKMessage;
 						}
-						yield {
+						const successfulAssistant = {
 							...envelope,
 							type: "assistant",
 							message: assistant(responseId, "Synthetic.", usage(2, 21)),
 						} satisfies SDKMessage;
-						yield {
+						const successfulResult = {
 							...envelope,
 							type: "result",
 							subtype: "success",
@@ -190,6 +192,14 @@ for (const lane of ["ambient", "managed", "resident"] as const) {
 							permission_denials: [],
 							...(userMessageUuid === undefined ? {} : { user_message_uuid: userMessageUuid }),
 						} satisfies SDKMessage;
+						if (reply === "no-usage") {
+							// Exercise the boundary's missing-metadata path, not zero-valued usage
+							// that would overwrite the discarded attempt even without a reset.
+							expect(Reflect.deleteProperty(successfulAssistant.message, "usage")).toBe(true);
+							expect(Reflect.deleteProperty(successfulResult, "usage")).toBe(true);
+						}
+						yield successfulAssistant;
+						yield successfulResult;
 					},
 					async interrupt() {},
 					close() {},
@@ -207,7 +217,12 @@ for (const lane of ["ambient", "managed", "resident"] as const) {
 			const output = await stream.result();
 			expect(output.stopReason, output.errorMessage).toBe("stop");
 			expect(attempts).toBe(2);
-			expect(output.usage).toMatchObject({ input: 2, output: 21, cacheRead: 0, totalTokens: 23 });
+			if (reply === "no-usage") {
+				expect(output.usage.contextUsage).toBeNull();
+				expect(output.usage).toMatchObject({ input: 0, output: 0, cacheRead: 0, totalTokens: 0 });
+			} else {
+				expect(output.usage).toMatchObject({ input: 2, output: 21, cacheRead: 0, totalTokens: 23 });
+			}
 			expect(output.responseId).toBe("msg_successful_attempt");
 			expect(output.content).toEqual([{ type: "text", text: "Synthetic." }]);
 		});
