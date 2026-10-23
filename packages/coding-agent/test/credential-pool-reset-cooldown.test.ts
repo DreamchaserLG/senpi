@@ -39,6 +39,14 @@ describe("a usage limit's reset time becomes that account's cooldown (senpi#1768
 			42 * 60_000,
 		],
 		["relative prose", new Error("You've hit your session limit \u00b7 resets in 3 hours"), 3 * HOUR_MS],
+		// senpi#3348: compact units, "reset after", and Z.ai's zone-less stamp (UTC+8).
+		["compact relative prose", new Error("You've hit your usage limit. Resets in 4h9m10s."), 14_950_000],
+		["reset after", new Error("You've hit your usage limit. Your quota will reset after 90s."), 90_000],
+		[
+			"zone-less Z.ai reset stamp",
+			new Error("You've hit your usage limit for 5 hour. Your limit will reset at 2026-09-30 13:30:00"),
+			2.5 * HOUR_MS,
+		],
 		[
 			"Claude clock with zone",
 			new Error("You've hit your session limit \u00b7 resets 12am (Asia/Seoul)"),

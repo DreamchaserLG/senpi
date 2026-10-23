@@ -1,3 +1,23 @@
+## 2026-10-23 - A limit's backoff stops at the subscription window; more reset formats parse (senpi#4091, senpi#3348)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: `rateLimitCooldown` stops doubling at `BACKOFF_CEILING_MS` (5 hours, the shortest subscription window), so failed half-open probes on a limit that names no reset can no longer grow its block toward the 48-hour cap. A reset the provider names still floors the block up to that cap. A zero `extract429RetryAfterMs` hint no longer hides the reset a usage limit names.
+- `packages/coding-agent/src/core/credential-pool/reset-time.ts`: relative resets accept compact units (`4h9m10s`) and `reset after`, and Z.ai's zone-less `reset at YYYY-MM-DD HH:MM:SS` reads as UTC+8.
+
+### Why
+
+senpi#4091: `failureCount` rises on every failed probe and resets only on success, so a spent slot probed while still limited stayed blocked for up to 48 hours after its real window reset. senpi#3348: the unparsed formats pushed those slots onto that no-reset path.
+
+### Why an extension could not handle it
+
+Credential rotation classifies and persists slot health before an error reaches extension hooks.
+
+### Expected merge conflict zones
+
+- The backoff line of `rateLimitCooldown` and the hint selection in the rate-limit branch of `classifyCredentialFailure`.
+- The relative-prose regexes in `reset-time.ts`.
+
 ## 2026-10-22 - Temporary failures never become auth blocks (senpi#2081)
 
 ### What changed

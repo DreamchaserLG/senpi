@@ -13,10 +13,14 @@ const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "
 const RESET_AT_KEYS = new Set(["resets_at"]);
 const RESET_AFTER_SECONDS_KEYS = new Set(["reset_after_seconds"]);
 
-// "resets in 3 hours", "try again in 2h 30m", "retry in 45 minutes".
+// "resets in 3 hours", "try again in 2h 30m", "retry in 45 minutes", "resets in 4h9m10s",
+// "reset after 58s". `(?![a-z])` instead of `\b` lets a digit follow a unit (senpi#3348).
 const RELATIVE_RE =
-	/\b(?:resets?|try again|retry)\s+in\s+~?((?:\d+(?:\.\d+)?\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b(?:\s*,?\s*(?:and\s+)?)?)+)/i;
-const RELATIVE_PART_RE = /(\d+(?:\.\d+)?)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b/gi;
+	/\b(?:resets?|try again|retry)\s+(?:in|after)\s+~?((?:\d+(?:\.\d+)?\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?![a-z])(?:\s*,?\s*(?:and\s+)?)?)+)/i;
+const RELATIVE_PART_RE = /(\d+(?:\.\d+)?)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?![a-z])/gi;
+
+// Z.ai's "Your limit will reset at 2026-09-22 01:18:11" carries no zone; the API prints UTC+8.
+const ZONE_LESS_RESET_RE = /\breset at (\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(Z|[+-]\d{2}:?\d{2})?/i;
 
 // "resets 12am (Asia/Seoul)", "resets Oct 2, 9am", "try again at 12:00 AM".
 const CLOCK_RE =
@@ -35,8 +39,15 @@ export function usageLimitReset(
 	if (json !== undefined) return { ms: json, kind: "absolute" };
 	const relative = fromRelativeProse(text);
 	if (relative !== undefined) return { ms: relative, kind: "relative" };
-	const clock = fromClockProse(text, nowMs);
+	const clock = fromClockProse(text, nowMs) ?? fromZoneLessStamp(text, nowMs);
 	return clock === undefined ? undefined : { ms: clock, kind: "absolute" };
+}
+
+function fromZoneLessStamp(text: string, nowMs: number): number | undefined {
+	const match = ZONE_LESS_RESET_RE.exec(text);
+	if (!match) return undefined;
+	const epochMs = Date.parse(`${match[1]}T${match[2]}${match[3] ?? "+08:00"}`);
+	return Number.isNaN(epochMs) ? undefined : Math.max(0, Math.ceil(epochMs - nowMs));
 }
 
 function fromJsonFields(text: string, nowMs: number): number | undefined {

@@ -11,6 +11,12 @@ import { isAccountUsageLimitText } from "./usage-limit.ts";
 export const COOLDOWN_BASE_MS = DEFAULT_SLOT_BLOCK_MS;
 export const COOLDOWN_CAP_MS = MAX_SLOT_BLOCK_MS;
 export const RETRY_SAME_MAX_ATTEMPTS = 2;
+/**
+ * The doubling backoff stops at the shortest subscription window: a limit with no reset has reset
+ * by then, so blocking longer only keeps a recovered account unused (senpi#4091). A reset the
+ * provider names still floors the block, up to the cap.
+ */
+export const BACKOFF_CEILING_MS = 5 * 60 * 60_000;
 
 /**
  * Carried by every refusal a provider that runs its own account pool (Anthropic Subscription) makes
@@ -39,8 +45,9 @@ export type CredentialAction =
 
 /**
  * Per-slot exponential cooldown with the server hint as a FLOOR, never an
- * override: a hint can only lengthen the wait the failure count already earned,
- * and everything caps at 48 hours with the capping recorded.
+ * override: a hint can only lengthen the wait the failure count already earned.
+ * The failure count alone never earns more than {@link BACKOFF_CEILING_MS}; a
+ * hint caps at 48 hours with the capping recorded.
  */
 export function rateLimitCooldown(
 	failureCount: number,
@@ -49,7 +56,8 @@ export function rateLimitCooldown(
 ): { cooldownMs: number; retryAfterWasCapped: boolean } {
 	const cap = policy.capMs ?? COOLDOWN_CAP_MS;
 	const base = policy.baseMs ?? COOLDOWN_BASE_MS;
-	const backoff = Math.min(cap, base * 2 ** Math.max(0, failureCount));
+	const ceiling = Math.max(base, Math.min(cap, BACKOFF_CEILING_MS));
+	const backoff = Math.min(ceiling, base * 2 ** Math.max(0, failureCount));
 	const floored = serverHintMs === undefined ? backoff : Math.max(backoff, serverHintMs);
 	return {
 		cooldownMs: Math.min(cap, floored),
@@ -157,9 +165,12 @@ export function classifyCredentialFailure(
 		// A spent account is out until its reset time, so that time (a reset
 		// header, a reset field or reset prose) floors its cooldown; without one,
 		// the default cooldown stands. Plain rate limits keep today's hint only.
+		// A zero header hint (a clock it read as already past, e.g. Z.ai's zone-less stamp) must not
+		// hide the reset the limit names (senpi#3348).
+		const headerHint = extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs);
 		const hint =
-			extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs) ??
-			(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : undefined);
+			(headerHint !== undefined && headerHint > 0 ? headerHint : undefined) ??
+			(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : headerHint);
 		const modelFamily = rateLimitModelFamily(text);
 		const policy = { baseMs: context.cooldownBaseMs, capMs: context.cooldownCapMs };
 		return {
