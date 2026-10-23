@@ -4,41 +4,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { clientMessageIdentity } from "../../../src/core/client-message-identity.ts";
 import { PendingInputAppendUncertainError } from "../../../src/core/pending-input-journal.ts";
 import { SessionPendingInputs } from "../../../src/core/pending-input-session.ts";
-import {
-	type PendingInputJournal,
-	type PendingInputJournalRecord,
-	PendingInputStore,
-} from "../../../src/core/pending-input-store.ts";
+import { type PendingInputJournal, PendingInputStore } from "../../../src/core/pending-input-store.ts";
 import { registerFallbackModels } from "../fallback-provider-fixture.ts";
 import { createHarness, getUserTexts, type Harness } from "../harness.ts";
+import { UncertainJournal } from "./4045-pending-input-recovery-support.ts";
 
 // senpi#4045: the actual session queue port must recover without replacing the session or the store.
-class UncertainJournal implements PendingInputJournal {
-	readonly records: PendingInputJournalRecord[] = [];
-	failures = 1;
-	landed = true;
-	reads = 0;
-	failPhase: "queued" | "sending" | "delivered" | undefined;
-	refuseConsumption = false;
-
-	async append(record: PendingInputJournalRecord): Promise<void> {
-		if (this.refuseConsumption && record.input.phase === "delivered") {
-			this.refuseConsumption = false;
-			throw new Error("EIO before consumption write");
-		}
-		if (this.failures > 0 && (this.failPhase === undefined || record.input.phase === this.failPhase)) {
-			this.failures -= 1;
-			if (this.landed) this.records.push(record);
-			throw new PendingInputAppendUncertainError(record.cursor, "/sessions/test.jsonl", new Error("EIO"));
-		}
-		this.records.push(record);
-	}
-
-	async read(): Promise<readonly PendingInputJournalRecord[]> {
-		this.reads += 1;
-		return [...this.records];
-	}
-}
 
 const harnesses: Harness[] = [];
 afterEach(() => {

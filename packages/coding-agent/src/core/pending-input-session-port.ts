@@ -10,12 +10,20 @@ export interface SessionQueuedInputPortOptions {
 	readonly clearGeneration?: () => number;
 }
 
+/** The agent's queue port, plus the copies a failed claim or release holds until the next claim (senpi#4045). */
+export interface SessionQueuedInputPort extends QueuedInputPort {
+	holdsRetained(message: AgentMessage): boolean;
+	/** Edits a held copy in place, keeping its reservation, so the next claim delivers the edited text. */
+	replaceRetained(message: AgentMessage, next: AgentMessage): boolean;
+	removeRetained(message: AgentMessage): boolean;
+}
+
 /**
  * The session's side of the agent queues (senpi#3549). Every drain reserves the identified inputs it hands to a
  * turn, every consumption commits them, and every give-back releases them, each under the store's gate together
  * with the native buffer change. Input the store never admitted (no client id, or a legacy id) passes through.
  */
-export function createSessionQueuedInputPort(options: SessionQueuedInputPortOptions): QueuedInputPort {
+export function createSessionQueuedInputPort(options: SessionQueuedInputPortOptions): SessionQueuedInputPort {
 	const attempts = new Map<AgentMessage, DeliveryToken>();
 	const retained = new Map<
 		"steering" | "followUp",
@@ -82,10 +90,17 @@ export function createSessionQueuedInputPort(options: SessionQueuedInputPortOpti
 		if (ids.length > 0) await tx.applyAll(ids.map(cancelOf));
 	};
 
+	const retainedAt = (message: AgentMessage) => {
+		for (const entry of retained.values()) {
+			const index = entry.restorable() ? entry.messages.indexOf(message) : -1;
+			if (index !== -1) return { messages: entry.messages, index };
+		}
+		return undefined;
+	};
+
 	return {
 		claim: (queue, drain) =>
 			options.store.transaction(async (tx) => {
-				const claimed: AgentMessage[] = [];
 				const pending = retained.get(queue);
 				if (pending !== undefined && !pending.restorable()) {
 					await cancelReleased(tx, pending.messages);
@@ -93,14 +108,37 @@ export function createSessionQueuedInputPort(options: SessionQueuedInputPortOpti
 				}
 				const generation = options.clearGeneration?.();
 				const messages = [...(pending?.restorable() ? pending.messages : []), ...drain()];
-				// A failed reservation has already drained the native queue. Keep its exact message objects
-				// and tokens until a later claim recovers them; a clear in between still wins.
-				retained.set(queue, { messages, restorable: () => options.clearGeneration?.() === generation });
-				// A copy the store no longer authorizes (removed, delivered, failed) is stale and is not delivered.
-				for (const message of messages) if (await reserve(tx, message)) claimed.push(message);
+				// In flight from here: an edit or removal must not reach a batch this claim is still reserving.
 				retained.delete(queue);
+				const claimed: AgentMessage[] = [];
+				try {
+					// A copy the store no longer authorizes (removed, delivered, failed) is stale and is not delivered.
+					for (const message of messages) if (await reserve(tx, message)) claimed.push(message);
+				} catch (error) {
+					// A failed reservation has already drained the native queue. Keep its exact message objects
+					// and tokens until a later claim recovers them; edits and removals apply here, and a clear still wins.
+					retained.set(queue, { messages, restorable: () => options.clearGeneration?.() === generation });
+					throw error;
+				}
 				return claimed;
 			}),
+		holdsRetained: (message) => retainedAt(message) !== undefined,
+		replaceRetained: (message, next) => {
+			const at = retainedAt(message);
+			if (at === undefined) return false;
+			at.messages[at.index] = next;
+			const token = attempts.get(message);
+			attempts.delete(message);
+			if (token !== undefined) attempts.set(next, token);
+			return true;
+		},
+		removeRetained: (message) => {
+			const at = retainedAt(message);
+			if (at === undefined) return false;
+			at.messages.splice(at.index, 1);
+			attempts.delete(message);
+			return true;
+		},
 		commitConsumption: (_queue, messages) =>
 			options.store.transaction(async (tx) => {
 				await settle(tx, messages, "consumed");

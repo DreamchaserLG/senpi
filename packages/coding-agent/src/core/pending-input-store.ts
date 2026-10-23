@@ -148,11 +148,32 @@ export class PendingInputStore {
 		if (!recover) return;
 		this.unavailable = undefined;
 		this.unsentConsumption = [];
-		const effects = this.recoveryEffects;
 		this.recoveryEffects = undefined;
 		if (checkpoint !== undefined) this.publish([checkpoint.input, ...(checkpoint.batch ?? [])], checkpoint.cursor);
-		effects?.();
-		this.options.onRecovered?.([...inputs.values()]);
+	}
+
+	/**
+	 * Only a failed replay or fence is `PendingInputStoreUnavailableError`. Once the journal is recovered, every
+	 * reconciliation runs even when an earlier one throws, so a landed admission is always released, and each
+	 * throw is reported as itself (senpi#4045 review).
+	 */
+	private async recover(): Promise<void> {
+		const effects = this.recoveryEffects;
+		try {
+			await this.rebuild(true);
+		} catch (error) {
+			throw new PendingInputStoreUnavailableError(error);
+		}
+		const failures: unknown[] = [];
+		for (const reconcile of [effects, () => this.options.onRecovered?.([...this.inputs.values()])]) {
+			try {
+				reconcile?.();
+			} catch (error) {
+				failures.push(error);
+			}
+		}
+		if (failures.length > 1) throw new AggregateError(failures, "Pending-input recovery callbacks failed.");
+		if (failures.length === 1) throw failures[0];
 	}
 
 	submit(event: Omit<SubmitEvent, "type" | "handle">): Promise<PendingInputOperationResult | undefined> {
@@ -237,13 +258,7 @@ export class PendingInputStore {
 
 	private serialize<T>(operation: () => Promise<T>): Promise<T> {
 		const guarded = async () => {
-			if (this.unavailable !== undefined) {
-				try {
-					await this.rebuild(true);
-				} catch (error) {
-					throw new PendingInputStoreUnavailableError(error);
-				}
-			}
+			if (this.unavailable !== undefined) await this.recover();
 			return operation();
 		};
 		const run = this.gate.then(guarded, guarded);

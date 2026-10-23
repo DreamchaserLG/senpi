@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { QueuedInputPort } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, QueuedInputPort } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { SessionPendingInputJournal } from "./pending-input-journal.ts";
 import type { PendingInputProjection } from "./pending-input-projection.ts";
-import { createSessionQueuedInputPort } from "./pending-input-session-port.ts";
+import { createSessionQueuedInputPort, type SessionQueuedInputPort } from "./pending-input-session-port.ts";
 import {
 	isUncertainAppend,
 	PENDING_INPUT_TRANSITION,
@@ -89,7 +89,7 @@ export class SessionPendingInputs {
 	readonly lifetimeId = randomUUID();
 	private readonly options: SessionPendingInputsOptions;
 	private storeOpening: Promise<PendingInputStore> | undefined;
-	private port: QueuedInputPort | undefined;
+	private port: SessionQueuedInputPort | undefined;
 	private attempts = 0;
 	/** Bumped synchronously by every clear, so a change can tell a clear it raced from a real divergence. */
 	private clears = 0;
@@ -269,6 +269,22 @@ export class SessionPendingInputs {
 		return { lifetimeId: this.lifetimeId, throughCursor: store?.throughCursor ?? 0, inputs, outcomes };
 	}
 
+	/**
+	 * Whether a failed claim or release holds this exact message until the next claim: the native queue no longer
+	 * has it, so an edit or removal of a still-queued input applies to that copy instead (senpi#4045).
+	 */
+	holdsRetained(message: AgentMessage): boolean {
+		return this.port?.holdsRetained(message) ?? false;
+	}
+
+	replaceRetained(message: AgentMessage, next: AgentMessage): boolean {
+		return this.port?.replaceRetained(message, next) ?? false;
+	}
+
+	removeRetained(message: AgentMessage): boolean {
+		return this.port?.removeRetained(message) ?? false;
+	}
+
 	/** The agent's queue port. Before the store opens nothing identified is queued, so it drains natively. */
 	queuedInputPort(): QueuedInputPort {
 		return {
@@ -306,7 +322,7 @@ export class SessionPendingInputs {
 		return this.storeOpening;
 	}
 
-	private async openPort(): Promise<QueuedInputPort | undefined> {
+	private async openPort(): Promise<SessionQueuedInputPort | undefined> {
 		if (this.storeOpening === undefined) return undefined;
 		const store = await this.storeOpening;
 		this.port ??= createSessionQueuedInputPort({
