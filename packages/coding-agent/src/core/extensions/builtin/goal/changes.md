@@ -2,8 +2,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: arm a second deadline callback one second after the primary, cancel both as one generation, and retain scheduling state when a busy session or pending input declines delivery. `afterAgentSettled` retries overdue work without starting a turn over an active run. Direct-input holds, cancellation, drain-fire replacement and disposal retire both callbacks.
-- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: the goal owns the configured interrupt key only while its wait is armed and the session is idle. Cancel the wait synchronously, then perform the same goal accounting and pause/block transition as `session_abort`. Unsubscribe on session replacement and shutdown.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: arm a second deadline callback one second after the primary, cancel both as one generation, and retain scheduling state when a busy session or pending input declines delivery. `afterAgentSettled` retries overdue work without starting a turn over an active run. A clean end discards obsolete non-monitor waits before scheduling the next monitor wait. Direct-input holds, cancellation, drain-fire replacement and disposal retire both callbacks.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts` and `packages/coding-agent/src/core/extensions/builtin/goal/wait-interrupt.ts`: register through the optional final-idle Escape capability, only for monitor waits. Cancel the wait synchronously, then perform the same goal accounting and pause/block transition as `session_abort`, with `/goal resume` guidance. Focused UI, bash controls, user grace and provider retry retain their own behavior. Unsubscribe on session replacement and shutdown.
 
 ### Why
 
@@ -11,11 +11,11 @@ The primary callback used to consume the only scheduling state before checking e
 
 ### Why an extension could not handle it
 
-The fix is inside the goal builtin and uses the existing terminal-input hook. The core contract that aborting a truly idle session emits no `session_abort` is preserved.
+Goal policy stays in the builtin, but the host supplies the final-idle Escape seam because only it knows which surface has keyboard priority. The core contract that aborting a truly idle session emits no `session_abort` is preserved.
 
 ### Expected merge conflict zones
 
-`packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: scheduling, direct-input holds, settlement and timer cleanup. `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: session-start, user-abort and shutdown lifecycle handlers.
+`packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: scheduling, direct-input holds, settlement and timer cleanup. `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: session-start, user-abort and shutdown lifecycle handlers. `packages/coding-agent/src/core/extensions/builtin/goal/wait-interrupt.ts`: the monitor-only idle handler.
 
 ## 2026-10-21 - A user Stop pauses the goal with the session (senpi#3811)
 

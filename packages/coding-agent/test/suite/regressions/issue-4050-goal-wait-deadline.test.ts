@@ -92,4 +92,29 @@ describe("parked goal wait deadline", () => {
 			expect(messages.sent).toHaveLength(1);
 		},
 	);
+
+	it("replaces a declined provider retry with a monitor wait after a successful run", async () => {
+		const { monitor, ctx, goal, messages, state } = await parkedWait();
+		const failure = {
+			...cleanAssistantStop(),
+			stopReason: "error" as const,
+			errorMessage: "server_error: upstream unavailable",
+		};
+		const event = { type: "agent_end" as const, messages: [failure], aborted: false, willRetry: false };
+		for (let attempt = 0; attempt < 2; attempt++) {
+			await monitor.afterProviderFailure({ ctx, goal, messages: [failure], event, willRetry: false });
+			await monitor.afterAgentSettled();
+		}
+		expect(messages.sent).toHaveLength(1);
+		expect(monitor.scheduledContinuation()).toBe("providerRetry");
+		state.idle = false;
+
+		await vi.advanceTimersByTimeAsync(15_000);
+		await monitor.afterAgentEnd({ ctx, goal, messages: [cleanAssistantStop()] });
+		state.idle = true;
+		await monitor.afterAgentSettled();
+
+		expect(messages.sent).toHaveLength(1);
+		expect(monitor.scheduledContinuation()).toBe("monitor");
+	});
 });

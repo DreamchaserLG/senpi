@@ -1,4 +1,3 @@
-import { getKeybindings, isKeyRelease } from "@earendil-works/pi-tui";
 import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../manual-continue.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
@@ -34,6 +33,7 @@ import { reportTurnEndLiveness } from "./turn-end-liveness-report.ts";
 import { TurnUsageTracker } from "./turn-usage.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
 import { updateGoalUi } from "./ui.ts";
+import { registerGoalWaitInterrupt } from "./wait-interrupt.ts";
 import { GOAL_WAIT_STATUS_KEY, GoalWaitTicker } from "./wait-ticker.ts";
 
 const RESUME_GOAL_CHOICE = "Resume goal";
@@ -157,26 +157,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		activeContext = ctx;
 		monitorContinuation.start(ctx);
 		unsubscribeWaitInterrupt?.();
-		unsubscribeWaitInterrupt = undefined;
-		if (ctx.mode === "tui" && ctx.hasUI && typeof ctx.ui.onTerminalInput === "function") {
-			unsubscribeWaitInterrupt = ctx.ui.onTerminalInput((data) => {
-				if (
-					monitorContinuation.scheduledContinuation() === undefined ||
-					!ctx.isIdle() ||
-					isKeyRelease(data) ||
-					!getKeybindings().matches(data, "app.interrupt")
-				) {
-					return undefined;
-				}
-				monitorContinuation.cancelWait();
-				void onUserAbort(ctx).catch((error: unknown) => {
-					if (isStaleExtensionContextError(error)) return;
-					const message = error instanceof Error ? error.message : String(error);
-					ctx.ui.notify(`Could not stop the goal: ${message}. Try /goal pause.`, "error");
-				});
-				return { consume: true };
-			});
-		}
+		unsubscribeWaitInterrupt = registerGoalWaitInterrupt(ctx, monitorContinuation, onUserAbort);
 		directInputLifecycle.reset();
 		todoOwedBackstop.resetChain();
 		const ref = goalStoreRef(ctx);

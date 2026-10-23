@@ -137,6 +137,9 @@ export class MonitorAwareGoalContinuation {
 
 	async afterAgentEnd(options: AgentEndOptions): Promise<Goal | null> {
 		if (options.goal?.id !== this.#goal?.id) this.#resetContinuationState();
+		if (this.#scheduledContinuationKind !== undefined && this.#scheduledContinuationKind !== "monitor") {
+			this.#cancelTimer();
+		}
 		this.#providerRetryAttempts = 0;
 		this.#ctx = options.ctx;
 		this.#goal = options.goal;
