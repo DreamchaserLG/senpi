@@ -60,7 +60,8 @@ describe("final Anthropic cache prefix diagnostics", () => {
 			const path = join(dir, "cache-prefix.jsonl");
 			const raw = readFileSync(path, "utf8");
 			expect(raw).not.toContain(secret);
-			expect(statSync(path).mode & 0o777).toBe(0o600);
+			// Windows reports DOS read/write flags, not POSIX group/other mode bits.
+			if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
 			const record = JSON.parse(raw);
 			expect(record.partition.hash).toMatch(/^[0-9a-f]{64}$/);
 			expect(record.system).toHaveLength(1);
