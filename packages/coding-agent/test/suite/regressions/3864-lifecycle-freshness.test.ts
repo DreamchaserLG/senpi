@@ -15,7 +15,7 @@ import { startWorkerHost } from "../rpc-worker-host-support.ts";
 
 const FIRST = Date.parse("2026-10-24T01:00:00.000Z");
 const SECOND = FIRST + 1_000;
-const lifecycleSchema = z.object({ observedAt: z.string() }).passthrough();
+const lifecycleSchema = z.looseObject({ observedAt: z.string() });
 const stateSchema = z.object({ lifecycle: lifecycleSchema });
 
 afterEach(() => vi.restoreAllMocks());
@@ -55,7 +55,7 @@ it("stamps get_state and connection/classic-stdio pushes without changing the sn
 			.findLast((entry) => entry.type === "custom" && entry.customType === "session-lifecycle");
 		expect(durable).toMatchObject({ data: { seq: snapshot.seq, epoch: snapshot.epoch } });
 		expect(durable && "data" in durable ? durable.data : undefined).not.toHaveProperty("observedAt");
-		hold.close("completed");
+		hold.close("consumed");
 	} finally {
 		await fixture.cleanup();
 	}
