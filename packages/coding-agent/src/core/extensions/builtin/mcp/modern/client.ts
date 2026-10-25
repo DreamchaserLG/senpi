@@ -1,5 +1,10 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { type McpElicitationUiProvider, configureMcpElicitation, mcpClientCapabilities } from "../elicitation.ts";
+import {
+	type McpElicitationUiProvider,
+	configureMcpElicitation,
+	legacyMcpFormEligible,
+	mcpClientCapabilities,
+} from "../elicitation.ts";
 import { loadMcpSdkClient } from "../sdk.lazy.ts";
 import { mcpElapsedClock } from "../wrap.ts";
 import { installModernRequestAdapter, type ModernProtocolState } from "./request.ts";
@@ -11,11 +16,14 @@ export async function createMcpRequestClient(
 	elicitationEnabled = true,
 ): Promise<Client> {
 	const { Client } = await loadMcpSdkClient();
+	protocol.privateForms = uiProvider?.enforced?.() === true;
+	const legacyEligible = legacyMcpFormEligible(uiProvider, elicitationEnabled);
+	protocol.legacyFormEligible = legacyEligible;
 	const client = new Client(
 		{ name: "senpi-mcp-client", version: "0.0.0" },
-		{ capabilities: mcpClientCapabilities(elicitationEnabled) },
+		{ capabilities: mcpClientCapabilities(legacyEligible) },
 	);
-	await configureMcpElicitation(client, uiProvider, undefined, elicitationEnabled);
+	await configureMcpElicitation(client, uiProvider, undefined, legacyEligible);
 	installModernRequestAdapter(client, protocol, mcpElapsedClock, readCredential);
 	return client;
 }

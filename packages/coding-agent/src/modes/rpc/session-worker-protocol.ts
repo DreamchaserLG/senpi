@@ -1,4 +1,5 @@
 import type { BrowserEngine } from "../../core/browser-engine.ts";
+import type { McpFormInput, McpFormOutcome } from "../../core/mcp-form-types.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { MirroredLimits } from "../../core/subscription-limits/limit-store.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
@@ -54,7 +55,11 @@ export type HostToSessionWorker =
 			connection?: string;
 			/** Roles the connection explicitly declared on the host (senpi#3811); the isolate adopts them. */
 			roles?: readonly string[];
+			mcpFormsEnforced?: boolean;
 	  }
+	| { type: "mcp_form_bound"; id: string; epoch: string; version?: string }
+	| { type: "mcp_form_availability"; epoch: string; version?: string; id?: string }
+	| { type: "mcp_form_settlement"; id: string; epoch: string; settlementId: string; outcome: McpFormOutcome }
 	| { type: "command"; request: number; command: object; connection?: string; roles?: readonly string[] }
 	| { type: "prompt_surface"; request: number; surface: PromptSurface }
 	| { type: "browser_engine"; request: number; engine: BrowserEngine }
@@ -66,6 +71,18 @@ export type HostToSessionWorker =
 	| { type: "close" };
 
 export type SessionWorkerToHost =
+	| { type: "mcp_form_bind"; id: string; durableId: string }
+	| { type: "mcp_form_ready"; id: string; epoch: string }
+	| { type: "mcp_form_release"; epoch: string }
+	| { type: "mcp_form_cancel"; id: string; epoch: string; lifetime: "operation" | "presentation" }
+	| {
+			type: "mcp_form_create";
+			id: string;
+			epoch: string;
+			version: string;
+			operationFence: SharedArrayBuffer;
+			input: Omit<McpFormInput, "operationSignal" | "operationCurrent" | "presentationSignal">;
+	  }
 	| { type: "prepared"; request: number; sessionPath: string }
 	| { type: "ready"; request: number; snapshot: WorkerSnapshot }
 	| { type: "result"; request: number; error?: string }

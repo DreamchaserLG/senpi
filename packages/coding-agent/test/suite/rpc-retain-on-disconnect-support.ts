@@ -83,6 +83,10 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 			case "cancel_grant":
 			case "subscription_limits":
 				break;
+			case "mcp_form_bound":
+			case "mcp_form_availability":
+			case "mcp_form_settlement":
+				throw new Error("Private forms must be disabled in this fixture");
 			default: {
 				const exhaustive: never = message;
 				throw new Error(`Unexpected message ${exhaustive}`);

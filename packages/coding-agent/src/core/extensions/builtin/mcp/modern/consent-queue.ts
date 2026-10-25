@@ -1,15 +1,13 @@
-import type { MrtrInputResponse } from "./elicitation.ts";
 import { McpMrtrError } from "./errors.ts";
 
 interface QueueJob {
 	readonly signal: AbortSignal;
-	readonly run: () => Promise<MrtrInputResponse>;
-	readonly resolve: (value: MrtrInputResponse) => void;
+	readonly run: () => Promise<void>;
 	readonly reject: (error: unknown) => void;
 	abort: () => void;
 }
 const queues = new WeakMap<object, { busy: boolean; jobs: QueueJob[] }>();
-export function queuedForm(binding: object, signal: AbortSignal, run: QueueJob["run"]): Promise<MrtrInputResponse> {
+export function queuedForm<T>(binding: object, signal: AbortSignal, run: () => Promise<T>): Promise<T> {
 	let queue = queues.get(binding);
 	if (!queue) {
 		queue = { busy: false, jobs: [] };
@@ -30,16 +28,24 @@ export function queuedForm(binding: object, signal: AbortSignal, run: QueueJob["
 			return;
 		}
 		current.busy = true;
-		void next
-			.run()
-			.then(next.resolve, next.reject)
-			.finally(() => {
-				current.busy = false;
-				pump();
-			});
+		void next.run().finally(() => {
+			current.busy = false;
+			pump();
+		});
 	};
 	return new Promise((resolve, reject) => {
-		const job: QueueJob = { signal, run, resolve, reject, abort: () => {} };
+		const job: QueueJob = {
+			signal,
+			run: async () => {
+				try {
+					resolve(await run());
+				} catch (error) {
+					reject(error);
+				}
+			},
+			reject,
+			abort: () => {},
+		};
 		job.abort = () => {
 			const index = current.jobs.indexOf(job);
 			if (index >= 0) {

@@ -31,6 +31,7 @@ import {
 	type WorkerSnapshot,
 } from "./session-worker-protocol.ts";
 import { createSessionWorkerRegistry } from "./session-worker-registry.ts";
+import { McpFormWorker } from "./mcp-form-worker.ts";
 
 if (isBunBinary) {
 	const { registerBunRuntimeModules } = await import("../../bun/runtime-modules.ts");
@@ -42,6 +43,8 @@ registerWebViewBroker(Reflect.get(Object(workerData), "webviewBroker"));
 const port = parentPort;
 if (!port) throw new Error("Session worker requires a parent port");
 const send = (message: SessionWorkerToHost): void => port.postMessage(message);
+const privateForms = new McpFormWorker(send);
+let privateFormsEnforced = false;
 
 function failWorker(error: string): never {
 	send({ type: "failure", error });
@@ -53,6 +56,9 @@ const { exchange, installWriteReservation } = createWorkerCredit(send, failWorke
 installWriteReservation(canonicalSessionPath);
 
 class WorkerEventWriter extends SessionEventWriter {
+	override bindMcpForms(_sessionId: string, durableId: string, ui: object, admit: () => void) {
+		return privateFormsEnforced ? privateForms.bind(durableId, ui, admit) : undefined;
+	}
 	override readonly workerSecurityBridge = true;
 	constructor() {
 		super(() => {});
@@ -200,6 +206,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			if (!entry || binding) throw new Error("Invalid session binding");
 			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
 			const bindingEntry = entry;
+			privateFormsEnforced = message.mcpFormsEnforced === true;
 			const createBinding = () =>
 				createRpcSessionBinding(message.sessionId, bindingEntry, writer, () => send({ type: "request_close" }), {
 					capabilities: message.capabilities,
@@ -292,6 +299,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 subscriptionLimits.subscribeMirror((limits) => send({ type: "subscription_limits", limits }));
 
 port.on("message", (message: HostToSessionWorker) => {
+	if (privateForms.receive(message)) return;
 	void handle(message).catch((cause: unknown) => {
 		const error = cause instanceof Error ? cause.message : String(cause);
 		if (error.startsWith("session_worker_")) {

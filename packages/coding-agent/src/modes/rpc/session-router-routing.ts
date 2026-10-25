@@ -80,6 +80,7 @@ export async function dispatch(
 			warm: host.registry.warm !== undefined,
 			toolRuntime: host.defaults.toolRuntime ?? "in-process",
 			negotiated: host.connectionOptions?.capabilities ?? [],
+			mcpPresenters: host.writer.mcpPresenters !== undefined,
 		});
 		return {
 			id: command.id,

@@ -4,6 +4,7 @@ import type { OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { loadMcpSdkAuth } from "../sdk.lazy.ts";
 import type { McpHttpTransportSpec } from "../transport-sdk.ts";
 import { modernDispatchGuard } from "./request.ts";
+import { clearMcpParameterHeaders } from "./parameter-headers.ts";
 
 export const modernCredentialSnapshot = (tokens: OAuthTokens | undefined): string | undefined =>
 	tokens === undefined ? undefined : JSON.stringify([tokens.access_token, tokens.refresh_token]);
@@ -25,6 +26,7 @@ export function modernHttpFetch(spec: McpHttpTransportSpec, signal: AbortSignal,
 				headers.set(key, value);
 			});
 			for (const key of ["Mcp-Session-Id", "Mcp-Name", "Mcp-Method", "MCP-Protocol-Version"]) headers.delete(key);
+			clearMcpParameterHeaders(headers);
 			new Headers(init?.headers).forEach((value, key) => {
 				headers.set(key, value);
 			});

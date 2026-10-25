@@ -1,5 +1,6 @@
 export type Value = string | number | boolean | string[];
 export type Property = Record<string, unknown>;
+export type ValidatedMcpFormSchema = Form;
 type Form = { type: "object"; properties: Record<string, Property>; required?: string[] };
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
@@ -85,6 +86,17 @@ export function validValue(property: Property, value: unknown): value is Value {
 		default:
 			return true;
 	}
+}
+
+/** Validate a complete submitted form, including unknown keys and omitted required fields. */
+export function validMcpFormContent(schema: Form, content: unknown): content is Record<string, Value> {
+	return (
+		isRecord(content) &&
+		(schema.required ?? []).every((key) => own(content, key)) &&
+		Object.entries(content).every(
+			([key, value]) => own(schema.properties, key) && validValue(schema.properties[key], value),
+		)
+	);
 }
 
 /** Reject unsupported constraints rather than presenting a weaker schema. */

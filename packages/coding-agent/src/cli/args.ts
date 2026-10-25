@@ -64,6 +64,8 @@ export interface Args {
 	grokNeo?: boolean;
 	/** Serve independently routed plain-RPC sessions over one host. */
 	multiSession?: boolean;
+	presenterBootstrapFd?: number;
+	mcpPresenterEnforcement?: boolean;
 	/**
 	 * Opt non-interactive app modes (notably RPC) into engine-side session auto-titling.
 	 * Deprecated for shared hosts: prefer per-session `open_session.auto_title`.
@@ -325,6 +327,11 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.grokNeo = true;
 		} else if (arg === "--multi-session") {
 			result.multiSession = true;
+		} else if (arg === "--mcp-presenter-fd") {
+			if (args[++i] === "4") result.presenterBootstrapFd = 4;
+			else result.diagnostics.push({ type: "error", message: "Invalid presenter bootstrap descriptor" });
+		} else if (arg === "--mcp-presenter-enforcement") {
+			result.mcpPresenterEnforcement = true;
 		} else if (arg === "--auto-title-sessions") {
 			result.autoTitleSessions = true;
 		} else if (arg === "--session-runtime") {

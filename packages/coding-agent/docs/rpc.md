@@ -159,6 +159,17 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
   with reason `provider_error`, `tool_error`, `task_error`, `lost`, or `interrupted`.
 - A standing agent self-settle intent adds `settleDecision: { decisionId }` to the
   persisted `done` seal, independently of the completion label.
+- Optional `lastStop: { cause, runId, at, epoch, deadline?, guard?, todo?, abortSource?, persisted? }`
+  says why the run `runId` stopped. `cause` is `deadline`, `goal_guard`, `todo_guard`, `aborted`,
+  or `no_wake`; `deadline` is `inactivity` or `max_runtime`, `guard` is the goal guard reason as
+  recorded, `todo` is `cap`, and `abortSource` is `user`, `system`, or `provider`. `persisted: false`
+  appears only when the deadline-stop entry could not be written and is independent of the
+  snapshot's `persisted`. `lastStop` describes the last run's historical stop, so a `no_wake`
+  stop remains even if a wake source later appears. It is cleared when the next run starts
+  and never names a later run. A fact refresh with no bound turn end never sets `lastStop`;
+  between runs, a refresh while the last end is still bound may set or update that run's stop.
+  Goal guards are captured during their bound end's own processing, never inherited from
+  another run. Provider errors and policy rejections carry no `lastStop`, even if a deadline fired.
 
 Clients must not notify or settle while `restoring` is true or `persisted` is false.
 Use `completionId` to deduplicate root completion/failure, not `agent_settled` or
@@ -5425,11 +5436,105 @@ A provider holds logins of one kind. If it had an OAuth login, the key replaces 
 
 ## Extension UI Protocol
 
-MCP 2026-07-28 multi-round-trip form answering is terminal-only in v1.
+Without presenter enforcement, MCP 2026-07-28 multi-round-trip form answering is terminal-only in v1.
 RPC-originated modern requests advertise no elicitation and terminate locally
 if input is required; they never fabricate a decline or retry incomplete input.
 Client roles and capability declarations do not enable this form channel.
 Existing legacy MCP dialogs and their RPC request/response shapes remain unchanged.
+
+### Opt-in private MCP forms
+
+A multi-session RPC host or interactive terminal can opt in with `--mcp-presenter-enforcement`. This is a
+deployment option, not a project setting. It defaults to off; existing desktop and
+gateway clients keep their current behavior until they implement the private
+presenter protocol. Without this option, terminal forms retain their existing queue,
+legacy origin rules, and legacy stderr diagnostics. Enforced terminal forms also
+queue, and a collector failure ends only its own form, not the terminal's grant.
+All UI contexts in one terminal session binding share its presenter authority.
+Without enforcement, each real select/input answer retains its existing human
+admission timing; the form collector does not add a second final admission.
+Ephemeral selects also keep the scheduled `requestRender()` path without enforcement.
+With enforcement, only the authority's winning whole-form action admits once.
+The host advertises `mcp_form_presenter_v1` only when enforcement is enabled;
+the capability reports protocol support, not authority to present or answer a form.
+
+The native launch owner enrolls an Ed25519 public key through an inherited private
+bootstrap channel. Descriptor 4 is reserved for this channel; descriptor 3 remains
+the separate owner-lifetime channel. Enrollment and management proofs sign the
+host's exact returned transcript. No secret is passed in an argument, environment
+variable, launch specification, or session state. Reusing a host does not enroll the
+caller, and a successor requires fresh enrollment and fresh grants.
+An invalid or lost bootstrap channel leaves the host without a presenter; it does
+not terminate the shared daemon or its lifetime channel. The helper remains lazy
+to preserve the supervisor's startup import budget, with import and relay failures
+contained at that boundary. Conditional idle handover
+is owned by the running host after the CLI returns: that host relays the successor's
+fresh challenge over the existing authenticated launch-owner channel. The CLI's
+bootstrap stream is never serialized into `begin_handover`.
+
+`mcp_presenter_context` returns the caller's current connection nonce and attachment
+context. These identifiers confer no authority. Acquisition and revocation use the
+separate authenticated management endpoint, with a fresh challenge for each
+`mcp_presenter_assign`, `mcp_presenter_acquire`, or `mcp_presenter_revoke` command.
+Enrollment alone assigns no sessions. Before acquisition, the trusted native
+supervisor signs `mcp_presenter_assign` with `sessionId`, the current `bindingEpoch`,
+and `purpose: "mcp_form"` for a session it opened, or one the user explicitly adopted
+through the trusted host-owner UI. Ordinary RPC attachment cannot assign a session.
+Assignment belongs only to that enrolled principal and live binding; re-enrollment
+or binding replacement requires a new assignment. It is not persisted.
+An acquisition also requires the connection's `interactive_user` and
+`mcp_form_presenter_v1` capabilities, and binds the
+current host, session, binding epoch, connection nonce, attachment ID and epoch, and
+`purpose: "mcp_form"`. Only one holder is active for a session binding.
+Concurrent forms, including worker-origin forms, wait in the host's abort-aware
+FIFO for that holder. Waiting consumes the original deadline; timeout, cancellation,
+or revocation before display never fabricates a human response.
+Enforced legacy connections observe presenter readiness and reconnect when their
+negotiated form capability becomes stale, including a grant issued after connect.
+Revoking the last ready holder removes the capability on the new connection.
+A shared physical connection advertises forms when at least one attached owner is
+ready; each request still requires its own origin's grant. An ungranted owner cannot
+borrow another owner's presenter. Readiness changes during initialization are
+rechecked before the connection is published. Modern MRTR connections do not
+reconnect for this purpose because their capability metadata is per request.
+
+Legacy elicitation has no reliable parent tool-call identifier in the received SDK
+handler metadata. With multiple `tools/call` operations in flight on one physical
+legacy client, enforced elicitation fails closed with JSON-RPC `-32603` and
+`data.reason: "ambiguous_legacy_origin"`. The error explains that concurrent legacy
+calls make the origin ambiguous and recommends sequential calls or an MRTR server.
+No form is displayed and no human answer is admitted. Without enforcement, legacy
+clients keep the SDK request method, origin handling, and concurrent-call behavior.
+
+Worker binding waits at most five seconds for the host's acknowledgement; expiry
+fails with `private_form_unavailable`, removes the pending waiter, and releases any
+late host binding. Worker readiness events feed the same legacy renegotiation path.
+Under enforcement, server stderr remains available as redacted diagnostic records
+with allowlisted system error codes. Arbitrary text is omitted because a server can
+echo private messages, schema labels, or answers; ordinary legacy stderr is unchanged.
+
+The granted connection receives `mcp_form_request` privately. Its envelope contains
+`sessionId`, `bindingEpoch`, `attachmentEpoch`, `grantId`, `dialogId`, `dialogToken`,
+and `formRevision`; the request also carries `server` (`label` and `source`),
+`message`, `schema`, and `deadlineAtMs`. The presenter returns that exact envelope
+with `mcp_form_presented` only after rendering, then `mcp_form_response` with
+`action: "accept" | "decline" | "cancel"` and accepted `content` when applicable.
+`mcp_form_sync` uses the current session, binding epoch, attachment epoch, and grant
+to recover the holder's still-live form. It is not a public replay API.
+
+Unknown and stolen-dialog submissions from a non-holder both return
+`presenter_not_authorized` before private dialog lookup. The host validates a whole
+form before admitting a human answer, and a synchronous terminal latch accepts only
+one outcome. `mcp_form_resolved` carries the session, grant, dialog, and a reason:
+`answered`, `declined`, `cancelled`, `processing_failed`, or `operation_aborted`.
+
+No presenter, or loss before actual presentation, is a processing failure. Only
+explicit human refusal produces decline. Dismissal after presentation is cancel;
+host timeout or presentation loss after presentation also cancels, without human
+admission. Operation abort terminates the operation. Private records, schemas,
+tokens, drafts, and answers never enter general extension UI events, session
+snapshots, replay, or ordinary output queues. Native desktop registration, WSL
+relay, and a gateway form page require separate client implementation.
 
 Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()`, etc. In RPC mode, these are translated into a request/response sub-protocol on top of the base command/event flow.
 

@@ -15,6 +15,7 @@ import { probeProtocolInfo } from "./host-probe.ts";
 import type { RpcResponse } from "./rpc-types.ts";
 import { selectDrainVerdicts } from "./session-drain.ts";
 import type { RpcSessionRegistry } from "./session-registry.ts";
+import type { Duplex } from "node:stream";
 
 export const BEGIN_HANDOVER_COMMAND = "begin_handover";
 
@@ -136,12 +137,14 @@ export async function performIdleHandover(context: {
 	readonly request: IdleHandoverRequest;
 	readonly socket: string;
 	readonly agentDir: string;
+	readonly presenterBootstrap?: Duplex;
 }): Promise<HandoverOutcome> {
 	const { request, socket, agentDir } = context;
 	const env: Record<string, string | null> = {};
 	for (const name of Object.keys(process.env)) env[name] = null;
 	Object.assign(env, request.env);
 	const result = await handoffHost({
+		presenterBootstrap: context.presenterBootstrap,
 		socket,
 		agentDir,
 		hostArgs: request.hostArgs,

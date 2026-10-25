@@ -261,6 +261,7 @@ async function upgradeGeneration(
 		socket,
 		agentDir: options.agentDir ?? getAgentDir(),
 		hostArgs: options.hostArgs ?? [],
+		presenterBootstrap: options.presenterBootstrap,
 		...(options.env ? { env: options.env } : {}),
 		...(options.policy ? { policy: options.policy } : {}),
 		_test: {

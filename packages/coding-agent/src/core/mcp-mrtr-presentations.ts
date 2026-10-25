@@ -1,14 +1,23 @@
 import type { ExtensionUIContext } from "./extensions/types.ts";
+import type { McpFormBinding } from "./mcp-form-types.ts";
 
 /** Local host references only. RPC capabilities and serialized UI objects cannot enter this registry. */
 export interface McpMrtrPresentation {
 	readonly ui: Pick<ExtensionUIContext, "select" | "input">;
 	readonly signal: AbortSignal;
+	readonly admit?: () => void;
+	readonly presented?: () => void;
+	readonly privateForms?: McpFormBinding;
 }
 const presentations = new WeakMap<object, McpMrtrPresentation>();
 
-export function registerMcpMrtrPresentation(ui: ExtensionUIContext, signal: AbortSignal): ExtensionUIContext {
-	presentations.set(ui, { ui, signal });
+export function registerMcpMrtrPresentation(
+	ui: ExtensionUIContext,
+	signal: AbortSignal,
+	admit?: () => void,
+	privateForms?: McpFormBinding,
+): ExtensionUIContext {
+	presentations.set(ui, { ui, signal, admit, privateForms });
 	return ui;
 }
 

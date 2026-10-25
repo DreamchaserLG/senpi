@@ -108,6 +108,9 @@ export class LifecycleLedger {
 	startRun(origin: "human" | "automatic"): void {
 		this.lastTurnEnd = undefined;
 		this.openEpoch(origin);
+		// The previous run's stop never describes this one (senpi#3864).
+		const { lastStop: _lastStop, ...current } = this.current;
+		this.current = current;
 		this.runId = crypto.randomUUID();
 		this.runActive = true;
 		this.admissionWriteFailed = false;
@@ -168,6 +171,7 @@ export class LifecycleLedger {
 		readonly waits: LifecycleWaits;
 		readonly holds: readonly LifecycleHold[];
 		readonly failure?: SessionLifecycle["failure"];
+		readonly lastStop?: SessionLifecycle["lastStop"];
 	}): void {
 		if (input.holds.length > 0 || input.state === "failed") this.request = undefined;
 		const terminal = input.state === "done" || input.state === "failed";
@@ -176,6 +180,7 @@ export class LifecycleLedger {
 			completion: _completion,
 			failure: _failure,
 			settleDecision: _decision,
+			lastStop: _lastStop,
 			...base
 		} = this.current;
 		const now = new Date().toISOString();
@@ -209,6 +214,7 @@ export class LifecycleLedger {
 					}
 				: {}),
 			...(input.state === "failed" && input.failure ? { failure: input.failure } : {}),
+			...(input.lastStop ? { lastStop: input.lastStop } : {}),
 			...(input.state === "done" && standingRequest
 				? {
 						settleDecision: this.current.settleDecision ?? { decisionId: crypto.randomUUID() },
@@ -284,7 +290,8 @@ function equivalent(previous: SessionLifecycle, next: SessionLifecycle): boolean
 		previous.selfSettleEligible === next.selfSettleEligible &&
 		JSON.stringify(previous.waitingOn) === JSON.stringify(next.waitingOn) &&
 		JSON.stringify(previous.holds) === JSON.stringify(next.holds) &&
-		JSON.stringify(previous.failure) === JSON.stringify(next.failure)
+		JSON.stringify(previous.failure) === JSON.stringify(next.failure) &&
+		JSON.stringify(previous.lastStop) === JSON.stringify(next.lastStop)
 	);
 }
 

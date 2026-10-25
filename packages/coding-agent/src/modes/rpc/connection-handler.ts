@@ -193,6 +193,10 @@ export interface RpcConnectionOptions {
 		session: AgentSessionRuntime["session"],
 		ui: ExtensionUIContext,
 	) => (() => void) | undefined;
+	bindMcpForms?: (
+		session: AgentSessionRuntime["session"],
+		ui: ExtensionUIContext,
+	) => (() => void) | undefined | Promise<(() => void) | undefined>;
 	/** A worker's internal bridge is gated by its host's actual socket capabilities. */
 	workerSecurityBridge?: boolean;
 	grantDialogSettled?: (id: string) => void;
@@ -866,6 +870,8 @@ export function createRpcConnectionHandler(
 	};
 
 	const rebindSession = async (deferRefresh = false): Promise<void> => {
+		unbindMcpForms?.();
+		unbindMcpForms = undefined;
 		unsubscribeSecurityNotices?.();
 		unsubscribeLoadedSurfaces?.();
 		unsubscribeExtensionEvents?.();
@@ -944,10 +950,12 @@ export function createRpcConnectionHandler(
 		// reconstruct the session it is bound to. Installing here also drops the
 		// previous session's subscription immediately instead of after the bind.
 		installSessionSubscriptions();
+		const extensionUi = createExtensionUIContext();
+		unbindMcpForms = await options.bindMcpForms?.(session, extensionUi);
 		const refresh = refreshLoadedSurfacesAfter(
 			() =>
 				session.bindExtensions({
-					uiContext: createExtensionUIContext(),
+					uiContext: extensionUi,
 					mode: "rpc",
 					commandContextActions: {
 						waitForIdle: () => session.agent.waitForIdle(),
@@ -2221,6 +2229,7 @@ export function createRpcConnectionHandler(
 				)
 			: () => {};
 	const dispose = async (disposeOptions: { readonly processExit?: boolean } = {}): Promise<void> => {
+		unbindMcpForms?.();
 		grantPresentationAbort.abort();
 		detachGrantPresentation?.();
 		unsubscribeSecurityNotices?.();
@@ -2247,6 +2256,7 @@ export function createRpcConnectionHandler(
 
 	// Perform the initial bind synchronously-scheduled so the handler is ready
 	// as soon as the caller awaits `ready`.
+	let unbindMcpForms: (() => void) | undefined;
 	const ready = rebindSession();
 
 	return {

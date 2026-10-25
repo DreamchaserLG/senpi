@@ -1,5 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ExtensionUIContext, SessionKind } from "../../core/extensions/types.ts";
+import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-types.ts";
+import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
@@ -86,6 +88,93 @@ function toolUpdateKey(value: RpcRecord): string | undefined {
  * scheduling boundary and violate D9.
  */
 export class SessionEventWriter {
+	private presenterAuthority?: McpPresenterAuthority;
+	private readonly presenterConnections = new Map<string, McpPresenterConnection>();
+	private readonly presenterBindings = new Map<string, McpFormBinding>();
+
+	/** Deployment switch. Ordinary RPC behavior is unchanged unless the host explicitly enables it. */
+	enableMcpPresenters(): McpPresenterAuthority {
+		this.presenterAuthority ??= new McpPresenterAuthority();
+		return this.presenterAuthority;
+	}
+
+	get mcpPresenters(): McpPresenterAuthority | undefined {
+		return this.presenterAuthority;
+	}
+
+	getMcpPresenterConnection(id: string): McpPresenterConnection | undefined {
+		return this.presenterConnections.get(id);
+	}
+	findMcpPresenterConnection(nonce: string): McpPresenterConnection | undefined {
+		return [...this.presenterConnections.values()].find((connection) => connection.nonce === nonce);
+	}
+
+	getMcpFormBinding(sessionId: string): McpFormBinding | undefined {
+		return this.presenterBindings.get(sessionId);
+	}
+
+	bindMcpForms(
+		sessionId: string,
+		durableId: string,
+		ui: object,
+		admit: () => void,
+	): (() => void) | undefined | Promise<(() => void) | undefined> {
+		const authority = this.presenterAuthority;
+		if (!authority) return undefined;
+		const binding = authority.bind(sessionId, durableId, admit);
+		this.presenterBindings.set(sessionId, binding);
+		for (const id of this.fanout.attachedConnections(sessionId)) {
+			const connection = this.presenterConnections.get(id);
+			if (connection) authority.attach(connection, binding);
+		}
+		bindPrivateMcpForms(ui, binding);
+		return () => {
+			binding.dispose();
+			if (this.presenterBindings.get(sessionId) === binding) this.presenterBindings.delete(sessionId);
+		};
+	}
+
+	/** Private records bypass event queues, snapshots, mirrors, replay, and overflow preview errors. */
+	handleMcpForm(value: unknown): boolean {
+		if (!this.presenterAuthority) return false;
+		if (
+			typeof value !== "object" ||
+			value === null ||
+			!("type" in value) ||
+			typeof value.type !== "string" ||
+			(!value.type.startsWith("mcp_form_") && value.type !== "mcp_presenter_context")
+		)
+			return false;
+		const id = this.currentConnection();
+		const sender = id === undefined ? undefined : this.presenterConnections.get(id);
+		const context =
+			value.type === "mcp_presenter_context" && "sessionId" in value && typeof value.sessionId === "string" && sender
+				? this.presenterAuthority?.connectionContext(sender, value.sessionId)
+				: undefined;
+		const reply =
+			value.type === "mcp_presenter_context"
+				? context
+					? { ok: true, context }
+					: { error: "presenter_not_authorized" }
+				: sender && this.presenterAuthority
+					? this.presenterAuthority.receive(sender, value)
+					: { error: "presenter_not_authorized" };
+		const connection = id === undefined ? undefined : this.fanout.get(id)?.connection;
+		if (connection) {
+			try {
+				connection.writeRaw(
+					serializeJsonLine({
+						type: "mcp_form_reply",
+						...("id" in value && typeof value.id === "string" ? { id: value.id } : {}),
+						...reply,
+					}),
+				);
+			} catch {
+				if (sender) this.presenterAuthority?.detach(sender);
+			}
+		}
+		return true;
+	}
 	private readonly records = new SessionRecordAccounting();
 	private readonly queues = new Map<string, RecordQueue>();
 	private readonly fanout = new SessionEventFanout();
@@ -150,7 +239,12 @@ export class SessionEventWriter {
 		waitOrSchedule?: BackpressureWaiter | FlushScheduler,
 		scheduleFlush?: FlushScheduler,
 	) {
-		this.fanout.onConnectionClosed = (id) => this.securityPresentations.dropConnection(id);
+		this.fanout.onConnectionClosed = (id) => {
+			this.securityPresentations.dropConnection(id);
+			const sender = this.presenterConnections.get(id);
+			if (sender) this.presenterAuthority?.detach(sender);
+			this.presenterConnections.delete(id);
+		};
 		this.writeRaw = writeRaw;
 		if (waitOrSchedule && scheduleFlush === undefined && waitOrSchedule.length > 0) {
 			this.scheduleFlush = waitOrSchedule as FlushScheduler;
@@ -177,10 +271,30 @@ export class SessionEventWriter {
 		connection: SessionEventWriterConnection,
 		options: { readonly maxQueueBytes?: number; readonly stallMs?: number } = {},
 	): void {
+		const previousPresenter = this.presenterConnections.get(id);
+		if (previousPresenter) this.presenterAuthority?.detach(previousPresenter);
 		this.fanout.registerConnection(id, connection, options);
+		if (this.presenterAuthority) {
+			const sender = this.presenterAuthority.connect(id, (frame) => {
+				if (!this.fanout.get(id)) return false;
+				try {
+					connection.writeRaw(serializeJsonLine(frame));
+					// A pending drain does not undo an accepted write or drop the next resolution.
+					void connection.waitForBackpressure().catch(() => this.presenterAuthority?.detach(sender));
+					return true;
+				} catch {
+					this.presenterAuthority?.detach(sender);
+					return false;
+				}
+			});
+			this.presenterConnections.set(id, sender);
+		}
 	}
 
 	unregisterConnection(id: string): void {
+		const sender = this.presenterConnections.get(id);
+		if (sender) this.presenterAuthority?.detach(sender);
+		this.presenterConnections.delete(id);
 		this.securityPresentations.dropConnection(id);
 		this.fanout.unregisterConnection(id);
 		this.status.dropConnection(id);
@@ -190,9 +304,15 @@ export class SessionEventWriter {
 	attachConnectionToSession(id: string, sessionId: string): void {
 		this.fanout.attachConnectionToSession(id, sessionId);
 		if (this.hasConnection(id)) this.securityPresentations.attach(id, sessionId);
+		const sender = this.presenterConnections.get(id);
+		const binding = this.presenterBindings.get(sessionId);
+		if (sender && binding) this.presenterAuthority?.attach(sender, binding);
 	}
 
 	detachConnectionFromSession(id: string, sessionId: string): void {
+		const sender = this.presenterConnections.get(id);
+		const binding = this.presenterBindings.get(sessionId);
+		if (sender && binding) this.presenterAuthority?.detach(sender, binding);
 		this.fanout.detachConnectionFromSession(id, sessionId);
 		this.securityPresentations.detach(id, sessionId);
 	}
@@ -204,9 +324,15 @@ export class SessionEventWriter {
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
 		this.fanout.setConnectionCapabilities(id, capabilities);
 		this.securityPresentations.capabilitiesChanged(id);
+		if (!capabilities.includes("interactive_user") || !capabilities.includes("mcp_form_presenter_v1")) {
+			const sender = this.presenterConnections.get(id);
+			if (sender) this.presenterAuthority?.withdraw(sender);
+		}
 	}
 
 	clearConnectionCapabilities(id: string): void {
+		const sender = this.presenterConnections.get(id);
+		if (sender) this.presenterAuthority?.withdraw(sender);
 		this.fanout.clearConnectionCapabilities(id);
 		this.securityPresentations.capabilitiesChanged(id);
 	}
@@ -546,6 +672,8 @@ export class SessionEventWriter {
 	 * session's final stdout record.
 	 */
 	closeSession(sessionId: string, response: object, reason?: RpcSessionClosedReason, sessionPath?: string): void {
+		this.presenterBindings.get(sessionId)?.dispose();
+		this.presenterBindings.delete(sessionId);
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.securityPresentations.dropSession(sessionId);
@@ -623,6 +751,8 @@ export class SessionEventWriter {
 		lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent,
 		attachedOnly = false,
 	): void {
+		this.presenterBindings.get(sessionId)?.dispose();
+		this.presenterBindings.delete(sessionId);
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.securityPresentations.dropSession(sessionId);

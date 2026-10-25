@@ -1,5 +1,6 @@
 /** The options and result of `ensureHost`, kept apart so the ensure's helpers can name them without a cycle. */
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
+import type { Duplex } from "node:stream";
 
 /**
  * What an ensure may do to a host that is already running.
@@ -12,6 +13,7 @@ import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 export type HostUpgradePolicy = "never" | "if-engine-differs";
 
 export interface EnsureHostOptions {
+	readonly presenterBootstrap?: Duplex;
 	readonly socket: string;
 	readonly agentDir?: string;
 	readonly keyRoot?: string;

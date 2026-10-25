@@ -1,4 +1,6 @@
 import { createServer, type Server } from "node:net";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { Duplex } from "node:stream";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
@@ -56,8 +58,13 @@ import { formatSocketAddress, listen, resolveSocketPath } from "./host-socket-bi
 import { socketSink } from "./socket-sink.ts";
 import { ensureSocketSecret, SOCKET_SECRET_FILE_ENV, socketSecretPath } from "./socket-transport.ts";
 import { WorkerSessionRegistry } from "./worker-session-registry.ts";
+import { McpPresenterControl } from "./mcp-presenter-control.ts";
+import { presenterBootstrapStream } from "./mcp-presenter-bootstrap.ts";
 
 export interface MultiSessionHostOptions {
+	/** Host deployment policy; never derived from client capabilities or project settings. */
+	mcpPresenterEnforcement?: boolean;
+	presenterBootstrapFd?: number;
 	agentDir: string;
 	createRuntime: CreateAgentSessionRuntimeFactory;
 	workerConfiguration?: CliRuntimeConfiguration;
@@ -120,6 +127,7 @@ export function createHostCore(
 	hostContext?: SessionContext,
 	hooks: HostCoreHooks = {},
 ) {
+	if (options.mcpPresenterEnforcement === true) writer.enableMcpPresenters();
 	const policy = resolveHostIdlePolicy(process.env, idle);
 	const endpointSocket = publicEndpointSocket(options);
 	const pathReservations = createEndpointReservations({
@@ -199,9 +207,12 @@ export function createHostCore(
 		try {
 			parsed = JSON.parse(line);
 		} catch (cause) {
-			await writer.enqueueControl(parseError(`Failed to parse command: ${errorMessage(cause)}`));
+			await writer.enqueueControl(
+				parseError(writer.mcpPresenters ? "Invalid command" : `Failed to parse command: ${errorMessage(cause)}`),
+			);
 			return;
 		}
+		if (writer.handleMcpForm(parsed)) return;
 		if (await gate.intercept(parsed, (answer) => writer.enqueueControl(answer))) return;
 		const shapeError = rpcCommandShapeError(parsed);
 		if (shapeError) {
@@ -335,6 +346,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 					}),
 					perform: (request) =>
 						performIdleHandover({
+							presenterBootstrap: presenterControl?.successorBootstrap(),
 							request,
 							socket: hostWatchdogBinding()?.publicSocket ?? socketPath,
 							agentDir: options.agentDir,
@@ -344,6 +356,28 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			}),
 		},
 	);
+	let presenterDir: string | undefined;
+	let presenterControl: McpPresenterControl | undefined;
+	if (options.presenterBootstrapFd !== undefined) {
+		const bootstrap = presenterBootstrapStream(options.presenterBootstrapFd);
+		try {
+			if (bootstrap && options.mcpPresenterEnforcement === true) {
+				if (process.platform !== "win32") presenterDir = await mkdtemp(join(tmpdir(), "senpi-presenter-"));
+				presenterControl = new McpPresenterControl(
+					writer,
+					presenterDir
+						? join(presenterDir, "control.sock")
+						: `\\\\.\\pipe\\senpi-presenter-${writer.mcpPresenters?.instance}`,
+				);
+				await presenterControl.listen();
+				presenterControl.bootstrap(bootstrap);
+			} else bootstrap?.destroy();
+		} catch {
+			bootstrap?.destroy();
+			presenterControl?.dispose();
+			presenterControl = undefined;
+		}
+	}
 	const observers = startHostObservers(router, writer, {
 		trim,
 		// The shape #1893 measured: gigabytes resident with `sessions.total 0`. Say it once, and when
@@ -455,6 +489,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		shuttingDown = true;
 		observers.stop();
 		handover?.dispose();
+		presenterControl?.dispose();
+		if (presenterDir) await rm(presenterDir, { recursive: true, force: true });
 		stopChildReaper();
 		// A handover that completed at once drains this host; its caller still gets the answer.
 		await handoverAnswered();

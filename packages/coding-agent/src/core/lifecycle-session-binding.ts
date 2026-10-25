@@ -14,8 +14,10 @@ import { lifecycleHistory } from "./lifecycle-history.ts";
 import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
 import type { LifecycleRecord } from "./lifecycle-record.ts";
 import { readLifecycleRuntimeFacts } from "./lifecycle-runtime-facts.ts";
+import { goalGuardAfter, type RunStopFacts } from "./lifecycle-stop.ts";
 import { SessionLifecycleController } from "./session-lifecycle.ts";
 import type { SessionLifecycleEvent } from "./session-lifecycle-types.ts";
+import type { TurnDeadlineKind } from "./turn-deadline.ts";
 import { isRecord } from "./work-custody-record.ts";
 
 interface LifecycleBindingHost {
@@ -34,6 +36,11 @@ export class LifecycleSessionBinding {
 	private readonly unsubscribeAdmission: () => void;
 	private readonly unsubscribeGoal: () => void;
 	private lastEnd: AgentEndEvent | undefined;
+	/** The run each emitted agent_end belonged to, read when it was emitted, not when its queue reaches it. */
+	private readonly boundEnds = new WeakMap<object, string | undefined>();
+	private lastEndRunId: string | undefined;
+	/** Captured once inside the bound end's own extension-processing window, never re-scanned by a later run. */
+	private lastEndGuard: RunStopFacts["guard"];
 	private refreshGeneration = 0;
 	private restored = false;
 	private nextRunOrigin: "human" | "automatic" | undefined;
@@ -135,9 +142,22 @@ export class LifecycleSessionBinding {
 
 	startRun(): void {
 		this.lastEnd = undefined;
+		this.lastEndGuard = undefined;
 		const origin = this.nextRunOrigin;
 		this.nextRunOrigin = undefined;
 		this.controller.startRun(origin);
+	}
+
+	deadlineStopped(kind: TurnDeadlineKind, atMs: number): void {
+		this.controller.deadlineStopped(kind, atMs);
+	}
+
+	deadlineStopWriteFailed(): void {
+		this.controller.deadlineStopWriteFailed();
+	}
+
+	bindTurnEnd(end: object): void {
+		this.boundEnds.set(end, this.controller.ledger.runId);
 	}
 
 	consume(message: AgentMessage): string | undefined {
@@ -150,8 +170,14 @@ export class LifecycleSessionBinding {
 		return ticketId ? this.session.sessionManager.reduceHistory(lifecycleDeliveryEntries).get(ticketId) : undefined;
 	}
 
-	async turnEnded(event: AgentEndEvent): Promise<void> {
+	/** `event` is the extension agent_end, never the session-level stamp; `end` is the core event bound at emission. */
+	async turnEnded(event: AgentEndEvent, end: object, guardStartLeafId?: string | null): Promise<void> {
 		this.lastEnd = event;
+		this.lastEndRunId = this.boundEnds.get(end);
+		this.lastEndGuard =
+			guardStartLeafId === undefined
+				? undefined
+				: goalGuardAfter(this.session.sessionManager.getBranch(), guardStartLeafId);
 		await this.refreshFacts();
 	}
 
@@ -199,7 +225,15 @@ export class LifecycleSessionBinding {
 				deadlineStop: input.deadlineStop || saved.deadlineStop,
 				providerRetryAtMs: input.providerRetryAtMs ?? saved.providerRetryAtMs,
 			};
-		this.controller.goalFacts(goal, input);
+		// Stop facts belong to the run that just ended in this process; a restored end carries its recorded stop.
+		const stop = this.lastEnd
+			? {
+					runId: this.lastEndRunId,
+					guard: this.lastEndGuard,
+					todo: collected?.todoOutcome,
+				}
+			: undefined;
+		this.controller.goalFacts(goal, input, stop);
 	}
 
 	async idle(): Promise<void> {

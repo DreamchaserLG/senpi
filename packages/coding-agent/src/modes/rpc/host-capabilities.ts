@@ -56,10 +56,12 @@ export function multiSessionHostCapabilities(options: {
 	readonly warm: boolean;
 	readonly toolRuntime: ToolRuntimeKind;
 	readonly negotiated: readonly string[];
+	readonly mcpPresenters?: boolean;
 }): string[] {
 	return [
 		...new Set([
 			"multi_session",
+			...(options.mcpPresenters ? ["mcp_form_presenter_v1"] : []),
 			"session_lifecycle",
 			"expected_host_instance",
 			"attach_session",
@@ -120,7 +122,9 @@ export function multiSessionHostCapabilities(options: {
 			...(options.warm ? [WARM_CAPABILITY] : []),
 			...toolRuntimeCapabilities(options.toolRuntime),
 			// The host alone says where tool work runs; a negotiated copy would make two answers.
-			...options.negotiated.filter((capability) => !isHostOwnedToolRuntimeCapability(capability)),
+			...options.negotiated.filter(
+				(capability) => capability !== "mcp_form_presenter_v1" && !isHostOwnedToolRuntimeCapability(capability),
+			),
 		]),
 	];
 }

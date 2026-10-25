@@ -58,9 +58,11 @@ describe("modern HTTP MCP transport", () => {
 
 	it.each([
 		["tools/call", { name: "echo" }, "echo"],
-		["prompts/get", { name: "\uD55C\uAE00" }, "base64:7ZWc6riA"],
-		["resources/read", { uri: "x:\u00FF", name: "ignored" }, "base64:eDrDvw"],
-		["tools/call", { name: "base64:literal" }, "base64:YmFzZTY0OmxpdGVyYWw"],
+		["prompts/get", { name: "\uD55C\uAE00" }, "=?base64?7ZWc6riA?="],
+		["resources/read", { uri: "x:\u00FF", name: "ignored" }, "=?base64?eDrDvw==?="],
+		["tools/call", { name: "base64:literal" }, "base64:literal"],
+		// #4192: only the exact sentinel pattern is ambiguous, not the former base64: prefix.
+		["tools/call", { name: "=?base64?literal?=" }, "=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?="],
 		["tools/list", { name: "ignored" }, null],
 	])("routes %s with the canonical name encoding", async (method, params, expected) => {
 		const fetch = vi.fn<FetchLike>().mockResolvedValue(Response.json(result));

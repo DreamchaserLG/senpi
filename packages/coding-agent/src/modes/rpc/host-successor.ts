@@ -42,6 +42,7 @@ import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launc
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
 import { keepOwnerPipe, OWNER_WATCH_FD } from "./host-lifecycle-launch.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
+import { relayPresenterBootstrap } from "./mcp-presenter-bootstrap.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import { successorHostEnvironment } from "./host-spawn-environment.ts";
 import { signalGeneration } from "./host-stop.ts";
@@ -112,6 +113,7 @@ export async function startSuccessor(context: {
 			"--replace",
 			`${replaced.dev}:${replaced.ino}`,
 			...(inheritOwnerPipe ? ["--owner-fd", String(OWNER_WATCH_FD)] : []),
+			...(options.presenterBootstrap ? ["--mcp-presenter-fd", "4"] : []),
 			...(options.hostArgs ?? []),
 		];
 		const launch = (options._test?.launch ?? options.launch)?.(argv) ?? defaultHostLaunch(argv);
@@ -127,8 +129,15 @@ export async function startSuccessor(context: {
 				generation,
 				instanceId,
 			}),
-			stdio: inheritOwnerPipe ? ["ignore", "ignore", stderr.fd, "pipe"] : ["ignore", "ignore", stderr.fd],
+			stdio: options.presenterBootstrap
+				? ["ignore", "ignore", stderr.fd, inheritOwnerPipe ? "pipe" : "ignore", "pipe"]
+				: inheritOwnerPipe
+					? ["ignore", "ignore", stderr.fd, "pipe"]
+					: ["ignore", "ignore", stderr.fd],
 		});
+		const presenterEnrollment = options.presenterBootstrap
+			? relayPresenterBootstrap(options.presenterBootstrap, spawned)
+			: undefined;
 		child = spawned;
 		exited = new Promise<void>((resolve) => spawned.once("exit", () => resolve()));
 		await stderr.close();
@@ -167,6 +176,7 @@ export async function startSuccessor(context: {
 		// clients reach is still the predecessor, and the pointer has to name whoever owns the socket.
 		await options._test?.beforeRegistration?.();
 		await writeHostRegistration(paths, { ...registration, ...successorBuild(answer) });
+		await presenterEnrollment;
 		child.unref();
 		// The successor owns the socket now: the predecessor may drain. SIGUSR1 is sent only here,
 		// to a pid the record proved and a host that advertised it can survive the signal. A

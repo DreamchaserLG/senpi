@@ -478,7 +478,7 @@ export class McpService {
 						{
 							context: binding.context,
 							options: binding.options,
-							ui: () => this.getMcpElicitationUi(),
+							ui: this.#elicitationProviderFor(binding),
 							notice: (identity, names) => {
 								// An untrusted project keeps the skill's references literal (senpi#2345); keep that fix in
 								// the one notice instead of a generic withheld line (senpi#3796).
@@ -831,7 +831,7 @@ export class McpService {
 				session: options,
 				elicitationEnabled: declarer.context.mode !== "print" && declarer.context.mode !== "json",
 				cwd: declarer.context.cwd,
-				ui: () => this.getMcpElicitationUi(),
+				ui: this.#elicitationProviderFor(declarer),
 				artifacts: this.#outputArtifacts,
 				shouldReconnect: (current) =>
 					!this.#disposed &&
@@ -1121,12 +1121,21 @@ export class McpService {
 	}
 
 	#requestOrigin(binding: McpSessionBinding, entry: McpConnectionEntry): McpRequestOrigin {
+		const source = binding.config.servers[entry.name]?.source;
 		return createMcpRequestOrigin({
 			binding,
 			connection: entry.connection,
 			signal: AbortSignal.any([binding.lifetime.signal, entry.connection.requestLifetimeSignal]),
 			presentation: binding.presentation,
+			privateFormsEnforced: binding.presentation?.privateForms !== undefined,
+			privateForm: binding.presentation?.privateForms?.capture(),
 			serverLabel: entry.name,
+			serverSource:
+				source === "project" || source === "claude"
+					? "project"
+					: source === "skill" || source === "extension"
+						? "plugin"
+						: "user",
 			isCurrent: () =>
 				!this.#disposed &&
 				!binding.lifetime.signal.aborted &&
@@ -1145,6 +1154,29 @@ export class McpService {
 
 	getMcpElicitationUi(): McpElicitationUi | undefined {
 		return this.#elicitationUiProvider?.();
+	}
+	#elicitationProviderFor(owner: McpConfigOwner) {
+		// Connections outlive their first declarer's extension context. Capture its host-owned
+		// references while it is live; readiness must never read a released session's ctx.ui.
+		const binding = [...this.#bindings.values()].find((candidate) => candidate === owner);
+		const ui = owner.context.ui;
+		const privateBinding = () => {
+			// Keep observing presentation replacements on the binding, not just its initial grant.
+			const presentation = binding
+				? binding.presentation
+				: ui === undefined
+					? undefined
+					: getMcpMrtrPresentation(ui);
+			return presentation?.privateForms;
+		};
+		return Object.assign(() => this.getMcpElicitationUi(), {
+			enforced: () => privateBinding() !== undefined,
+			subscribe: (listener: () => void) => privateBinding()?.subscribe?.(listener) ?? (() => {}),
+			eligible: () => {
+				const binding = privateBinding();
+				return binding === undefined || binding.capture()?.ready() === true;
+			},
+		});
 	}
 
 	isMcpPromptCommandRegistered(name: string): boolean {

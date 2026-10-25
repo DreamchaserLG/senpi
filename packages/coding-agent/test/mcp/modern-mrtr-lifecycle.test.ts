@@ -60,14 +60,8 @@ describe("MRTR deadlines and settlement", () => {
 		const shown = Array.from({ length: 4 }, () => Promise.withResolvers<ExtensionSelectorComponent>());
 		let index = 0;
 		const admit = vi.fn();
-		Object.defineProperty(ui.host, "session", {
-			configurable: true,
-			value: {
-				emitExtensionEvent: vi.fn(),
-				admitHumanAnswer: admit,
-			},
-		});
-		ui.host.ui = { terminal: { rows: 30 }, setFocus: vi.fn(), requestRender: vi.fn() };
+		Object.assign(ui.host.session, { emitExtensionEvent: vi.fn(), admitHumanAnswer: admit });
+		ui.host.ui = { terminal: { rows: 30 }, setFocus: vi.fn(), requestRender: vi.fn(), renderNow: vi.fn() };
 		ui.host.editor = {};
 		ui.host.disposeActiveSelector = vi.fn();
 		ui.host.editorContainer = {
@@ -89,14 +83,20 @@ describe("MRTR deadlines and settlement", () => {
 		};
 		(await nextWidget(0)).handleInput("\n");
 		const oldReview = await nextWidget(1);
+		expect(admit).toHaveBeenCalledTimes(1);
 		oldReview.handleInput("\n");
 		(await nextWidget(2)).handleInput("\n");
 		const currentReview = await nextWidget(3);
+		expect(admit).toHaveBeenCalledTimes(3);
 		oldReview.handleInput("\n");
 		oldReview.handleInput("\u001b");
+		expect(admit).toHaveBeenCalledTimes(3);
 		const stillCurrent = ui.host.extensionSelector;
 		currentReview.handleInput("\n");
 		await pending;
+		// senpi#4210: default ephemeral selects keep the ordinary scheduled render path.
+		expect(ui.host.ui.renderNow).not.toHaveBeenCalled();
+		expect(ui.host.ui.requestRender).toHaveBeenCalled();
 		expect(stillCurrent).toBe(currentReview);
 		expect(admit).toHaveBeenCalledTimes(4);
 		expect(f.transport.calls).toHaveLength(3);

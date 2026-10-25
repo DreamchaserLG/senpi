@@ -1,5 +1,6 @@
 import { stripVTControlCharacters } from "node:util";
 import type { McpMrtrPresentation } from "../../../../mcp-mrtr-presentations.ts";
+import { bindMcpFormPresented } from "../../../../mcp-form-types.ts";
 import { McpMrtrError } from "./errors.ts";
 import { enums, isRecord, type Property, validValue, validateMrtrForm, type Value } from "./form-schema.ts";
 
@@ -20,13 +21,19 @@ export async function collectMrtrForm(
 	const abort = new AbortController();
 	const combined = AbortSignal.any([signal, presentation.signal, abort.signal]);
 	const opts = { signal: combined, ephemeral: true };
+	bindMcpFormPresented(opts, presentation.presented);
 	const heading = `MCP server: ${inert(serverLabel)}\n${inert(params.message)}`;
 	const select = async (title: string, choices: string[]) => {
 		if (combined.aborted) return undefined;
-		const result = await presentation.ui.select(title, choices, opts);
+		const answer = presentation.ui.select(title, choices, opts);
+		const result = await answer;
 		return combined.aborted ? undefined : result;
 	};
 	const content: Record<string, Value> = Object.create(null);
+	const finish = (result: MrtrInputResponse): MrtrInputResponse => {
+		if (!combined.aborted) presentation.admit?.();
+		return result;
+	};
 	const required = new Set(schema.required ?? []);
 	const entries = Object.entries(schema.properties);
 	const field = async (name: string, property: Property): Promise<boolean> => {
@@ -104,21 +111,23 @@ export async function collectMrtrForm(
 	};
 	try {
 		const begin = await select(heading, ["Continue", "Decline", "Cancel"]);
-		if (begin !== "Continue") return { action: begin === "Decline" ? "decline" : "cancel" };
-		for (const [name, property] of entries) if (!(await field(name, property))) return { action: "cancel" };
+		if (begin !== "Continue") return finish({ action: begin === "Decline" ? "decline" : "cancel" });
+		for (const [name, property] of entries) if (!(await field(name, property))) return finish({ action: "cancel" });
 		for (;;) {
 			const review = entries
 				.map(([name]) => `${inert(name)}: ${own(content, name) ? inert(JSON.stringify(content[name])) : "(unset)"}`)
 				.join("\n");
 			const action = await select(`${heading}\nReview\n${review}`, ["Submit", "Edit field", "Decline", "Cancel"]);
-			if (action === "Submit" && !combined.aborted) return { action: "accept", content: structuredClone(content) };
-			if (action !== "Edit field") return { action: action === "Decline" ? "decline" : "cancel" };
+			if (action === "Submit" && !combined.aborted)
+				return finish({ action: "accept", content: structuredClone(content) });
+			if (action !== "Edit field") return finish({ action: action === "Decline" ? "decline" : "cancel" });
 			const labels = entries.map(([name], index) => `${index + 1}. ${inert(name)}`);
 			const chosen = await select(`${heading}\nEdit field`, labels);
 			const entry = chosen === undefined ? undefined : entries[labels.indexOf(chosen)];
-			if (!entry || !(await field(...entry))) return { action: "cancel" };
+			if (!entry || !(await field(...entry))) return finish({ action: "cancel" });
 		}
 	} finally {
+		bindMcpFormPresented(opts, undefined);
 		abort.abort();
 		for (const key of Object.keys(content)) delete content[key];
 	}

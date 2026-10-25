@@ -168,36 +168,44 @@ function pipeStderr(
 	let stderrEnded = false;
 	const stderr = transport.stderr;
 	if (stderr === undefined || stderr === null) return;
+	const logLine = (line: string) => {
+		// Arbitrary server text may echo private messages, schemas, or answers. Keep diagnostic
+		// events and allowlisted system error codes, never untrusted payload text under enforcement.
+		const code = protocol.privateForms
+			? line.match(/\b(?:EACCES|ENOENT|EPIPE|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOSPC|ENOMEM|EMFILE)\b/)?.[0]
+			: undefined;
+		logger.stderr(protocol.privateForms ? `[private MCP stderr redacted]${code ? ` ${code}` : ""}` : line);
+	};
 	const append = (text: string) => {
 		pending += text;
 		const lines = pending.split(/\r?\n/);
 		pending = lines.pop() ?? "";
-		for (const line of lines) if (line.length > 0) logger.stderr(line);
+		for (const line of lines) if (line.length > 0) logLine(line);
 	};
 	protocol.resolveStdioDiagnostics = (modern) => {
-		if (!modern) {
+		if (!modern || protocol.privateForms) {
 			append(undecided);
 			if (stderrEnded && pending.length > 0) {
-				logger.stderr(pending);
+				logLine(pending);
 				pending = "";
 			}
 		}
 		undecided = "";
-		if (modern) pending = "";
+		if (modern && !protocol.privateForms) pending = "";
 	};
 	safeOn(
 		stderr,
 		"data",
 		"transport.stderr.data",
 		(chunk) => {
-			if (protocol.version !== undefined) {
+			if (protocol.version !== undefined && !protocol.privateForms) {
 				pending = "";
 				undecided = "";
 				return;
 			}
 			if (!Buffer.isBuffer(chunk) && typeof chunk !== "string") return;
 			const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
-			if (!protocol.legacy) {
+			if (!protocol.legacy && !protocol.privateForms) {
 				// Only legacy-positive negotiation may release startup diagnostics.
 				undecided += text.slice(0, Math.max(0, 512 * 1024 - undecided.length));
 				return;
@@ -212,7 +220,8 @@ function pipeStderr(
 		"transport.stderr.end",
 		() => {
 			stderrEnded = true;
-			if (protocol.legacy && protocol.version === undefined && pending.length > 0) logger.stderr(pending);
+			if ((protocol.privateForms || (protocol.legacy && protocol.version === undefined)) && pending.length > 0)
+				logLine(pending);
 			pending = "";
 			// A crashed probe is classified after EOF; only that decision may release or discard its buffer.
 			if (protocol.legacy || protocol.version !== undefined) undecided = "";

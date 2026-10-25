@@ -39,6 +39,7 @@ import {
 } from "../modes/rpc/host-runner.ts";
 import { type ParsedHostArgs, parseHostArgs } from "./host-command-args.ts";
 import { emit } from "./host-emit.ts";
+import { presenterBootstrapStream } from "../modes/rpc/mcp-presenter-bootstrap.ts";
 
 export { parseHostArgs } from "./host-command-args.ts";
 
@@ -69,7 +70,11 @@ export async function runHostCommand(args: readonly string[]): Promise<number> {
 	}
 	try {
 		const request = await hostRequest(parsed);
-		const outcome = await runHostRequest(request, parsed.keyRoot === undefined ? {} : { keyRoot: parsed.keyRoot });
+		const presenterBootstrap =
+			parsed.presenterBootstrapFd === undefined ? undefined : presenterBootstrapStream(parsed.presenterBootstrapFd);
+		const outcome = await runHostRequest(request, { keyRoot: parsed.keyRoot, presenterBootstrap }).finally(() =>
+			presenterBootstrap?.destroy(),
+		);
 		if (parsed.subcommand === "shard-path" && !parsed.json) writeSync(1, `${String(outcome.payload.socket)}\n`);
 		else emit(outcome.payload);
 		return outcome.exitCode;

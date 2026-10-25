@@ -1,6 +1,7 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { McpMrtrPresentation } from "../../../mcp-mrtr-presentations.ts";
+import type { McpFormPresentation } from "../../../mcp-form-types.ts";
 import type { ServerConnection } from "./connection.ts";
 import { McpMrtrError } from "./modern/errors.ts";
 
@@ -18,9 +19,42 @@ export interface McpRequestOrigin {
 	readonly connection: ServerConnection;
 	readonly signal: AbortSignal;
 	readonly presentation?: McpMrtrPresentation;
+	readonly privateForm?: McpFormPresentation;
+	readonly privateFormsEnforced?: boolean;
 	readonly serverLabel: string;
+	readonly serverSource?: "user" | "project" | "plugin";
 	readonly isCurrent: () => boolean;
 	readonly resolveAuthority: (signal: AbortSignal) => Promise<unknown>;
+}
+
+const legacyOperations = new WeakMap<
+	Client,
+	Set<{ readonly origin: McpRequestOrigin; readonly signal: AbortSignal }>
+>();
+export function beginLegacyMcpOperation(client: Client, origin: McpRequestOrigin, caller?: AbortSignal): () => void {
+	const lifetime = new AbortController();
+	const operation = {
+		origin,
+		signal: AbortSignal.any([origin.signal, lifetime.signal, ...(caller ? [caller] : [])]),
+	};
+	let operations = legacyOperations.get(client);
+	if (!operations) {
+		operations = new Set();
+		legacyOperations.set(client, operations);
+	}
+	operations.add(operation);
+	return () => {
+		operations.delete(operation);
+		lifetime.abort();
+		if (operations.size === 0) legacyOperations.delete(client);
+	};
+}
+export function legacyMcpOperation(client: Client) {
+	const operations = legacyOperations.get(client);
+	if (operations && operations.size > 1) return "ambiguous";
+	if (operations?.size !== 1) return undefined;
+	const operation = operations.values().next().value;
+	return operation && !operation.signal.aborted && operation.origin.isCurrent() ? operation : undefined;
 }
 
 /** Issued by the binding-specific registration boundary, never from JSON/model arguments. */

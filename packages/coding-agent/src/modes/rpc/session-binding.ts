@@ -97,6 +97,8 @@ export async function createRpcSessionBinding(
 			grantDialogSettled: (id) => writer.settleGrantDialog(sessionId, id),
 			bindSecurityPresentation: (session, ui) =>
 				writer.bindSecurityPresentations(sessionId, session.sessionId, session.securityNotices, ui),
+			bindMcpForms: (session, ui) =>
+				writer.bindMcpForms(sessionId, session.sessionId, ui, () => session.admitHumanAnswer()),
 			clientInfo:
 				options.clientInfo === undefined
 					? undefined
@@ -109,7 +111,10 @@ export async function createRpcSessionBinding(
 	});
 	await handler.ready;
 	return {
-		handle: (command) => runWithProviderScope(entry.scope, () => handler.handleInputLine(JSON.stringify(command))),
+		handle: (command) => {
+			if (writer.handleMcpForm(command)) return Promise.resolve();
+			return runWithProviderScope(entry.scope, () => handler.handleInputLine(JSON.stringify(command)));
+		},
 		cancelPendingExtensionUiRequests: () =>
 			runWithProviderScope(entry.scope, () => handler.cancelPendingExtensionUiRequests()),
 		pendingPrompts: () => handler.pendingPrompts(),

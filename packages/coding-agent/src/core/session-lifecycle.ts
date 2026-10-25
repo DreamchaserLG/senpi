@@ -2,6 +2,7 @@ import { effectiveWakes, type TurnEndLivenessInput } from "./extensions/builtin/
 import type { Goal } from "./extensions/builtin/goal/types.ts";
 import { LifecycleChildren } from "./lifecycle-children.ts";
 import { LifecycleLedger, type LifecyclePersistence } from "./lifecycle-ledger.ts";
+import { type DeadlineStopCapture, type RunStopFacts, sameStop, stopDetail } from "./lifecycle-stop.ts";
 import type { SessionActivitySnapshot } from "./session-activity.ts";
 import { lifecycleState, lifecycleTerminal } from "./session-lifecycle-reducer.ts";
 import type {
@@ -11,6 +12,7 @@ import type {
 	LifecycleWaits,
 	SessionLifecycle,
 } from "./session-lifecycle-types.ts";
+import type { TurnDeadlineKind } from "./turn-deadline.ts";
 import type { WorkCustodyRecord } from "./work-custody-record.ts";
 import { SessionWorkObligations } from "./work-obligations.ts";
 
@@ -43,6 +45,10 @@ export class SessionLifecycleController {
 	private ownTask: ChildLifecycleReport | undefined;
 	private evaluating = false;
 	private deferred = false;
+	private stopFacts: RunStopFacts | undefined;
+	private deadlineStop: DeadlineStopCapture | undefined;
+	/** A run that ended before this process keeps exactly the stop its record carries; none is derived for it. */
+	private readonly restoredRunId: string | undefined;
 
 	constructor(options: SessionLifecycleOptions) {
 		this.options = options;
@@ -53,6 +59,7 @@ export class SessionLifecycleController {
 				options.append(record);
 			},
 		});
+		this.restoredRunId = this.ledger.runId;
 		if (this.ledger.lastTurnEnd)
 			this.liveness = {
 				...this.ledger.lastTurnEnd,
@@ -135,6 +142,8 @@ export class SessionLifecycleController {
 		this.runAdmitted = false;
 		this.idleBoundaryPassed = false;
 		this.liveness = undefined;
+		this.stopFacts = undefined;
+		this.deadlineStop = undefined;
 		const interruptedRun = this.ledger.interrupted ? this.ledger.runId : undefined;
 		this.ledger.interrupted = false;
 		this.ledger.startRun(origin ?? (this.pendingHuman ? "human" : "automatic"));
@@ -155,8 +164,20 @@ export class SessionLifecycleController {
 		if (seq > 0 && this.ledger.snapshot.seq === seq) this.ledger.checkpoint();
 	}
 
-	goalFacts(goal: Goal | null, input?: TurnEndLivenessInput): void {
+	/** The turn deadline fired: captured before its durable write, for the run it stopped only. */
+	deadlineStopped(kind: TurnDeadlineKind, atMs: number): void {
+		const runId = this.ledger.runId;
+		if (this.ledger.runActive && runId) this.deadlineStop = { runId, kind, at: new Date(atMs).toISOString() };
+	}
+
+	/** The deadline-stop entry was refused; the captured stop says so, and the snapshot's `persisted` is untouched. */
+	deadlineStopWriteFailed(): void {
+		if (this.deadlineStop) this.deadlineStop = { ...this.deadlineStop, persisted: false };
+	}
+
+	goalFacts(goal: Goal | null, input?: TurnEndLivenessInput, stop?: RunStopFacts): void {
 		this.liveness = input;
+		this.stopFacts = stop;
 		if (input)
 			this.ledger.lastTurnEnd = {
 				endedBy: input.endedBy,
@@ -333,6 +354,10 @@ export class SessionLifecycleController {
 						}
 					: undefined;
 		const waits: LifecycleWaits = { children, background, human };
+		const lastStop = this.lastStop(
+			input,
+			synthetic.some((wait) => wait.kind === "stalled"),
+		);
 		const state = lifecycleState({
 			role: this.ledger.snapshot.role,
 			terminal: this.ownTask?.terminal,
@@ -349,6 +374,24 @@ export class SessionLifecycleController {
 			(!this.idleBoundaryPassed || active.length > 0)
 		)
 			return;
-		this.ledger.update({ state, waits, holds: runtime.holds, failure });
+		this.ledger.update({ state, waits, holds: runtime.holds, failure, lastStop });
+	}
+
+	/**
+	 * Derived only from the current run's own end, bound when its agent_end was emitted: an end processed after a
+	 * later run started sets nothing, and so does a fact refresh that carries no bound turn end, even when the goal
+	 * collector still returns the previous run's end. An unchanged stop keeps its first `at`.
+	 */
+	private lastStop(input: TurnEndLivenessInput | undefined, stalled: boolean): SessionLifecycle["lastStop"] {
+		const existing = this.ledger.snapshot.lastStop;
+		const runId = this.ledger.runId;
+		if (!runId || runId === this.restoredRunId) return existing;
+		if (this.stopFacts?.runId !== runId) return existing;
+		const deadline = input && this.deadlineStop?.runId === runId ? this.deadlineStop : undefined;
+		const detail = stopDetail(input, this.stopFacts, deadline, stalled);
+		if (!detail) return existing;
+		if (existing && sameStop(existing, detail)) return existing;
+		const { at, ...cause } = detail;
+		return { ...cause, runId, epoch: this.ledger.snapshot.epoch, at: at ?? new Date().toISOString() };
 	}
 }

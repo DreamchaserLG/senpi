@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mcpRequestOptions } from "../../src/core/extensions/builtin/mcp/request-origin.ts";
+import { createMcpRequestOrigin, mcpRequestOptions } from "../../src/core/extensions/builtin/mcp/request-origin.ts";
 import { cleanupMrtrLifecycle, fixture } from "./fixtures/mrtr-lifecycle.ts";
 import { formInput } from "./fixtures/mrtr-2026-server.ts";
 import { mrtrTui } from "./fixtures/mrtr-presentation.ts";
@@ -106,33 +106,52 @@ describe("modern negotiated task lifecycle", () => {
 		expect(JSON.stringify(f.transport.calls)).not.toContain("decline");
 		expect(f.clock.timers.size).toBe(0);
 	});
-	it("answers through the MRTR presenter once per task input key", async () => {
-		const input = task("input_required", { inputRequests: { question: formInput() }, pollIntervalMs: 10 });
-		const f = await fixture([handle(), input, {}, input, task("completed", { result: final })], true);
-		const ui = mrtrTui();
-		const firstPoll = f.clock.nextScheduled(400_000);
-		const pending = f.client.callTool(
-			{ name: "test" },
-			undefined,
-			mcpRequestOptions(f.origin(ui.presentation), {
-				onprogress: () => {},
-			}),
-		);
-		await firstPoll;
-		const afterInput = f.clock.nextScheduled(10);
-		f.clock.advance(400_000);
-		await afterInput;
-		const afterDuplicate = f.clock.nextScheduled(10);
-		f.clock.advance(10);
-		// The repeated key is already answered and must not cause another tasks/update.
-		await afterDuplicate;
-		f.clock.advance(10);
-		expect(await pending).toMatchObject(final);
-		const updates = f.transport.calls.filter((call) => "method" in call && call.method === "tasks/update");
-		expect(updates).toHaveLength(1);
-		expect(updates[0]).toHaveProperty(["params", "inputResponses", "question", "action"], "accept");
-		expect(f.clock.timers.size).toBe(0);
-	});
+	it.each(["terminal", "private"] as const)(
+		"answers through the %s presenter once per task input key",
+		async (kind) => {
+			const input = task("input_required", { inputRequests: { question: formInput() }, pollIntervalMs: 10 });
+			const f = await fixture([handle(), input, {}, input, task("completed", { result: final })], true);
+			const ui = mrtrTui();
+			const present = vi.fn(async () => ({
+				kind: "result" as const,
+				result: { action: "accept" as const, content: { approved: true } },
+				source: "presenter_action" as const,
+				humanAdmission: true as const,
+			}));
+			const origin = createMcpRequestOrigin({
+				...f.origin(ui.presentation),
+				...(kind === "private"
+					? {
+							privateFormsEnforced: true,
+							privateForm: { signal: new AbortController().signal, ready: () => true, present },
+						}
+					: {}),
+			});
+			const firstPoll = f.clock.nextScheduled(400_000);
+			const pending = f.client.callTool(
+				{ name: "test" },
+				undefined,
+				mcpRequestOptions(origin, {
+					onprogress: () => {},
+				}),
+			);
+			await firstPoll;
+			const afterInput = f.clock.nextScheduled(10);
+			f.clock.advance(400_000);
+			await afterInput;
+			const afterDuplicate = f.clock.nextScheduled(10);
+			f.clock.advance(10);
+			// The repeated key is already answered and must not cause another tasks/update.
+			await afterDuplicate;
+			f.clock.advance(10);
+			expect(await pending).toMatchObject(final);
+			const updates = f.transport.calls.filter((call) => "method" in call && call.method === "tasks/update");
+			expect(updates).toHaveLength(1);
+			expect(updates[0]).toHaveProperty(["params", "inputResponses", "question", "action"], "accept");
+			expect(present).toHaveBeenCalledTimes(kind === "private" ? 1 : 0);
+			expect(f.clock.timers.size).toBe(0);
+		},
+	);
 	it.each(["failed", "cancelled"] as const)("surfaces terminal %s without an empty success", async (status) => {
 		const f = await fixture(
 			[task(status, { resultType: "task", error: { code: -32603, message: "failure" } })],

@@ -1,4 +1,4 @@
-import { Buffer } from "node:buffer";
+import { encodeMcpHeaderValue } from "./parameter-headers.ts";
 
 export const MODERN_PROTOCOL_VERSION = "2026-07-28";
 export const MODERN_ERROR_CODES = {
@@ -87,11 +87,7 @@ export function deriveModernHeaders(request: ModernRequest): Record<string, stri
 					? request.params.taskId
 					: undefined;
 	if (typeof name === "string") {
-		// Encode the sentinel itself too, so a literal name cannot be mistaken for encoded text.
-		headers["Mcp-Name"] =
-			/^[\x20-\x7E]*$/.test(name) && !name.startsWith("base64:")
-				? name
-				: `base64:${Buffer.from(name, "utf8").toString("base64url")}`;
+		headers["Mcp-Name"] = encodeMcpHeaderValue(name);
 	}
 	return headers;
 }

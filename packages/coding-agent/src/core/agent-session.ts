@@ -3400,6 +3400,8 @@ export class AgentSession {
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
 		if (event.type === "agent_start") this._lifecycleBinding.startRun();
+		// Bound at emission: the core can start the next run before the queue reaches this end (senpi#3864).
+		if (event.type === "agent_end") this._lifecycleBinding.bindTurnEnd(event);
 		if (event.type === "message_start") {
 			try {
 				const entryId = this._lifecycleBinding.consume(event.message);
@@ -4463,8 +4465,9 @@ export class AgentSession {
 				this._findLastAssistantInMessages(event.messages)?.stopReason === "aborted",
 			);
 			try {
+				const guardStartLeafId = this.sessionManager.getLeafId();
 				await this._extensionRunner.emit(extensionEvent);
-				await this._lifecycleBinding.turnEnded(extensionEvent);
+				await this._lifecycleBinding.turnEnded(extensionEvent, event, guardStartLeafId);
 			} finally {
 				this._abortProvenance.endAgentEnd(extensionEvent);
 			}
@@ -4924,14 +4927,22 @@ export class AgentSession {
 
 	/** Record a deadline stop durably so the goal engine holds off until admitted user input. */
 	_recordDeadlineStop(deadline: TurnDeadline): void {
-		this._emitEntryAppended(
-			this.sessionManager.appendCustomEntry(TURN_DEADLINE_ENTRY_TYPE, {
+		const at = Date.now();
+		// The lifecycle stop is captured before the write, so a refused write keeps it for this run (senpi#3864).
+		this._lifecycleBinding.deadlineStopped(deadline.kind, at);
+		let entryId: string;
+		try {
+			entryId = this.sessionManager.appendCustomEntry(TURN_DEADLINE_ENTRY_TYPE, {
 				kind: deadline.kind,
 				limitMs: deadline.limitMs,
 				elapsedMs: deadline.elapsedMs,
-				at: Date.now(),
-			}),
-		);
+				at,
+			});
+		} catch (error) {
+			this._lifecycleBinding.deadlineStopWriteFailed();
+			throw error;
+		}
+		this._emitEntryAppended(entryId);
 	}
 
 	/**

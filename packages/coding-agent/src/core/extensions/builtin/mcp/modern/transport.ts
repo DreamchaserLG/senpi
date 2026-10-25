@@ -5,6 +5,7 @@ import { AuthError } from "../errors.ts";
 import { sanitizeModernMessage } from "./diagnostics.ts";
 import { McpMrtrError } from "./errors.ts";
 import { getModernDispatchGuard, modernDispatchGuard } from "./request.ts";
+import { clearMcpParameterHeaders, ModernParameterHeaders } from "./parameter-headers.ts";
 
 export type ModernHttpTransportOptions = {
 	readonly url: string | URL;
@@ -31,6 +32,8 @@ export class ModernHttpTransport implements Transport {
 	readonly #options: ModernHttpTransportOptions;
 	readonly #abort = new AbortController();
 	readonly #attempts = new Map<string | number, AbortController>();
+	readonly #toolLists = new Map<string | number, boolean>();
+	readonly #parameterHeaders = new ModernParameterHeaders();
 	#started = false;
 	#closed = false;
 
@@ -58,12 +61,16 @@ export class ModernHttpTransport implements Transport {
 			return;
 		}
 		const id = "method" in message && "id" in message ? message.id : undefined;
+		if (id !== undefined && "method" in message && message.method === "tools/list") {
+			this.#toolLists.set(id, message.params?.cursor === undefined);
+		}
 		const controller = new AbortController();
 		if (id !== undefined) this.#attempts.set(id, controller);
 		const signal = AbortSignal.any([this.#abort.signal, controller.signal]);
 		try {
 			const version = this.#options.protocolVersion ?? MODERN_PROTOCOL_VERSION;
 			const headers = new Headers(this.#options.headers);
+			clearMcpParameterHeaders(headers);
 			// Auth headers pass through, but protocol routing is exclusively derived from the body.
 			for (const name of ["Mcp-Session-Id", "Mcp-Name", "Mcp-Method", "MCP-Protocol-Version"]) headers.delete(name);
 			headers.set("Content-Type", "application/json");
@@ -79,6 +86,9 @@ export class ModernHttpTransport implements Transport {
 					message.params,
 				);
 				for (const [name, value] of Object.entries(deriveModernHeaders(request))) headers.set(name, value);
+				if (request.method === "tools/call") {
+					this.#parameterHeaders.append(headers, request.params.name, request.params.arguments);
+				}
 				if ("id" in message) {
 					body = request;
 				} else {
@@ -133,12 +143,25 @@ export class ModernHttpTransport implements Transport {
 			throw failure;
 		} finally {
 			if (id !== undefined) this.#attempts.delete(id);
+			if (id !== undefined) this.#toolLists.delete(id);
 		}
 	}
 
 	#deliver(incoming: JSONRPCMessage, expected: string | number | undefined): void {
 		if ("id" in incoming && (expected === undefined || incoming.id !== expected))
 			throw new McpMrtrError("MCP_MRTR_INVALID_RESULT");
+		if ("id" in incoming && "result" in incoming && this.#toolLists.has(incoming.id)) {
+			const result = incoming.result;
+			if (Array.isArray(result.tools)) {
+				incoming = {
+					...incoming,
+					result: {
+						...result,
+						tools: this.#parameterHeaders.filterTools(result.tools, this.#toolLists.get(incoming.id) === true),
+					},
+				};
+			}
+		}
 		const safe = sanitizeModernMessage(incoming);
 		if (safe) this.onmessage?.(safe);
 	}

@@ -71,7 +71,9 @@ export async function connect(results: unknown[], sse: boolean | "stdio" = false
 		await exited?.promise;
 	});
 	const host = Object.create(InteractiveMode.prototype);
-	Object.defineProperty(host, "session", { value: { emitExtensionEvent() {} } });
+	Object.defineProperty(host, "session", {
+		value: { sessionId: "fixture-session", admitHumanAnswer() {}, emitExtensionEvent() {} },
+	});
 	host.showExtensionSelector = async (_title: string, choices: string[]) =>
 		choices.includes("Submit") ? "Submit" : choices[0];
 	host.showExtensionInput = async () => "human answer";
