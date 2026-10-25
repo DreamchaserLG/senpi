@@ -28,13 +28,24 @@ async function setup() {
 
 describe.skipIf(process.platform === "win32")("managed foreground process on POSIX", () => {
 	it("does not execute user code before containment admission releases it", async () => {
-		const { command } = await setup();
-		const held = await prepareManagedLaunch(command);
-		cleanup.push(() => held.close());
+		const { dir, command } = await setup();
+		const owner = new SessionLaunchSupervisor({
+			dir,
+			prepare: async (spec) => {
+				const held = await prepareManagedLaunch(spec);
+				try {
+					expect(await readFile(spec.logPath, "utf8")).toBe("");
+					return held;
+				} catch (error) {
+					await held.close();
+					throw error;
+				}
+			},
+		});
+		cleanup.push(() => owner.close());
 
-		expect(await readFile(command.logPath, "utf8")).toBe("");
-		await held.release();
-		await expect(held.completed).resolves.toBe(0);
+		const launch = await owner.start(command, "fixture-command");
+		await expect(launch.completed).resolves.toBe(0);
 		expect(await readFile(command.logPath, "utf8")).toBe("ran");
 	}, 15_000);
 

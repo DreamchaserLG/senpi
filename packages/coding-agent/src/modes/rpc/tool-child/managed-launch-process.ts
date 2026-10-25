@@ -15,6 +15,7 @@ export interface HeldManagedLaunch {
 	readonly completed: Promise<number>;
 	/** Only called after the session has durably enrolled this shim in its launch containment. */
 	release(): Promise<number>;
+	/** Cancel an unreleased bootstrap, or reap a released shim after its owner stops the launch containment. */
 	close(): Promise<void>;
 }
 
@@ -75,14 +76,18 @@ export async function prepareManagedLaunch(command: ManagedCommand): Promise<Hel
 		}
 	});
 	control.on("error", (error) => started.reject(error));
+	let released = false;
 	return {
 		pid: child.pid,
 		completed: completed.promise,
 		release: () => {
+			released = true;
 			control.write(`${JSON.stringify(command)}\n`);
 			return started.promise;
 		},
 		close: async () => {
+			// No user code can exist before release. Do not wait for a slow bootstrap to install its EOF reader.
+			if (!released) child.kill("SIGKILL");
 			control.destroy();
 			await exited.promise;
 			lines.close();
