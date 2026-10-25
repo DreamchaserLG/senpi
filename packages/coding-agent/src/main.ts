@@ -1214,6 +1214,17 @@ export async function main(args: string[], options?: MainOptions) {
 		await printThenExit(() => console.log(DISPLAY_VERSION), 0);
 	}
 
+	if (parsed.attach && parsed.session && !parsed.help) {
+		const { runAttachedTui } = await import("./modes/interactive/run-attached-tui.ts");
+		await runAttachedTui({
+			address: parsed.attach,
+			session: parsed.session,
+			tuiMode: parsed.tuiMode,
+			theme: parsed.useTheme,
+		});
+		return;
+	}
+
 	if (parsed.export) {
 		let result: string;
 		try {

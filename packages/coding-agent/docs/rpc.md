@@ -334,6 +334,37 @@ Set the order, or clear it with `names: null`:
 
 ## Starting RPC Mode
 
+### Attach the TUI to an RPC endpoint
+
+```bash
+senpi --attach /path/to/endpoint.sock --session <ref>
+senpi --attach unix:///path/to/endpoint.sock --session <ref>
+```
+
+On Windows, pass the endpoint's logical filesystem path, not the derived pipe name.
+The existing socket transport derives the named pipe and reads its secret file.
+POSIX host endpoints use the existing challenge-response authentication; terminal
+control endpoints use their adjacent secret file. `SENPI_RPC_KEY_ROOT` selects a
+host credential root without changing the attached session's configuration.
+
+Both stdin and stdout must be terminals. `--attach` cannot be combined with
+`--mode rpc`, `--mode json`, `--print`, or session creation options.
+The reference is an existing routing id, durable id, unambiguous durable-id prefix,
+or listed session path. An absent session is refused, never created or resumed.
+
+This presentation declares `interactive_user`, calls `attach_session`, reads
+`get_state` and `get_entries {tail:100}`, and subscribes with `mirror:"all"`.
+`/history` reads an earlier page with `before:next_before`. Enter sends a prompt,
+or steers a running turn; `/steer <text>` explicitly steers. Escape or `/abort`
+sends Stop. Inputs carry `clientMessageId`; dialog responses carry `answerId`.
+The existing selector, text editor, and question UI collect permission and
+question answers. No retry automatically repeats an unacknowledged mutation.
+
+`/quit` or the configured exit shortcut releases only this presentation through
+`release_attachment`; it does not close the session or stop the endpoint. A
+disconnect leaves the last transcript and state visible with a Disconnected
+status. Exit and attach again to reconnect.
+
 ### RPC client lifecycle
 
 `RpcClient` accepts an `onDisconnect` callback for an established socket and rejects subsequent transport operations with the typed `RpcTransportGoneError` (also detectable with `isTransportGoneError`). Callers should use the callback to begin recovery and keep the error text out of user-facing output.
