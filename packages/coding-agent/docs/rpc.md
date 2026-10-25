@@ -170,6 +170,14 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
   between runs, a refresh while the last end is still bound may set or update that run's stop.
   Goal guards are captured during their bound end's own processing, never inherited from
   another run. Provider errors and policy rejections carry no `lastStop`, even if a deadline fired.
+- Optional `activity` is present only while `state` is `running` and a live activity is known:
+  `{ kind: "tool", toolName, toolCallId, since, outstanding }` represents the oldest outstanding
+  top-level tool operation, including preparation, approval and dependency waits. Nested calls
+  do not count. `{ kind: "model", since }` covers only an assistant stream from its start to its
+  message end, not the first-token wait or prepared messages. `since` is the recorded activity
+  start time and stays stable while selected. Compaction, retry waits, queued work and other
+  unknown intervals omit activity. Activity and outstanding-count changes advance `seq`;
+  token deltas and tool progress do not. Activity is never persisted or restored.
 
 Clients must not notify or settle while `restoring` is true or `persisted` is false.
 Use `completionId` to deduplicate root completion/failure, not `agent_settled` or

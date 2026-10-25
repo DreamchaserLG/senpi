@@ -172,6 +172,7 @@ export class LifecycleLedger {
 		readonly holds: readonly LifecycleHold[];
 		readonly failure?: SessionLifecycle["failure"];
 		readonly lastStop?: SessionLifecycle["lastStop"];
+		readonly activity?: SessionLifecycle["activity"];
 	}): void {
 		if (input.holds.length > 0 || input.state === "failed") this.request = undefined;
 		const terminal = input.state === "done" || input.state === "failed";
@@ -181,6 +182,7 @@ export class LifecycleLedger {
 			failure: _failure,
 			settleDecision: _decision,
 			lastStop: _lastStop,
+			activity: _activity,
 			...base
 		} = this.current;
 		const now = new Date().toISOString();
@@ -215,6 +217,7 @@ export class LifecycleLedger {
 				: {}),
 			...(input.state === "failed" && input.failure ? { failure: input.failure } : {}),
 			...(input.lastStop ? { lastStop: input.lastStop } : {}),
+			...(input.activity ? { activity: input.activity } : {}),
 			...(input.state === "done" && standingRequest
 				? {
 						settleDecision: this.current.settleDecision ?? { decisionId: crypto.randomUUID() },
@@ -249,8 +252,9 @@ export class LifecycleLedger {
 
 	private write(snapshot: SessionLifecycle, emit: boolean): boolean {
 		const next = { ...snapshot, seq: this.current.seq + 1, persisted: true };
+		const { activity: _activity, ...durable } = next;
 		const record: LifecycleRecord = {
-			...next,
+			...durable,
 			sessionId: this.persistence.sessionId,
 			attentionSeq: this.attention.attentionSeq,
 			synthetic: this.attention.synthetic,
@@ -291,6 +295,7 @@ function equivalent(previous: SessionLifecycle, next: SessionLifecycle): boolean
 		JSON.stringify(previous.waitingOn) === JSON.stringify(next.waitingOn) &&
 		JSON.stringify(previous.holds) === JSON.stringify(next.holds) &&
 		JSON.stringify(previous.failure) === JSON.stringify(next.failure) &&
+		JSON.stringify(previous.activity) === JSON.stringify(next.activity) &&
 		JSON.stringify(previous.lastStop) === JSON.stringify(next.lastStop)
 	);
 }

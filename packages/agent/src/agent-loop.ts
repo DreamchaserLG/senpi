@@ -715,6 +715,7 @@ async function streamAssistantResponse(
 						await emit({
 							type: "message_start",
 							message: { ...partialMessage },
+							streaming: true,
 						});
 						break;
 

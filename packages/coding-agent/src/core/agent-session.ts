@@ -3402,6 +3402,7 @@ export class AgentSession {
 		if (event.type === "agent_start") this._lifecycleBinding.startRun();
 		// Bound at emission: the core can start the next run before the queue reaches this end (senpi#3864).
 		if (event.type === "agent_end") this._lifecycleBinding.bindTurnEnd(event);
+		this._lifecycleBinding.controller.observeActivity(event);
 		if (event.type === "message_start") {
 			try {
 				const entryId = this._lifecycleBinding.consume(event.message);
