@@ -31,6 +31,7 @@ export class LifecycleLedger {
 	private runCompleted: string | undefined;
 	private admissionWriteFailed = false;
 	private unwritten = false;
+	private readonly activityInstanceId: string = crypto.randomUUID();
 	runId: string | undefined;
 	runActive = false;
 	interrupted = false;
@@ -62,7 +63,7 @@ export class LifecycleLedger {
 					rootSessionId: spawnedBy?.rootSessionId ?? persistence.sessionId,
 					...(spawnedBy ? { parentSessionId: spawnedBy.parentSessionId, taskId: spawnedBy.taskId } : {}),
 				};
-		this.current = { ...this.current, activityRevision: { instanceId: crypto.randomUUID(), revision: 0 } };
+		this.current = { ...this.current, activityRevision: { instanceId: this.activityInstanceId, revision: 0 } };
 		this.attention = new LifecycleAttention(persistence.sessionId, restored);
 		this.sealed = restored?.epochSealed ?? false;
 		this.runId = restored?.runId;
@@ -240,8 +241,8 @@ export class LifecycleLedger {
 			this.current = {
 				...next,
 				activityRevision: {
-					instanceId: this.current.activityRevision!.instanceId,
-					revision: this.current.activityRevision!.revision + 1,
+					instanceId: this.activityInstanceId,
+					revision: (this.current.activityRevision?.revision ?? 0) + 1,
 				},
 			};
 			this.persistence.emit({
@@ -273,7 +274,7 @@ export class LifecycleLedger {
 			...snapshot,
 			seq: this.current.seq + 1,
 			persisted: true,
-			activityRevision: { instanceId: this.current.activityRevision!.instanceId, revision: 0 },
+			activityRevision: { instanceId: this.activityInstanceId, revision: 0 },
 		};
 		const { activity: _activity, activityRevision: _activityRevision, ...durable } = next;
 		const record: LifecycleRecord = {

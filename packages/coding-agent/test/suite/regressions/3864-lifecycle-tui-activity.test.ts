@@ -63,10 +63,12 @@ it("delivers overlapping activity counts 1, 2, 1 through the bound TUI attachmen
 		expect(activity.map((lifecycle) => lifecycle.activity?.since)).toEqual(
 			Array(3).fill(activity[0].activity?.since),
 		);
+		const firstRevision = activity[0].activityRevision;
+		expect(firstRevision).toBeDefined();
 		expect(activity.map((lifecycle) => lifecycle.activityRevision)).toEqual(
 			[0, 1, 2].map((offset) => ({
-				instanceId: activity[0].activityRevision?.instanceId,
-				revision: activity[0].activityRevision!.revision + offset,
+				instanceId: firstRevision?.instanceId,
+				revision: (firstRevision?.revision ?? Number.NaN) + offset,
 			})),
 		);
 	} finally {
