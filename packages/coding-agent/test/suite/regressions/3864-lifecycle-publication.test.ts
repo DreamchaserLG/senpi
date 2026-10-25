@@ -188,7 +188,7 @@ it("selects the oldest outstanding top-level tool and never invents model activi
 	expect(controller.snapshot.activity).toBeUndefined();
 });
 
-it("publishes outstanding counts 1, 2, 1 once each with stable since and distinct sequences", () => {
+it("publishes outstanding counts 1, 2, 1 at one lifecycle seq under distinct activity keys", () => {
 	const { controller, records, events } = activityFixture();
 	const offset = records.length;
 	controller.observeActivity(toolStart("a"));
@@ -204,7 +204,12 @@ it("publishes outstanding counts 1, 2, 1 once each with stable since and distinc
 			outstanding,
 		})),
 	);
-	expect(records.slice(offset).map((record) => record.seq)).toEqual([first.seq, first.seq + 1, first.seq + 2]);
+	expect(records.slice(offset)).toEqual([]);
+	expect(events.slice(-3).map((event) => event.lifecycle.seq)).toEqual(Array(3).fill(first.seq));
+	expect(events.slice(-3).map((event) => event.lifecycle.activityRevision)).toEqual(
+		[1, 2, 3].map((revision) => ({ instanceId: first.activityRevision?.instanceId, revision })),
+	);
+	expect(first.activity?.kind === "tool" && first.activity.outstanding).toBe(1);
 });
 
 it("ignores user and tool-result messages and records model since only at assistant streaming start", () => {
@@ -235,10 +240,12 @@ it("ignores user and tool-result messages and records model since only at assist
 });
 
 it("ignores 100 token deltas and tool progress without writing", () => {
-	const { controller, records } = activityFixture();
+	const { controller, records, events } = activityFixture();
 	const message = fauxAssistantMessage("Streaming");
 	controller.observeActivity({ type: "message_start", message, streaming: true });
 	const count = records.length;
+	const model = controller.snapshot;
+	const modelEvents = events.length;
 	for (let i = 0; i < 100; i++)
 		controller.observeActivity({
 			type: "message_update",
@@ -246,9 +253,13 @@ it("ignores 100 token deltas and tool progress without writing", () => {
 			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x", partial: message },
 		});
 	expect(records).toHaveLength(count);
+	expect(events).toHaveLength(modelEvents);
+	expect(controller.snapshot).toBe(model);
 	controller.observeActivity({ type: "message_end", message });
 	controller.observeActivity(toolStart("a"));
 	const tools = records.length;
+	const tool = controller.snapshot;
+	const toolEvents = events.length;
 	for (let i = 0; i < 100; i++)
 		controller.observeActivity({
 			type: "tool_execution_update",
@@ -258,6 +269,8 @@ it("ignores 100 token deltas and tool progress without writing", () => {
 			partialResult: {},
 		});
 	expect(records).toHaveLength(tools);
+	expect(events).toHaveLength(toolEvents);
+	expect(controller.snapshot).toBe(tool);
 });
 
 it("clears activity at run end and reset while compaction and queued work remain unlabelled", () => {

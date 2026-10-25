@@ -62,6 +62,7 @@ export class LifecycleLedger {
 					rootSessionId: spawnedBy?.rootSessionId ?? persistence.sessionId,
 					...(spawnedBy ? { parentSessionId: spawnedBy.parentSessionId, taskId: spawnedBy.taskId } : {}),
 				};
+		this.current = { ...this.current, activityRevision: { instanceId: crypto.randomUUID(), revision: 0 } };
 		this.attention = new LifecycleAttention(persistence.sessionId, restored);
 		this.sealed = restored?.epochSealed ?? false;
 		this.runId = restored?.runId;
@@ -232,7 +233,24 @@ export class LifecycleLedger {
 			// Input changes during session_start are collected, but cannot publish.
 			return;
 		}
-		if (this.current.persisted && equivalent(this.current, next)) return;
+		// Pending run/epoch state and failed writes retain the ordinary durable
+		// path. Activity alone cannot consume or clear that work.
+		if (!this.unwritten && this.current.persisted && equivalent(this.current, next)) {
+			if (JSON.stringify(this.current.activity) === JSON.stringify(next.activity)) return;
+			this.current = {
+				...next,
+				activityRevision: {
+					instanceId: this.current.activityRevision!.instanceId,
+					revision: this.current.activityRevision!.revision + 1,
+				},
+			};
+			this.persistence.emit({
+				type: "session_lifecycle",
+				sessionId: this.persistence.sessionId,
+				lifecycle: this.current,
+			});
+			return;
+		}
 		// A brand-new idle session has no completed work epoch to announce.
 		if (terminal && base.epoch === 0) {
 			this.current = next;
@@ -251,8 +269,13 @@ export class LifecycleLedger {
 	}
 
 	private write(snapshot: SessionLifecycle, emit: boolean): boolean {
-		const next = { ...snapshot, seq: this.current.seq + 1, persisted: true };
-		const { activity: _activity, ...durable } = next;
+		const next = {
+			...snapshot,
+			seq: this.current.seq + 1,
+			persisted: true,
+			activityRevision: { instanceId: this.current.activityRevision!.instanceId, revision: 0 },
+		};
+		const { activity: _activity, activityRevision: _activityRevision, ...durable } = next;
 		const record: LifecycleRecord = {
 			...durable,
 			sessionId: this.persistence.sessionId,
@@ -295,7 +318,6 @@ function equivalent(previous: SessionLifecycle, next: SessionLifecycle): boolean
 		JSON.stringify(previous.waitingOn) === JSON.stringify(next.waitingOn) &&
 		JSON.stringify(previous.holds) === JSON.stringify(next.holds) &&
 		JSON.stringify(previous.failure) === JSON.stringify(next.failure) &&
-		JSON.stringify(previous.activity) === JSON.stringify(next.activity) &&
 		JSON.stringify(previous.lastStop) === JSON.stringify(next.lastStop)
 	);
 }

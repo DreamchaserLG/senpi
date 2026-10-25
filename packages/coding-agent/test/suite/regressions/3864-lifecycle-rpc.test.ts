@@ -174,7 +174,15 @@ it.each(["a", "b"] as const)(
 			expect(
 				activities.map((lifecycle) => lifecycle.activity?.kind === "tool" && lifecycle.activity.outstanding),
 			).toEqual([1, 2, 1]);
-			expect(activities.map((lifecycle) => lifecycle.seq)).toEqual([first.seq - 1, first.seq, first.seq + 1]);
+			expect(activities.map((lifecycle) => lifecycle.seq)).toEqual(Array(3).fill(first.seq));
+			const revision = activities[0].activityRevision;
+			expect(revision).toBeDefined();
+			expect(activities.map((lifecycle) => lifecycle.activityRevision)).toEqual(
+				[0, 1, 2].map((offset) => ({
+					instanceId: revision?.instanceId,
+					revision: (revision?.revision ?? 0) + offset,
+				})),
+			);
 			if (firstEnd === "b")
 				expect(activities.map((lifecycle) => lifecycle.activity?.since)).toEqual(
 					Array(3).fill(first.activity?.since),
@@ -212,9 +220,12 @@ it("waits for the assistant stream start and clears activity on rebinding", asyn
 		stream.push({ type: "start", partial: message });
 		await started;
 		expect(fixture.session.lifecycle.activity).toMatchObject({ kind: "model" });
+		const oldOwner = fixture.session.lifecycle.activityRevision?.instanceId;
+		expect(oldOwner).toEqual(expect.any(String));
 		await fixture.reopenAbandoned();
 		await fixture.session.bindExtensions({ mode: "rpc" });
 		expect(fixture.session.lifecycle.activity).toBeUndefined();
+		expect(fixture.session.lifecycle.activityRevision?.instanceId).not.toBe(oldOwner);
 	} finally {
 		stream.push({ type: "done", reason: "stop", message: fauxAssistantMessage("Finished.") });
 		stream.end();

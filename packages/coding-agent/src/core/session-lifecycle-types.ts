@@ -107,6 +107,8 @@ export interface SessionLifecycle {
 	readonly lastStop?: LifecycleStop;
 	/** In-memory and wire-only; absent outside running or when the activity is unknown. */
 	readonly activity?: LifecycleActivity;
+	/** Owner-scoped, wire-only activity ordering, including explicit absence. */
+	readonly activityRevision?: { readonly instanceId: string; readonly revision: number };
 	readonly completion?: {
 		readonly kind: "goal" | "run" | "agent" | "reply";
 		readonly at: string;

@@ -6,7 +6,7 @@ import { readWaitItems } from "./lifecycle-wait-items.ts";
 import type { LifecycleHold, LifecycleWaits, SessionLifecycle } from "./session-lifecycle-types.ts";
 import { isRecord } from "./work-custody-record.ts";
 
-export interface LifecycleRecord extends Omit<SessionLifecycle, "activity"> {
+export interface LifecycleRecord extends Omit<SessionLifecycle, "activity" | "activityRevision"> {
 	readonly sessionId: string;
 	readonly attentionSeq: number;
 	readonly synthetic: readonly SyntheticAttention[];
