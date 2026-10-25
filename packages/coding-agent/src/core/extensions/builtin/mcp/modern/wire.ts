@@ -83,7 +83,9 @@ export function deriveModernHeaders(request: ModernRequest): Record<string, stri
 			? request.params.uri
 			: request.method === "tools/call" || request.method === "prompts/get"
 				? request.params.name
-				: undefined;
+				: ["tasks/get", "tasks/update", "tasks/cancel"].includes(request.method)
+					? request.params.taskId
+					: undefined;
 	if (typeof name === "string") {
 		// Encode the sentinel itself too, so a literal name cannot be mistaken for encoded text.
 		headers["Mcp-Name"] =
