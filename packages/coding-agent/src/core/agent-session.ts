@@ -6311,6 +6311,9 @@ export class AgentSession {
 
 		const command = this._extensionRunner.getCommand(commandName);
 		if (!command) return false;
+		// A command may edit or move the leaf without starting a run. Publish its pending
+		// human admission before the handler, not after it has installed a replacement leaf.
+		this._lifecycleBinding.controller.ledger.publishUnwritten();
 		this._emit({
 			type: "command_invocation",
 			command: {

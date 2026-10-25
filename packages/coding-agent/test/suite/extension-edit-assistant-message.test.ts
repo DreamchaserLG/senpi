@@ -79,6 +79,12 @@ describe("pi.editAssistantMessage (extension API)", () => {
 		const leafEntry = harness.sessionManager.getEntry(harness.sessionManager.getLeafId() ?? "");
 		if (!leafEntry || !isAssistantEntry(leafEntry)) throw new Error("leaf should be the edited assistant entry");
 		expect(getMessageText(leafEntry.message)).toBe("The answer is 42.");
+		expect(harness.session.lifecycle).toMatchObject({ humanInputRevision: 2, persisted: true });
+		const admission = harness.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "custom" && entry.customType === "session-lifecycle")
+			.at(-1);
+		expect(admission).toMatchObject({ data: { humanInputRevision: 2 } });
 	});
 
 	it("refuses a captured leaf when ordinary custom work follows it", async () => {
