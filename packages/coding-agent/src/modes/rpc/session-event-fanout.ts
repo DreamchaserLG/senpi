@@ -1,5 +1,6 @@
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
 import { omitInlineMedia } from "./media-placeholders.ts";
 import { SocketEventSinkActor } from "./socket-event-fanout.ts";
 import { EVENT_RESYNC_CAPABILITY, type ResyncReason, type RpcSessionResyncRequired } from "./socket-peer-recovery.ts";
@@ -257,7 +258,7 @@ export class SessionEventFanout {
 		if (!actor) return;
 		const placeholders = this.connectionHas(id, MEDIA_PLACEHOLDERS_CAPABILITY);
 		const lifecycle = this.lifecycleSnapshots.get(sessionId);
-		if (lifecycle) actor.enqueue(placeholders ? snapshotPlaceholderLine(lifecycle) : lifecycle.line);
+		if (lifecycle) actor.enqueue(serializeJsonLine(observeLifecycleDelivery(JSON.parse(lifecycle.line))));
 		for (const record of this.sessionSnapshots.get(sessionId) ?? [])
 			actor.enqueue(placeholders ? snapshotPlaceholderLine(record) : record.line);
 	}
