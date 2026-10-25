@@ -1,3 +1,4 @@
+import { TuiAltScreen } from "@earendil-works/pi-tui";
 import { getAgentDir } from "../../config.ts";
 import { AttachedTui, validateAttachTerminal } from "./attach.ts";
 import { initTheme, stopThemeWatcher } from "./theme/theme.ts";
@@ -26,7 +27,7 @@ export async function runAttachedTui(options: {
 	process.once("SIGTERM", stop);
 	process.once("SIGINT", stop);
 	ui.addChild(view);
-	if (options.tuiMode === "fullscreen") ui.setLayoutRoot(view.layoutRoot);
+	if (ui instanceof TuiAltScreen) ui.setLayoutRoot(view.layoutRoot);
 	ui.setFocus(view);
 	ui.start();
 	try {
