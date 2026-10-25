@@ -101,7 +101,8 @@ export async function startHost(
 					? ["ignore", "ignore", stderr.fd, "pipe"]
 					: ["ignore", "ignore", stderr.fd],
 		});
-		if (options.presenterBootstrap) presenterEnrollment = relayPresenterBootstrap(options.presenterBootstrap, child);
+		if (options.presenterBootstrap)
+			presenterEnrollment = relayPresenterBootstrap(options.presenterBootstrap, child, "initial");
 		childExit = new Promise((resolveExit) => {
 			child!.once("exit", (code, signal) => {
 				exitedEarly = { code, signal };

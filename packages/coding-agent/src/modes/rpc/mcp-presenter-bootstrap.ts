@@ -58,7 +58,11 @@ export function presenterBootstrapStream(fd: number): Duplex | undefined {
 }
 
 /** Relay one bounded enrollment exchange; fd 3 and stdin are never touched. */
-export function relayPresenterBootstrap(upstream: Duplex, child: ChildProcess): Promise<void> {
+export function relayPresenterBootstrap(
+	upstream: Duplex,
+	child: ChildProcess,
+	launchKind?: "initial" | "replacement",
+): Promise<void> {
 	const downstream = child.stdio[MCP_PRESENTER_BOOTSTRAP_FD];
 	if (!(downstream instanceof Socket)) {
 		upstream.destroy();
@@ -81,6 +85,23 @@ export function relayPresenterBootstrap(upstream: Duplex, child: ChildProcess): 
 		const unreadUp = attachJsonlLineReader(
 			upstream,
 			(line) => {
+				if (launchKind) {
+					try {
+						const record: unknown = JSON.parse(line);
+						if (
+							typeof record === "object" &&
+							record !== null &&
+							"type" in record &&
+							record.type === "enroll" &&
+							"version" in record &&
+							record.version === 2 &&
+							(!("launchKind" in record) || record.launchKind !== launchKind)
+						)
+							return finish();
+					} catch {
+						return finish();
+					}
+				}
 				if (!downstream.write(`${line}\n`)) finish();
 			},
 			{ maxLineLength: 16 * 1024, onOversizedLine: finish },
@@ -91,7 +112,10 @@ export function relayPresenterBootstrap(upstream: Duplex, child: ChildProcess): 
 				try {
 					const record: unknown = JSON.parse(line);
 					acknowledging =
-						typeof record === "object" && record !== null && "type" in record && record.type === "enrolled";
+						typeof record === "object" &&
+						record !== null &&
+						"type" in record &&
+						(record.type === "enrolled" || record.type === "unavailable");
 					upstream.write(`${line}\n`, () => {
 						if (acknowledging) finish();
 					});

@@ -344,9 +344,9 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 						generation: hostGeneration(process.env),
 						runtimeBuildId,
 					}),
-					perform: (request) =>
+					perform: async (request) =>
 						performIdleHandover({
-							presenterBootstrap: presenterControl?.successorBootstrap(),
+							presenterBootstrap: await presenterControl?.successorBootstrap(),
 							request,
 							socket: hostWatchdogBinding()?.publicSocket ?? socketPath,
 							agentDir: options.agentDir,
