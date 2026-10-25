@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { VirtualTerminal } from "../../../../tui/test/virtual-terminal.ts";
 import { parseArgs } from "../../cli/args.ts";
 import { resolveSocketTransportAddress } from "../rpc/socket-transport.ts";
-import { endpoint } from "./attach.fixture.ts";
+import { endpoint } from "../../../test/helpers/attach-endpoint.ts";
 import { AttachedTui, validateAttachTerminal } from "./attach.ts";
 import { RecordRenderer } from "./record-renderer.ts";
 import { initTheme } from "./theme/theme.ts";

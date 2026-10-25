@@ -3,8 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { attachJsonlLineReader, serializeJsonLine } from "../rpc/jsonl.ts";
-import { authenticateSocket, createSocketSecret, resolveSocketTransportAddress } from "../rpc/socket-transport.ts";
+import { attachJsonlLineReader, serializeJsonLine } from "../../src/modes/rpc/jsonl.ts";
+import {
+	authenticateSocket,
+	createSocketSecret,
+	resolveSocketTransportAddress,
+} from "../../src/modes/rpc/socket-transport.ts";
 
 export async function endpoint() {
 	const directory = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "attach-"));
