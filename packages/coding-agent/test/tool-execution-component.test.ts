@@ -127,6 +127,8 @@ type InteractiveModeStopThis = {
 	clearExtensionTerminalInputListeners(): void;
 	footer: { dispose(): void };
 	footerDataProvider: { dispose(): void };
+	agentSubscriptionGeneration: number;
+	setExtensionStatus(key: string, text: string | undefined): void;
 	unsubscribe: (() => void) | undefined;
 	isInitialized: boolean;
 	unregisterSignalHandlers(): void;
@@ -1294,6 +1296,8 @@ describe("ToolExecutionComponent parity", () => {
 			clearExtensionTerminalInputListeners: vi.fn(),
 			footer: { dispose: vi.fn() },
 			footerDataProvider: { dispose: vi.fn() },
+			agentSubscriptionGeneration: 0,
+			setExtensionStatus: vi.fn(),
 			unsubscribe: undefined,
 			isInitialized: false,
 			unregisterSignalHandlers: vi.fn(),
