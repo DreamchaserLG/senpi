@@ -705,6 +705,8 @@ for its child to exit, even if the child no longer responds. `senpi host status`
 and `status --all` expose the same `lifecycle` field (`null` for an older or
 unreachable host). Session counts during stopping are unobserved and represented
 by the existing empty listing, not a claim that the child has already exited.
+Shutdown signals the child immediately, then waits for its observed exit and any
+pending startup publication before removing the generation's ownership state.
 
 A ready probe does not reserve an open: a later `open_session` can fail with
 `errorCode: "host_stopping"` and `errorData.instanceId`, including on a connection

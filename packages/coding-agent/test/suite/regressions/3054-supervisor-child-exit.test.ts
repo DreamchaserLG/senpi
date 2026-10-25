@@ -1,6 +1,7 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { access, readFile, rm } from "node:fs/promises";
+import { watch } from "node:fs";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readHostCrashRecords } from "../../../src/modes/rpc/host-crash-record.ts";
@@ -8,17 +9,20 @@ import {
 	createDaemonDirectories,
 	createHostDaemonPaths,
 	generationPaths,
+	type HostGenerationPaths,
 } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { writeHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { writeHostSettings } from "../../../src/modes/rpc/host-daemon-state.ts";
 import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { DEFAULT_STOP_TIMEOUT_MS, stopSpawnedChild } from "../../../src/modes/rpc/host-ensure-stop.ts";
 import { anyGenerationLive } from "../../../src/modes/rpc/host-gc-evidence.ts";
+import { settledOpportunisticHostGc } from "../../../src/modes/rpc/host-gc-pass.ts";
 import { pruneDeadGenerations } from "../../../src/modes/rpc/host-generations.ts";
 import type { ChildExit } from "../../../src/modes/rpc/host-readiness.ts";
 import { hostChildAlive } from "../../../src/modes/rpc/host-stalled-evidence.ts";
 import { writeJsonAtomic } from "../../../src/modes/rpc/host-state-json.ts";
 import { CHILD_KILL_EXIT_TIMEOUT_MS } from "../../../src/modes/rpc/host-stop-intent.ts";
+import { statSocketIdentity, unlinkOwnedSocket } from "../../../src/modes/rpc/socket-ownership.ts";
 import { processStartTimeMs, readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { processExitEvent } from "../../helpers/process-exit-event.ts";
 import { type GenerationScratch, generationEnv, generationScratch } from "../../helpers/rpc-generation-support.ts";
@@ -26,6 +30,29 @@ import { processAlive } from "../../helpers/spawned-host-reaper.ts";
 
 const fixture = join(import.meta.dirname, "../../fixtures/rpc-child-exit-supervisor.ts");
 const rigs: Array<{ child: ChildProcess; exited: Promise<unknown>; hostPid: number; qa: GenerationScratch }> = [];
+
+async function childIdentityWritten(generation: HostGenerationPaths): Promise<void> {
+	const watcher = watch(generation.dir);
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await new Promise<void>((resolve, reject) => {
+			const check = async () => {
+				const text = await readFile(generation.childPidFile, "utf8").catch((cause: NodeJS.ErrnoException) => {
+					if (cause.code === "ENOENT") return undefined;
+					throw cause;
+				});
+				if (text !== undefined && typeof JSON.parse(text).processStartTime === "string") resolve();
+			};
+			timer = setTimeout(() => reject(new Error(`child identity not written: ${generation.childPidFile}`)), 20_000);
+			watcher.on("change", () => void check().catch(reject));
+			watcher.once("error", reject);
+			void check().catch(reject);
+		});
+	} finally {
+		clearTimeout(timer);
+		watcher.close();
+	}
+}
 
 async function rig(mode: string) {
 	const qa = generationScratch("3054");
@@ -52,11 +79,17 @@ async function rig(mode: string) {
 	});
 	if (!child.pid || !child.stderr) throw new Error("supervisor did not start");
 	let stderr = "";
+	const messages: Record<string, unknown>[] = [];
 	child.stderr.on("data", (chunk) => {
 		stderr += chunk.toString();
+		if (
+			stderr.includes(`senpi rpc host ready on unix://${qa.socket} `) &&
+			!messages.some((message) => message.type === "startup-ready")
+		)
+			messages.push({ type: "startup-ready" });
 	});
-	const exited = once(child, "exit");
-	const messages: Record<string, unknown>[] = [];
+	const exited = once(child, "exit", { signal: AbortSignal.timeout(20_000) });
+	void exited.catch(() => {});
 	child.on("message", (message: unknown) => {
 		if (typeof message === "object" && message !== null) messages.push({ ...message });
 	});
@@ -64,11 +97,14 @@ async function rig(mode: string) {
 		const existing = () => messages.slice(after).find((message) => message.type === type);
 		const found = existing();
 		if (found) return found;
+		if (child.exitCode !== null || child.signalCode !== null)
+			throw new Error(`supervisor exited before ${type}: ${stderr}`);
 		return await new Promise((resolve, reject) => {
 			const finish = (value?: Record<string, unknown>, error?: Error) => {
 				clearTimeout(timer);
 				child.off("message", onMessage);
 				child.off("exit", onExit);
+				child.stderr?.off("data", onMessage);
 				if (error) reject(error);
 				else if (value) resolve(value);
 			};
@@ -80,13 +116,16 @@ async function rig(mode: string) {
 			const timer = setTimeout(() => finish(undefined, new Error(`missing ${type}: ${stderr}`)), 20_000);
 			child.on("message", onMessage);
 			child.once("exit", onExit);
+			child.stderr?.on("data", onMessage);
 		});
 	};
 	const host = await wait("host");
 	if (typeof host.pid !== "number") throw new Error("missing host pid");
 	rigs.push({ child, exited, hostPid: host.pid, qa });
-	await wait("ready");
+	// #4216/#4242: listen precedes key publication, ownership writes and drain-watch setup.
+	await wait("startup-ready");
 	if (mode === "honour-term") await wait("host-ready");
+	await childIdentityWritten(generation);
 	await writeHostRegistration(paths, {
 		record: { pid: child.pid, processStartTime: (await readProcessStartTime(child.pid)) ?? null },
 		socket: qa.socket,
@@ -94,7 +133,20 @@ async function rig(mode: string) {
 		generation: 0,
 		launchProfileId: "child-exit-test",
 	});
-	return { qa, paths, generation, child, exited, wait, messages, hostPid: host.pid, stderr: () => stderr };
+	const socketIdentity = await statSocketIdentity(qa.socket);
+	if (socketIdentity === undefined) throw new Error("ready supervisor has no public socket identity");
+	return {
+		qa,
+		paths,
+		generation,
+		child,
+		exited,
+		wait,
+		messages,
+		socketIdentity,
+		hostPid: host.pid,
+		stderr: () => stderr,
+	};
 }
 
 afterEach(async () => {
@@ -114,22 +166,23 @@ afterEach(async () => {
 				await exit.dispose();
 			}
 		}
+		await settledOpportunisticHostGc(r.qa.agentDir);
 		await rm(r.qa.root, { recursive: true, force: true });
 	}
 });
 
 // #3054: observe the real supervisor's exit, its child's reaping, and the retained ownership boundary.
 describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("supervisor child exit", () => {
-	it("stops a SIGTERM-honouring host well before the escalation grace", async () => {
+	it("stops a SIGTERM-honouring host without expiring the escalation grace", async () => {
 		const r = await rig("honour-term");
 		const hostExit = await processExitEvent(r.hostPid);
 		const before = r.messages.length;
 		try {
-			const started = performance.now();
 			r.child.kill("SIGTERM");
-			expect(await r.exited).toEqual([143, null]);
-			const elapsedMs = performance.now() - started;
-			expect(elapsedMs).toBeLessThan(3_000);
+			expect(await r.exited, r.stderr()).toEqual([143, null]);
+			expect(
+				r.messages.filter((message) => message.type === "child-signal").map((message) => message.signal),
+			).toEqual(["SIGTERM"]);
 			await hostExit.wait(10_000, `SIGTERM-honouring child ${r.hostPid}`);
 			expect(await r.wait("reaped", before)).toMatchObject({ code: 0, signal: null });
 			expect(processAlive(r.hostPid)).toBe(false);
@@ -157,7 +210,7 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 		} finally {
 			vi.useRealTimers();
 		}
-		expect(await r.exited).toEqual([143, null]);
+		expect(await r.exited, r.stderr()).toEqual([143, null]);
 	});
 
 	it("reaps a SIGTERM-resistant child and records SIGKILL before exiting", async () => {
@@ -174,7 +227,7 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 			await hostExit.dispose();
 		}
 		expect(await r.wait("reaped", before)).toMatchObject({ pid: r.hostPid, signal: "SIGKILL" });
-		expect(await r.exited).toEqual([143, null]);
+		expect(await r.exited, r.stderr()).toEqual([143, null]);
 		expect(processAlive(r.hostPid)).toBe(false);
 		expect(await readHostCrashRecords(r.paths.dir)).toContainEqual(expect.objectContaining({ signal: "SIGKILL" }));
 		await expect(access(r.generation.dir)).rejects.toMatchObject({ code: "ENOENT" });
@@ -242,6 +295,14 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 					["child-exit"],
 				);
 				await expect(access(r.paths.pointerFile)).rejects.toMatchObject({ code: "ENOENT" });
+				// Force the macOS holder probe's unknown result, without a timing-dependent lsof timeout.
+				const probeBin = join(r.qa.root, "probe-bin");
+				await mkdir(probeBin);
+				await writeFile(join(probeBin, "lsof"), "#!/bin/sh\nexit 2\n", { mode: 0o755 });
+				vi.stubEnv("PATH", `${probeBin}:${process.env.PATH}`);
+				// The observed-dead supervisor owned this entry; the retained child listens only on its private hop.
+				// An unknown lsof result must still refuse foreign entries, not this fixture's proven dead socket.
+				await unlinkOwnedSocket(r.qa.socket, r.socketIdentity, expect.fail);
 				const replacement = await ensureHost({
 					socket: r.qa.socket,
 					agentDir: r.qa.agentDir,
@@ -290,8 +351,9 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 			(await r.wait("wait", r.messages.length));
 		expect(killWait.ms).toBe(CHILD_KILL_EXIT_TIMEOUT_MS);
 		await access(r.generation.pidFile);
+		await access(r.paths.pointerFile);
 		r.child.send({ type: "release-exit" });
-		await r.exited;
+		expect(await r.exited, r.stderr()).toEqual([143, null]);
 		expect(await readHostCrashRecords(r.paths.dir)).toContainEqual(expect.objectContaining({ signal: "SIGKILL" }));
 		await expect(access(r.paths.pointerFile)).rejects.toMatchObject({ code: "ENOENT" });
 	});
