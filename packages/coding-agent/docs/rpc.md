@@ -173,8 +173,10 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
 - Wire-only `observedAt` is the host's ISO wall-clock time when it serializes or enqueues
   that lifecycle delivery: push, `get_state`, `open_session`, classic stdio, worker-host,
   TUI-control, and attach replay. Replay re-stamps a wire copy at send time. It is never
-  persisted and never changes `seq`, `epoch`, `since`, or completion identity. It is not
-  a heartbeat or proof of liveness.
+  persisted and never changes `activityRevision.instanceId`, activity revision, `seq`, `epoch`,
+  `since`, completion identity, or activity content. Forwarding preserves the engine owner's
+  activity key, including absent activity; inspecting or replaying never mints a revision.
+  It is not a heartbeat or proof of liveness.
 - Optional `activity` is present only while `state` is `running` and a live activity is known:
   `{ kind: "tool", toolName, toolCallId, since, outstanding }` represents the oldest outstanding
   top-level tool operation, including preparation, approval and dependency waits. Nested calls
@@ -220,9 +222,11 @@ Use `completionId` to deduplicate root completion/failure, not `agent_settled` o
 `agent_idle`: a queued result or background source can still own unfinished work.
 An ordinary reply completing is not itself a request to mark a thread Done.
 
-Clients order lifecycle content by session + `seq`, never by wall clock. An equal `seq`
-refreshes receipt information only; it never re-runs state or completion effects. An older
-`seq` never replaces a newer one. Measure "last seen" age on the client's own receipt clock,
+Clients order lifecycle content by session + `seq`, never by wall clock. An equal lifecycle
+`seq` may refresh receipt information and, under the activity ordering rule, the activity projection.
+It never re-runs ordinary state or completion effects. Activity revisions and `observedAt` never
+authorize replacing ordinary lifecycle content at an equal or older lifecycle `seq`.
+An older `seq` never replaces a newer one. Measure "last seen" age on the client's own receipt clock,
 not from `observedAt`. A disconnect never infers a terminal state and never erases a known
 `done`, `failed`, or `cancelled`. An old `running` means "last known running".
 

@@ -155,6 +155,7 @@ it("stamps open_session and a later attach without advancing lifecycle seq", asy
 	const opened = await host.open("first", { sessionPath });
 	const first = stateSchema.parse(opened.state).lifecycle;
 	expect(first.observedAt).toBe(new Date(FIRST).toISOString());
+	expect(first.activityRevision).toMatchObject({ instanceId: expect.any(String), revision: 0 });
 	clock.mockReturnValue(SECOND);
 	const attached = await host.open("second", { sessionPath });
 	const second = stateSchema.parse(attached.state).lifecycle;
@@ -190,6 +191,7 @@ Date.now = () => existsSync(clock) ? Number(readFileSync(clock, "utf8")) : ${FIR
 		expect(opened.success).toBe(true);
 		const first = stateSchema.parse(opened.data?.state).lifecycle;
 		expect(first.observedAt).toBe(new Date(FIRST).toISOString());
+		expect(first.activityRevision).toMatchObject({ instanceId: expect.any(String), revision: 0 });
 		const sessionId = String(opened.data?.sessionId);
 		await writeFile(join(host.scratch, "delivery-clock"), String(SECOND));
 		const state = await host.request({ type: "get_state", sessionId });
